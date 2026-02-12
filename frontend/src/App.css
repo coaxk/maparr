@@ -139,6 +139,22 @@ body{
   .spinner, .progress > .bar{animation:none;transition:none}
 }
 
+/* Modal overlay */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;
+  animation:fadeIn .15s ease;
+}
+.modal{
+  background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:24px;max-width:640px;width:100%;max-height:80vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.8);
+}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+
+/* Inline copy button for commands */
+.cmd-copy{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);cursor:pointer;color:var(--accent);font-size:0.75rem;font-weight:600;margin-left:6px;vertical-align:middle;
+}
+.cmd-copy:hover{background:rgba(255,255,255,0.08)}
+
 /* Utility helpers */
 .muted{color:var(--muted)}
 .small{font-size:0.85rem}

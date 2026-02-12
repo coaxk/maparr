@@ -167,6 +167,14 @@ function DockerHelp({onRetry, onSkip}){
   )
 }
 
+function InfoIcon({label}){
+  return (
+    <Tooltip label={label}>
+      <span style={{display:'inline-flex',alignItems:'center',justifyContent:'center',width:16,height:16,borderRadius:'50%',border:'1px solid var(--border)',fontSize:'0.65rem',fontWeight:700,color:'var(--muted)',cursor:'help',marginLeft:4,verticalAlign:'middle'}}>i</span>
+    </Tooltip>
+  )
+}
+
 function CodeBlock({code}){
   const [copied,setCopied]=useState(false)
   async function copy(){
@@ -457,7 +465,7 @@ export default function App(){
           <div className="card-header">
             <div>
               <div className="card-title">Detecting environment…</div>
-              <div className="card-sub">Probing project files and containers</div>
+              <div className="card-sub">Probing Docker setup and containers</div>
             </div>
             <div className="row"><Spinner/></div>
           </div>
@@ -475,46 +483,144 @@ export default function App(){
               <div className="card-sub">High level findings and recommended fixes</div>
             </div>
             <div className="row">
-              <Tooltip label="Export report"><button className="btn btn-outline" onClick={()=>{setToast('Report exported')}}>Export</button></Tooltip>
+              <Tooltip label="Copy the full report text to your clipboard">
+                <button className="btn btn-outline" onClick={exportReport}>Export</button>
+              </Tooltip>
+              <Tooltip label="Save the full report as a .txt file">
+                <button className="btn btn-outline" onClick={downloadReport}>Download</button>
+              </Tooltip>
               <button className="btn btn-ghost" onClick={retry}>Done</button>
             </div>
           </div>
 
           <div className="list">
+            {/* Summary card */}
             <div className="card">
               <div className="card-title">Summary <InfoIcon label="Overall summary of detected issues and health"/></div>
               <div className="card-sub">{analysis.summary}</div>
               <div style={{marginTop:8}}>
-                <span className="badge good">OK</span>
+                <span className={`badge ${analysis.status==='healthy'?'good':analysis.status==='needs_attention'?'warn':'bad'}`}>
+                  {analysis.status==='healthy'?'Healthy':analysis.status==='needs_attention'?'Needs Attention':'Critical'}
+                </span>
               </div>
             </div>
 
+            {/* Conflicts card */}
             <div className="card">
               <div className="card-title">Conflicts <InfoIcon label="Containers or mounts that map different host paths to the same destination"/></div>
-              <div className="card-sub">{analysis.conflicts} potential conflicts detected</div>
-              <div style={{marginTop:8}}>
-                <button className="btn btn-danger" onClick={()=>setToast('Marked for manual review')}>Mark Review</button>
+              <div className="card-sub">{analysis.conflicts} potential conflict{analysis.conflicts!==1?'s':''} detected</div>
+              {analysis.rawConflicts?.length > 0 && (
+                <ul style={{margin:'8px 0 0',paddingLeft:18,listStyle:'disc'}}>
+                  {analysis.rawConflicts.slice(0,5).map((c,i)=>(
+                    <li key={i} className="small" style={{marginTop:4,color:c.severity==='critical'?'var(--danger)':c.severity==='warning'?'#ffd98f':'var(--muted)'}}>
+                      <strong>{c.type}</strong>: {c.note || c.destination || 'Unknown'}
+                      {c.fix?.description && <span className="muted"> — {c.fix.description}</span>}
+                    </li>
+                  ))}
+                  {analysis.rawConflicts.length > 5 && <li className="small muted">…and {analysis.rawConflicts.length - 5} more</li>}
+                </ul>
+              )}
+              <div style={{marginTop:10}} className="row">
+                <button className="btn btn-danger" onClick={()=>setReviewMarked(prev=>!prev)}>
+                  {reviewMarked ? 'Unmark Review' : 'Mark for Review'}
+                </button>
               </div>
+              {reviewMarked && (
+                <div className="small" style={{marginTop:8,padding:'8px 10px',background:'rgba(255,107,107,0.06)',borderRadius:8,border:'1px solid rgba(255,107,107,0.1)',color:'#ffadad'}}>
+                  This analysis has been flagged for manual review. Check your <code>docker-compose.yml</code> volume mounts for the conflicts listed above before running your containers.
+                </div>
+              )}
             </div>
 
+            {/* Recommendations card */}
             <div className="card">
-              <div className="card-title">Recommendations <InfoIcon label="Suggested fixes and configuration changes"/></div>
-              <div className="card-sub">{analysis.recommendations} recommended fixes</div>
-              <div style={{marginTop:8}}>
-                <CodeBlock code={analysis.report} />
-              </div>
+              <div className="card-title">Recommendations <InfoIcon label="Suggested fixes and best practices for your setup"/></div>
+              <div className="card-sub">{analysis.recommendations} recommended fix{analysis.recommendations!==1?'es':''}</div>
+              {analysis.rawRecommendations?.length > 0 && (
+                <ul style={{margin:'8px 0 0',paddingLeft:18,listStyle:'disc'}}>
+                  {analysis.rawRecommendations.map((r,i)=>(
+                    <li key={i} className="small" style={{marginTop:4}}>
+                      <span className={`badge ${r.priority==='high'?'bad':r.priority==='medium'?'warn':'good'}`} style={{fontSize:'0.7rem',padding:'2px 6px',marginRight:6}}>{r.priority}</span>
+                      <strong>{r.title}</strong>{r.description ? `: ${r.description}` : ''}
+                      {r.action && <div className="muted" style={{marginTop:2,marginLeft:2}}>Action: {r.action}</div>}
+                      {(() => {
+                        const link = LEARN_MORE_LINKS[r.title]
+                        return link ? <a href={link} target="_blank" rel="noopener noreferrer" style={{color:'var(--accent)',fontSize:'0.8rem',marginLeft:4}}>Learn more</a> : null
+                      })()}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {analysis.rawRecommendations?.length === 0 && (
+                <div className="small muted" style={{marginTop:8}}>No recommendations — your setup looks good!</div>
+              )}
             </div>
 
+            {/* Actions card */}
             <div className="card">
               <div className="card-title">Actions</div>
-              <div style={{marginTop:8}} className="row">
-                <button className="btn btn-primary" onClick={()=>setToast('Apply fixes not implemented in demo')}>Apply Fixes</button>
-                <button className="btn btn-outline" onClick={()=>setToast('Download report')}>Download</button>
+              <div className="card-sub small muted">Apply suggested fixes or save the report for later</div>
+              <div style={{marginTop:10}} className="row">
+                <Tooltip label="View each conflict and suggested docker-compose fix">
+                  <button className="btn btn-primary" onClick={()=>setShowApplyModal(true)} disabled={!analysis.rawConflicts?.length}>Apply Fixes</button>
+                </Tooltip>
+                <Tooltip label="Copy report to clipboard">
+                  <button className="btn btn-outline" onClick={exportReport}>Copy Report</button>
+                </Tooltip>
+                <Tooltip label="Download as .txt file">
+                  <button className="btn btn-outline" onClick={downloadReport}>Download</button>
+                </Tooltip>
               </div>
             </div>
           </div>
+
+          {/* Full report expandable */}
+          <details style={{marginTop:12}}>
+            <summary className="small muted" style={{cursor:'pointer'}}>View full report text</summary>
+            <div style={{marginTop:8}}>
+              <CodeBlock code={analysis.report} />
+            </div>
+          </details>
         </section>
       )}
+
+      {/* Apply Fixes Modal */}
+      <Modal open={showApplyModal} onClose={()=>setShowApplyModal(false)} title="Apply Fixes — Review Changes">
+        {analysis?.rawConflicts?.length > 0 ? (
+          <div className="col" style={{gap:12}}>
+            <div className="small muted">Review each conflict and its suggested fix. Copy the compose snippets to update your <code>docker-compose.yml</code>.</div>
+            {analysis.rawConflicts.map((c,i)=>(
+              <div key={i} className="card" style={{padding:12}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span className={`badge ${c.severity==='critical'?'bad':c.severity==='warning'?'warn':'good'}`} style={{fontSize:'0.7rem',padding:'2px 6px'}}>{c.severity}</span>
+                  <strong className="small">{c.type}</strong>
+                </div>
+                <div className="small muted" style={{marginTop:4}}>{c.note || c.destination || ''}</div>
+                {c.containers && <div className="small muted" style={{marginTop:2}}>Containers: {Array.isArray(c.containers) ? c.containers.join(', ') : String(c.containers)}</div>}
+                {c.fix && (
+                  <div style={{marginTop:8,padding:'8px 10px',background:'rgba(94,234,212,0.04)',borderRadius:8,border:'1px solid rgba(94,234,212,0.08)'}}>
+                    <div className="small" style={{color:'var(--accent)',fontWeight:600}}>Suggested fix</div>
+                    <div className="small" style={{marginTop:2}}>{c.fix.description}</div>
+                    {c.fix.action && (
+                      <div style={{marginTop:6}}>
+                        <CopyCmd cmd={c.fix.action} />
+                      </div>
+                    )}
+                    {c.fix.suggested_source && (
+                      <div className="small muted" style={{marginTop:4}}>
+                        Use source: <code style={{color:'var(--accent)'}}>{c.fix.suggested_source}</code>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+            <div className="small muted" style={{marginTop:4}}>After updating your compose file, run: <CopyCmd cmd="docker-compose up -d" /></div>
+          </div>
+        ) : (
+          <div className="small muted">No conflicts to fix — your setup is healthy!</div>
+        )}
+      </Modal>
 
       {screen==='dockerError' && (
         <DockerHelp
