@@ -33,6 +33,34 @@ function Toast({message, onClose}){
   )
 }
 
+function CopyCmd({cmd}){
+  const [copied,setCopied]=useState(false)
+  async function copy(){
+    try{ await navigator.clipboard.writeText(cmd); setCopied(true); setTimeout(()=>setCopied(false),1200) }catch(e){}
+  }
+  return (
+    <span style={{display:'inline-flex',alignItems:'center',gap:4}}>
+      <code className="mono" style={{fontSize:'0.85rem',color:'var(--accent)'}}>{cmd}</code>
+      <button className="cmd-copy" onClick={copy} aria-label={`Copy: ${cmd}`}>{copied?'Copied':'Copy'}</button>
+    </span>
+  )
+}
+
+function Modal({open, onClose, title, children}){
+  if(!open) return null
+  return (
+    <div className="modal-overlay" onClick={(e)=>{if(e.target===e.currentTarget) onClose()}}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="card-header" style={{marginBottom:16}}>
+          <div className="card-title">{title}</div>
+          <button className="btn btn-ghost" onClick={onClose} aria-label="Close">X</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function detectClientOS(){
   const ua = navigator.userAgent.toLowerCase()
   const platform = navigator.platform?.toLowerCase() || ''
@@ -68,9 +96,9 @@ function DockerHelp({onRetry, onSkip}){
       show: os === 'windows' || os === 'mac' || os === 'unknown',
       title: 'Docker Desktop (Windows/Mac)',
       steps: [
-        'Ensure the Docker Desktop app is running',
-        'Check: Icon in system tray should be active',
-        'If stuck: Restart Docker Desktop',
+        {text: 'Ensure the Docker Desktop app is running'},
+        {text: 'Check: Icon in system tray should be active'},
+        {text: 'If stuck: Restart Docker Desktop'},
       ],
     },
     {
@@ -78,9 +106,9 @@ function DockerHelp({onRetry, onSkip}){
       show: os === 'linux' || os === 'unknown',
       title: 'Docker Engine (Linux)',
       steps: [
-        'Start the Docker service:',
-        'sudo systemctl start docker',
-        'Check status: docker --version',
+        {text: 'Start the Docker service:', cmd: 'sudo systemctl start docker'},
+        {text: 'Check status:', cmd: 'docker --version'},
+        {text: 'Verify running:', cmd: 'docker info'},
       ],
     },
     {
@@ -88,16 +116,16 @@ function DockerHelp({onRetry, onSkip}){
       show: os === 'windows' || os === 'wsl2' || os === 'unknown',
       title: 'WSL2 (Windows with Docker Desktop)',
       steps: [
-        'Docker Desktop must be running on Windows',
-        'WSL2 integration auto-detects it',
-        'Check: run docker ps inside WSL terminal',
+        {text: 'Docker Desktop must be running on Windows'},
+        {text: 'WSL2 integration auto-detects it'},
+        {text: 'Check inside WSL:', cmd: 'docker ps'},
       ],
     },
     {
       id: 'podman',
       show: true,
       title: 'Podman (alternative to Docker)',
-      steps: ['Not yet supported (coming in v1.1)'],
+      steps: [{text: 'Not yet supported (coming in v1.1)'}],
     },
   ]
 
@@ -116,10 +144,8 @@ function DockerHelp({onRetry, onSkip}){
             <div className="card-title" style={{fontSize:'0.95rem'}}>{s.title}</div>
             <ul style={{margin:'6px 0 0 0', paddingLeft:20, listStyle:'none'}}>
               {s.steps.map((step,i)=>(
-                <li key={i} className="small" style={{marginTop:3, color: step.startsWith('sudo') || step.startsWith('docker') ? 'var(--accent)' : 'inherit'}}>
-                  {step.startsWith('sudo') || step.startsWith('docker') || step.startsWith('run ')
-                    ? <code className="mono" style={{fontSize:'0.85rem'}}>{step}</code>
-                    : step}
+                <li key={i} className="small" style={{marginTop:3}}>
+                  {step.text}{step.cmd ? <>{' '}<CopyCmd cmd={step.cmd} /></> : null}
                 </li>
               ))}
             </ul>
@@ -167,20 +193,34 @@ export default function App(){
   const [progress,setProgress]=useState(0)
   const [toast,setToast]=useState(null)
   const [analysis,setAnalysis]=useState(null)
+  const [dockerStatus,setDockerStatus]=useState({connected:false,method:null,error:null})
+  const [manualHint,setManualHint]=useState('')
   const headingRef = useRef(null)
 
   useEffect(()=>{ if(screen==='analysis' && headingRef.current) headingRef.current.focus() },[screen])
 
-  // Check docker availability on mount
+  // Check docker availability on mount and auto-start quick detect when connected
   useEffect(()=>{
     let mounted=true
     async function checkDocker(){
       try{
         const res = await axios.get('/api/docker/status')
         if(!mounted) return
-        if(res?.data?.ok!==true){ setScreen('dockerError'); setToast('Docker not available') }
+        const connected = !!res?.data?.connected
+        setDockerStatus({connected, method: res?.data?.method ?? null, error: res?.data?.error ?? null})
+        if(!connected){
+          setScreen('dockerError')
+          setToast('Docker not available')
+        }else{
+          // Auto-start quick detect on landing when docker is available
+          if(mounted){
+            useDefaults()
+            startDetect()
+          }
+        }
       }catch(err){
         if(!mounted) return
+        setDockerStatus({connected:false, method:null, error: err?.message})
         setScreen('dockerError')
       }
     }
@@ -221,12 +261,16 @@ export default function App(){
       conflicts: conflicts.length,
       recommendations: recs.length,
       report: reportLines.join('\n'),
+      rawConflicts: conflicts,
+      rawRecommendations: recs,
+      platform,
+      status,
     }
   }
 
   function validatePath(p){
     if(!p || p.trim().length<3){
-      return 'Please enter a valid project path'
+      return 'Please enter a valid Docker setup path'
     }
     return ''
   }
@@ -305,18 +349,58 @@ export default function App(){
   }
 
   function useDefaults(){
-    setPath('/workspace/project')
-    setToast('Default path set')
+    setPath('/workspace/docker-setup')
+    setToast('Default Docker setup selected')
   }
 
-  function simulateDockerError(){
-    setScreen('dockerError')
-  }
+  // simulateDockerError removed (no test button in production)
 
   function retry(){
     setScreen('landing')
     setProgress(0)
     setAnalysis(null)
+    setManualHint('Still not working? Try manual setup below.')
+    // Re-check docker status
+    axios.get('/api/docker/status').then(res=>{
+      const connected = !!res?.data?.connected
+      setDockerStatus({connected, method: res?.data?.method ?? null, error: res?.data?.error ?? null})
+      if(connected){ setToast('Docker reconnected') }
+    }).catch(()=>{})
+  }
+
+  const [showApplyModal,setShowApplyModal]=useState(false)
+  const [reviewMarked,setReviewMarked]=useState(false)
+
+  function downloadReport(){
+    if(!analysis?.report) return
+    const blob = new Blob([`MapArr Analysis Report\nGenerated: ${new Date().toISOString()}\n\n${analysis.report}`], {type:'text/plain'})
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `maparr-report-${Date.now()}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+    setToast('Report downloaded')
+  }
+
+  function exportReport(){
+    if(!analysis?.report) return
+    try{
+      navigator.clipboard.writeText(analysis.report)
+      setToast('Report copied to clipboard')
+    }catch(e){
+      downloadReport()
+    }
+  }
+
+  const LEARN_MORE_LINKS = {
+    'WSL2 Path Conversion': 'https://trash-guides.info/Hardlinks/How-to-setup-for/Docker/',
+    'WSL2 Path Performance': 'https://learn.microsoft.com/en-us/windows/wsl/filesystems',
+    'Use /mnt/user for Hardlinks': 'https://trash-guides.info/Hardlinks/How-to-setup-for/Unraid/',
+    'Synology Volume Paths': 'https://trash-guides.info/Hardlinks/How-to-setup-for/Synology/',
+    'Single Root Data Directory': 'https://trash-guides.info/Hardlinks/How-to-setup-for/Docker/',
+    'Consistent UID/GID': 'https://trash-guides.info/Hardlinks/How-to-setup-for/Docker/',
+    'Resolve Critical Conflicts': 'https://trash-guides.info/Hardlinks/Hardlinks-and-Instant-Moves/',
   }
 
   async function fetchRecommendations(){
@@ -343,26 +427,28 @@ export default function App(){
           <div className="card-header">
             <div>
               <h1 id="hero-title">Welcome to MapArr</h1>
-              <div className="card-sub">Analyze and reconcile mapping conflicts quickly.</div>
+              <div className="card-sub">Analyze and reconcile Docker setup quickly.</div>
             </div>
             <div className="row">
-              <button className="btn btn-ghost" onClick={simulateDockerError} aria-label="Simulate docker error">Simulate Error</button>
-              <button className="btn btn-primary" onClick={()=>{setToast('Starting quick detect'); useDefaults(); startDetect()}}>Quick Detect</button>
+              <div className="col" style={{alignItems:'flex-end'}}>
+                <div className="small muted">Docker Engine: {dockerStatus.connected ? 'Connected' : 'Not connected'} {dockerStatus.method ? `(${dockerStatus.method})` : ''}</div>
+              </div>
             </div>
           </div>
 
           <form onSubmit={startDetect} className="col" aria-label="Detection form">
-            <label className="label" htmlFor="pathInput">Project path (manual)</label>
-            <input id="pathInput" className="input" value={path} onChange={(e)=>setPath(e.target.value)} placeholder="/path/to/project or C:\\project" aria-required="true" aria-invalid={!!error} />
+            <label className="label" htmlFor="pathInput">Docker setup (manual) <InfoIcon label="Enter the host path to your Docker setup or mount"/></label>
+            <input id="pathInput" className="input" value={path} onChange={(e)=>setPath(e.target.value)} placeholder="/path/to/docker-setup or C:\\docker-setup" aria-required="true" aria-invalid={!!error} />
             {error && <div role="alert" style={{color:'var(--danger)'}}>{error}</div>}
 
             <div className="row" style={{marginTop:12}}>
-              <button type="submit" className="btn btn-primary">Detect</button>
+              <button type="submit" className="btn btn-primary">Start Analysis</button>
               <button type="button" className="btn btn-outline" onClick={useDefaults}>Use defaults</button>
             </div>
           </form>
 
-          <div style={{marginTop:16}} className="muted small">Tips: Use the manual path for custom projects. Hover options for details.</div>
+          <div style={{marginTop:16}} className="muted small">Tips: Use the manual Docker setup for custom installations. Hover info for details.</div>
+          {manualHint && <div style={{marginTop:12,color:'var(--muted)'}}>{manualHint}</div>}
         </section>
       )}
 
@@ -396,7 +482,7 @@ export default function App(){
 
           <div className="list">
             <div className="card">
-              <div className="card-title">Summary</div>
+              <div className="card-title">Summary <InfoIcon label="Overall summary of detected issues and health"/></div>
               <div className="card-sub">{analysis.summary}</div>
               <div style={{marginTop:8}}>
                 <span className="badge good">OK</span>
@@ -404,7 +490,7 @@ export default function App(){
             </div>
 
             <div className="card">
-              <div className="card-title">Conflicts</div>
+              <div className="card-title">Conflicts <InfoIcon label="Containers or mounts that map different host paths to the same destination"/></div>
               <div className="card-sub">{analysis.conflicts} potential conflicts detected</div>
               <div style={{marginTop:8}}>
                 <button className="btn btn-danger" onClick={()=>setToast('Marked for manual review')}>Mark Review</button>
@@ -412,7 +498,7 @@ export default function App(){
             </div>
 
             <div className="card">
-              <div className="card-title">Recommendations</div>
+              <div className="card-title">Recommendations <InfoIcon label="Suggested fixes and configuration changes"/></div>
               <div className="card-sub">{analysis.recommendations} recommended fixes</div>
               <div style={{marginTop:8}}>
                 <CodeBlock code={analysis.report} />
