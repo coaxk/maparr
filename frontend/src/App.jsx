@@ -96,56 +96,63 @@ export default function App(){
     setProgress(8)
 
     try{
-      // call backend analyze endpoint
-    function onKeyDownMain(e){
-      if(e.key === 'Escape') setToast(null)
-    }
-
       const res = await axios.post('/api/analyze', {path})
-      // optimistic progress
-      setProgress(60)
-
+      // If server returned an immediate analysis, use it.
       if(res?.data?.analysis){
         setAnalysis(res.data.analysis)
         setProgress(100)
         setTimeout(()=>{ setScreen('analysis'); setToast('Analysis complete') }, 300)
-        // fetch additional recommendations if available
         try{ fetchRecommendations() }catch(e){}
-      }else if(res?.data?.error){
+        return
+      }
+
+      if(res?.data?.error){
         setError(res.data.error)
         setScreen('error')
-      }else if(res?.data?.jobId){
-        // poll for job result (best-effort, backend may provide this)
-        const jobId = res.data.jobId
-        let done=false
-        for(let i=0;i<20 && !done;i++){
-          await new Promise(r=>setTimeout(r,800))
-          try{
-            const status = await axios.get(`/api/analyze/${jobId}/status`)
-            if(status?.data?.ready){
-              done=true
-              setAnalysis(status.data.analysis)
-              setProgress(100)
-              setScreen('analysis')
-              setToast('Analysis complete')
-              break
-            }else{
-              setProgress(Math.min(95, 60 + i*2))
-            }
-          }catch(e){/* ignore transient errors */}
-        }
-        if(!done){ setError('Analysis timed out'); setScreen('error') }
-      }else{
-        // Fallback: if no useful payload, request recommendations endpoint
+        return
+      }
+
+      // Otherwise expect a jobId and subscribe to SSE for live progress
+      const jobId = res?.data?.jobId || res?.data?.jobId
+      if(!jobId){
+        // fallback to recommendations
         const rec = await axios.get('/api/recommendations',{params:{path}})
         setAnalysis({summary:'Analysis (partial)', conflicts: rec?.data?.conflicts ?? 0, recommendations: rec?.data?.recommendations ?? 0, report: rec?.data?.report ?? ''})
         setProgress(100)
         setScreen('analysis')
         setToast('Partial analysis complete')
+        return
       }
+
+      setProgress(12)
+      const es = new EventSource(`/api/job/${jobId}/events`)
+      es.onmessage = (ev) => {
+        try{
+          const data = JSON.parse(ev.data)
+          if(data.progress !== undefined) setProgress(data.progress)
+          if(data.status) {
+            if(data.status === 'complete'){
+              if(data.result) setAnalysis(data.result)
+              setProgress(100)
+              setToast('Analysis complete')
+              setTimeout(()=>setScreen('analysis'), 200)
+              es.close()
+            }else if(data.status === 'error'){
+              setError(data.error || 'Analysis error')
+              setScreen('error')
+              es.close()
+            }
+          }
+        }catch(e){ console.error('sse parse', e) }
+      }
+      es.onerror = (err) => {
+        // network or server closed the stream
+        console.error('SSE error', err)
+      }
+
     }catch(err){
       console.error(err)
-      setError(err?.response?.data?.error || err.message || 'Analysis failed')
+      setError(err?.response?.data?.detail || err?.response?.data?.error || err.message || 'Analysis failed')
       setScreen('error')
     }
   }

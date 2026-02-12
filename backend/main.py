@@ -15,6 +15,10 @@ from datetime import datetime
 from pathlib import PurePosixPath, PureWindowsPath
 
 from fastapi import FastAPI, HTTPException, Body
+from fastapi.responses import StreamingResponse
+import asyncio
+import uuid
+import json
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import docker
@@ -843,6 +847,55 @@ class PathAnalyzer:
 
 docker_manager = DockerManager()
 db = Database()
+ 
+# Simple in-memory job store for async analysis jobs
+jobs: Dict[str, Dict[str, Any]] = {}
+jobs_lock = asyncio.Lock()
+
+async def _run_analysis_job(job_id: str, platform_hint: Optional[str] = None):
+    """Background worker to run analysis and update job state."""
+    async with jobs_lock:
+        jobs[job_id].update({"status": "detecting", "progress": 5, "started_at": datetime.now().isoformat()})
+
+    # Phase 1: detecting
+    await asyncio.sleep(0.4)
+    try:
+        containers = docker_manager.get_containers()
+        manual = db.get_manual_paths()
+    except Exception as e:
+        async with jobs_lock:
+            jobs[job_id].update({"status": "error", "error": str(e), "progress": 0})
+        return
+
+    async with jobs_lock:
+        jobs[job_id].update({"status": "analyzing", "progress": 25})
+
+    # Phase 2: analyzing (simulate incremental progress while running analyzer)
+    try:
+        analyzer = PathAnalyzer(containers, manual_paths=manual)
+        if platform_hint:
+            analyzer.platform = platform_hint
+
+        # simulate chunked progress
+        for p in (35, 50, 65, 80):
+            await asyncio.sleep(0.3)
+            async with jobs_lock:
+                jobs[job_id]["progress"] = p
+
+        # Perform analysis (may be CPU-bound but quick for small sets)
+        analysis = analyzer.analyze()
+
+        # Persist the analysis
+        analysis_id = db.save_analysis(analysis)
+        analysis["analysis_id"] = analysis_id
+
+        async with jobs_lock:
+            jobs[job_id].update({"status": "complete", "progress": 100, "result": analysis, "finished_at": datetime.now().isoformat()})
+    except Exception as e:
+        logger.exception("Analysis job failed")
+        async with jobs_lock:
+            jobs[job_id].update({"status": "error", "error": str(e), "progress": 0})
+
 
 # ═══════════════════════════════════════════════════════════
 # API ENDPOINTS - Core
@@ -899,27 +952,20 @@ async def list_containers(include_stopped: bool = False):
 @app.post("/api/analyze")
 async def analyze_paths(platform_hint: Optional[str] = None):
     """Analyze path configurations, detect conflicts, and provide fix suggestions."""
-    if not docker_manager.is_connected:
-        raise HTTPException(status_code=503, detail="Docker not connected. Check docker socket mount.")
+    # Create an async job and return job id immediately
+    job_id = uuid.uuid4().hex
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0,
+        "created_at": datetime.now().isoformat(),
+        "platform_hint": platform_hint,
+    }
 
-    containers = docker_manager.get_containers()
-    if not containers:
-        return {"error": "No containers found", "status": "no_data"}
+    # Start background task
+    asyncio.create_task(_run_analysis_job(job_id, platform_hint=platform_hint))
 
-    manual = db.get_manual_paths()
-    analyzer = PathAnalyzer(containers, manual_paths=manual)
-
-    if platform_hint:
-        analyzer.platform = platform_hint
-
-    analysis = analyzer.analyze()
-
-    # Persist the analysis
-    analysis_id = db.save_analysis(analysis)
-    analysis["analysis_id"] = analysis_id
-
-    logger.info(f"Analysis #{analysis_id} complete: {analysis['summary']}")
-    return analysis
+    return {"jobId": job_id, "status": "queued"}
 
 
 @app.get("/api/recommendations")
@@ -945,6 +991,46 @@ async def get_recommendations():
         "conflicts": analysis["conflicts"],
         "hardlink_layout": analysis["hardlink_layout"],
     }
+
+
+@app.get('/api/jobs')
+async def list_jobs():
+    async with jobs_lock:
+        items = list(jobs.values())
+    return {"jobs": items, "total": len(items)}
+
+
+@app.get('/api/job/{job_id}')
+async def get_job(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail='Job not found')
+    return job
+
+
+@app.get('/api/job/{job_id}/events')
+async def job_events(job_id: str):
+    """Server-Sent Events endpoint streaming job progress."""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail='Job not found')
+
+    async def event_generator():
+        last_payload = None
+        while True:
+            job = jobs.get(job_id)
+            if not job:
+                yield f"data: {json.dumps({'error':'job not found'})}\n\n"
+                break
+            payload = {k: job.get(k) for k in ("job_id", "status", "progress", "error", "result")}
+            s = json.dumps(payload, default=str)
+            if s != last_payload:
+                last_payload = s
+                yield f"data: {s}\n\n"
+            if job.get('status') in ('complete', 'error'):
+                break
+            await asyncio.sleep(0.4)
+
+    return StreamingResponse(event_generator(), media_type='text/event-stream')
 
 
 @app.get("/api/arr-configs")
