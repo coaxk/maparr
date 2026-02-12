@@ -80,6 +80,42 @@ export default function App(){
     return ()=>{ mounted=false }
   },[])
 
+  // Normalize backend analysis object into the flat shape the UI renders
+  function normalizeAnalysis(raw){
+    if(!raw) return {summary:'No data', conflicts:0, recommendations:0, report:''}
+    const s = raw.summary || {}
+    const conflicts = Array.isArray(raw.conflicts) ? raw.conflicts : []
+    const recs = Array.isArray(raw.recommendations) ? raw.recommendations : []
+    const platform = raw.platform || s.platform_detected || 'unknown'
+    const status = s.status || (conflicts.length ? 'needs_attention' : 'healthy')
+
+    const reportLines = []
+    reportLines.push(`Platform: ${platform}`)
+    reportLines.push(`Containers analyzed: ${s.containers_analyzed ?? 0}`)
+    reportLines.push(`Status: ${status}`)
+    if(conflicts.length){
+      reportLines.push(`\n--- Conflicts (${conflicts.length}) ---`)
+      conflicts.forEach((c,i)=>{
+        reportLines.push(`${i+1}. [${c.severity}] ${c.type}: ${c.note || c.destination || ''}`)
+        if(c.fix) reportLines.push(`   Fix: ${c.fix.description || c.fix.action || ''}`)
+      })
+    }
+    if(recs.length){
+      reportLines.push(`\n--- Recommendations (${recs.length}) ---`)
+      recs.forEach((r,i)=>{
+        reportLines.push(`${i+1}. [${r.priority}] ${r.title}: ${r.description || ''}`)
+        if(r.action) reportLines.push(`   Action: ${r.action}`)
+      })
+    }
+
+    return {
+      summary: `${platform} | ${s.containers_analyzed ?? 0} containers | ${status}`,
+      conflicts: conflicts.length,
+      recommendations: recs.length,
+      report: reportLines.join('\n'),
+    }
+  }
+
   function validatePath(p){
     if(!p || p.trim().length<3){
       return 'Please enter a valid project path'
@@ -97,14 +133,6 @@ export default function App(){
 
     try{
       const res = await axios.post('/api/analyze', {path})
-      // If server returned an immediate analysis, use it.
-      if(res?.data?.analysis){
-        setAnalysis(res.data.analysis)
-        setProgress(100)
-        setTimeout(()=>{ setScreen('analysis'); setToast('Analysis complete') }, 300)
-        try{ fetchRecommendations() }catch(e){}
-        return
-      }
 
       if(res?.data?.error){
         setError(res.data.error)
@@ -112,12 +140,23 @@ export default function App(){
         return
       }
 
+      // Backend returns the analysis object directly at res.data
+      // Normalize into the shape the UI expects
+      const raw = res.data.analysis || res.data
+      if(raw?.summary || raw?.conflicts || raw?.platform){
+        setAnalysis(normalizeAnalysis(raw))
+        setProgress(100)
+        setTimeout(()=>{ setScreen('analysis'); setToast('Analysis complete') }, 300)
+        try{ fetchRecommendations() }catch(e){}
+        return
+      }
+
       // Otherwise expect a jobId and subscribe to SSE for live progress
-      const jobId = res?.data?.jobId || res?.data?.jobId
+      const jobId = res?.data?.jobId
       if(!jobId){
         // fallback to recommendations
         const rec = await axios.get('/api/recommendations',{params:{path}})
-        setAnalysis({summary:'Analysis (partial)', conflicts: rec?.data?.conflicts ?? 0, recommendations: rec?.data?.recommendations ?? 0, report: rec?.data?.report ?? ''})
+        setAnalysis(normalizeAnalysis(rec?.data))
         setProgress(100)
         setScreen('analysis')
         setToast('Partial analysis complete')
@@ -132,7 +171,7 @@ export default function App(){
           if(data.progress !== undefined) setProgress(data.progress)
           if(data.status) {
             if(data.status === 'complete'){
-              if(data.result) setAnalysis(data.result)
+              if(data.result) setAnalysis(normalizeAnalysis(data.result))
               setProgress(100)
               setToast('Analysis complete')
               setTimeout(()=>setScreen('analysis'), 200)
@@ -176,7 +215,8 @@ export default function App(){
     try{
       const res = await axios.get('/api/recommendations',{params:{path}})
       if(res?.data){
-        setAnalysis(prev=>({...(prev||{}), recommendations: res.data.recommendations ?? prev?.recommendations, report: res.data.report ?? prev?.report}))
+        const norm = normalizeAnalysis(res.data)
+        setAnalysis(prev=>({...(prev||{}), recommendations: norm.recommendations, report: norm.report}))
         setToast('Recommendations loaded')
       }
     }catch(e){
