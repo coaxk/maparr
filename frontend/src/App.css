@@ -57,7 +57,7 @@ body{
 .btn:focus-visible{box-shadow: var(--focus);}
 .btn-primary{background:linear-gradient(180deg,var(--primary), #5b3bff);border-color:rgba(124,92,255,0.18)}
 .btn-outline{background:transparent;border:1px solid rgba(255,255,255,0.06)}
-.btn-ghost{background:transparent;color:var(--muted)}
+.btn-ghost{background:transparent;color:var(--muted);border-color:rgba(255,255,255,0.04)}
 
 .btn-primary:hover{filter:brightness(1.06);transform:translateY(-2px)}
 .btn-outline:hover{background:rgba(255,255,255,0.02);transform:translateY(-2px)}

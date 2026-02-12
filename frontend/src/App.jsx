@@ -97,6 +97,10 @@ export default function App(){
 
     try{
       // call backend analyze endpoint
+    function onKeyDownMain(e){
+      if(e.key === 'Escape') setToast(null)
+    }
+
       const res = await axios.post('/api/analyze', {path})
       // optimistic progress
       setProgress(60)
