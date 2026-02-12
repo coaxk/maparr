@@ -105,6 +105,8 @@ export default function App(){
         setAnalysis(res.data.analysis)
         setProgress(100)
         setTimeout(()=>{ setScreen('analysis'); setToast('Analysis complete') }, 300)
+        // fetch additional recommendations if available
+        try{ fetchRecommendations() }catch(e){}
       }else if(res?.data?.error){
         setError(res.data.error)
         setScreen('error')
