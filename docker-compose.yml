@@ -1,3 +1,7 @@
+# ══════════════════════════════════════════════════════════════
+# MapArr v1.0 — Docker Compose
+# ══════════════════════════════════════════════════════════════
+
 version: '3.8'
 
 services:
@@ -5,37 +9,37 @@ services:
     image: maparr:v1.0
     container_name: maparr
     restart: unless-stopped
-    
+
     networks:
       - maparr-net
-    
+
     ports:
       - "${MAPARR_PORT:-9900}:9900"
-    
+
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
       API_HOST: 0.0.0.0
       API_PORT: 9900
-    
+
     volumes:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
       - maparr-data:/data
       - maparr-logs:/logs
-    
+
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9900/health || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:9900/health"]
       interval: 60s
       timeout: 5s
       retries: 2
       start_period: 10s
-    
+
     logging:
       driver: "json-file"
       options:
         max-size: "${LOG_MAX_SIZE:-100M}"
         max-file: "${LOG_MAX_FILES:-5}"
-    
+
     labels:
       com.maparr.app: "core"
       com.maparr.description: "Path mapping intelligence"

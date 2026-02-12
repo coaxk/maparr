@@ -1,0 +1,50 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.coverage
+htmlcov/
+venv/
+.venv/
+
+# Node (rebuilt inside Docker)
+node_modules/
+frontend/node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Docker meta
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Docs (not needed in image)
+*.md
+LICENSE
+docs/
+
+# Runtime artifacts
+*.log
+/data
+/logs
+
+# OS
+.DS_Store
+Thumbs.db
