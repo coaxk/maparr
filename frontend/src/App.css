@@ -53,7 +53,8 @@ body{
 /* Buttons */
 .btn{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:10px;border:1px solid transparent;cursor:pointer;font-weight:600;background:linear-gradient(180deg,var(--panel),transparent);color:var(--text);transition:transform .08s ease, box-shadow .12s ease}
 .btn:active{transform:translateY(1px) scale(.998)}
-.btn:focus{outline: none; box-shadow: var(--focus)}
+.btn:focus{outline: none}
+.btn:focus-visible{box-shadow: var(--focus);}
 .btn-primary{background:linear-gradient(180deg,var(--primary), #5b3bff);border-color:rgba(124,92,255,0.18)}
 .btn-outline{background:transparent;border:1px solid rgba(255,255,255,0.06)}
 .btn-ghost{background:transparent;color:var(--muted)}
@@ -66,7 +67,8 @@ body{
 .input{
   width:100%;padding:10px 12px;border-radius:10px;background:var(--glass);border:1px solid var(--border);color:var(--text);font-size:0.95rem;
 }
-.input:focus{outline:none;box-shadow:var(--focus);border-color:rgba(124,92,255,0.22)}
+.input:focus{outline:none}
+.input:focus-visible{box-shadow: var(--focus);border-color:rgba(124,92,255,0.22)}
 .label{display:block;color:var(--muted);font-size:0.85rem;margin-bottom:6px}
 
 /* Layout helpers */
@@ -105,6 +107,13 @@ body{
 
 /* Notifications */
 .toast{position:fixed;right:20px;bottom:20px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid var(--border);padding:12px;border-radius:10px;box-shadow:0 6px 18px rgba(0,0,0,0.6)}
+
+/* Skip link for keyboard users */
+.skip-link{
+  position:fixed;left:12px;top:12px;background:var(--panel);color:var(--text);padding:8px 12px;border-radius:8px;border:1px solid var(--border);z-index:999;transform:translateY(-120%);transition:transform .18s ease;box-shadow:0 6px 18px rgba(2,6,23,0.6)
+}
+.skip-link:focus{transform:translateY(0%)}
+
 
 /* Focus-visible for keyboard users */
 *:focus{outline: none}

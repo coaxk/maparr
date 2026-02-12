@@ -113,11 +113,13 @@ export default function App(){
   }
 
   return (
-    <div className="app-container" onKeyDown={(e)=>{/* reserved for future keyboard shortcuts */}}>
+    <>
+      <a className="skip-link" href="#main-content">Skip to content</a>
+      <div id="main-content" className="app-container" role="main" onKeyDown={(e)=>{/* reserved for future keyboard shortcuts */}}>
       {toast && <Toast message={toast} onClose={()=>setToast(null)} />}
 
       {screen==='landing' && (
-        <section aria-labelledby="hero-title" className="hero card">
+        <section aria-labelledby="hero-title" className="hero card" role="region" aria-label="Landing">
           <div className="card-header">
             <div>
               <h1 id="hero-title">Welcome to MapArr</h1>
@@ -145,7 +147,7 @@ export default function App(){
       )}
 
       {screen==='detecting' && (
-        <section className="card" aria-live="polite">
+        <section className="card" aria-live="polite" role="region" aria-label="Detecting"> 
           <div className="card-header">
             <div>
               <div className="card-title">Detecting environment…</div>
@@ -160,7 +162,7 @@ export default function App(){
       )}
 
       {screen==='analysis' && analysis && (
-        <section className="card" aria-labelledby="analysis-heading">
+        <section className="card" aria-labelledby="analysis-heading" role="region" aria-label="Analysis Summary">
           <div className="card-header">
             <div>
               <h2 id="analysis-heading" tabIndex={-1} ref={headingRef}>Analysis Summary</h2>
@@ -209,7 +211,7 @@ export default function App(){
       )}
 
       {screen==='dockerError' && (
-        <section className="card" role="alert">
+        <section className="card" role="alert" aria-label="Docker error"> 
           <div className="card-header">
             <div>
               <div className="card-title">Docker not available</div>
@@ -225,12 +227,13 @@ export default function App(){
       )}
 
       {screen==='error' && (
-        <section className="card" role="alert">
+        <section className="card" role="alert" aria-label="Analysis failed"> 
           <div className="card-title">Analysis failed</div>
           <div className="card-sub">{error || 'Unexpected error'}</div>
           <div style={{marginTop:12}} className="row"><button className="btn btn-primary" onClick={retry}>Try again</button></div>
         </section>
       )}
-    </div>
+      </div>
+    </>
   )
 }
