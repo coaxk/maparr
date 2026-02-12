@@ -1,4 +1,5 @@
 import React, {useEffect, useState, useRef} from 'react'
+import axios from 'axios'
 import './App.css'
 import './index.css'
 
@@ -62,6 +63,23 @@ export default function App(){
 
   useEffect(()=>{ if(screen==='analysis' && headingRef.current) headingRef.current.focus() },[screen])
 
+  // Check docker availability on mount
+  useEffect(()=>{
+    let mounted=true
+    async function checkDocker(){
+      try{
+        const res = await axios.get('/api/docker/status')
+        if(!mounted) return
+        if(res?.data?.ok!==true){ setScreen('dockerError'); setToast('Docker not available') }
+      }catch(err){
+        if(!mounted) return
+        setScreen('dockerError')
+      }
+    }
+    checkDocker()
+    return ()=>{ mounted=false }
+  },[])
+
   function validatePath(p){
     if(!p || p.trim().length<3){
       return 'Please enter a valid project path'
@@ -69,7 +87,7 @@ export default function App(){
     return ''
   }
 
-  function startDetect(e){
+  async function startDetect(e){
     e && e.preventDefault()
     const v=validatePath(path)
     if(v){ setError(v); return }
@@ -77,24 +95,53 @@ export default function App(){
     setScreen('detecting')
     setProgress(8)
 
-    // simulate detection progress
-    let p=8
-    const iv=setInterval(()=>{
-      p += Math.floor(Math.random()*12)+6
-      if(p>=100){
-        p=100
+    try{
+      // call backend analyze endpoint
+      const res = await axios.post('/api/analyze', {path})
+      // optimistic progress
+      setProgress(60)
+
+      if(res?.data?.analysis){
+        setAnalysis(res.data.analysis)
         setProgress(100)
-        clearInterval(iv)
-        // small timeout then show analysis
-        setTimeout(()=>{
-          setAnalysis({summary:'Analysis complete', conflicts:2, recommendations:3, report:'npm install\nmaparr analyze --fix'})
-          setScreen('analysis')
-          setToast('Analysis complete')
-        },600)
+        setTimeout(()=>{ setScreen('analysis'); setToast('Analysis complete') }, 300)
+      }else if(res?.data?.error){
+        setError(res.data.error)
+        setScreen('error')
+      }else if(res?.data?.jobId){
+        // poll for job result (best-effort, backend may provide this)
+        const jobId = res.data.jobId
+        let done=false
+        for(let i=0;i<20 && !done;i++){
+          await new Promise(r=>setTimeout(r,800))
+          try{
+            const status = await axios.get(`/api/analyze/${jobId}/status`)
+            if(status?.data?.ready){
+              done=true
+              setAnalysis(status.data.analysis)
+              setProgress(100)
+              setScreen('analysis')
+              setToast('Analysis complete')
+              break
+            }else{
+              setProgress(Math.min(95, 60 + i*2))
+            }
+          }catch(e){/* ignore transient errors */}
+        }
+        if(!done){ setError('Analysis timed out'); setScreen('error') }
       }else{
-        setProgress(p)
+        // Fallback: if no useful payload, request recommendations endpoint
+        const rec = await axios.get('/api/recommendations',{params:{path}})
+        setAnalysis({summary:'Analysis (partial)', conflicts: rec?.data?.conflicts ?? 0, recommendations: rec?.data?.recommendations ?? 0, report: rec?.data?.report ?? ''})
+        setProgress(100)
+        setScreen('analysis')
+        setToast('Partial analysis complete')
       }
-    },400)
+    }catch(err){
+      console.error(err)
+      setError(err?.response?.data?.error || err.message || 'Analysis failed')
+      setScreen('error')
+    }
   }
 
   function useDefaults(){
@@ -110,6 +157,18 @@ export default function App(){
     setScreen('landing')
     setProgress(0)
     setAnalysis(null)
+  }
+
+  async function fetchRecommendations(){
+    try{
+      const res = await axios.get('/api/recommendations',{params:{path}})
+      if(res?.data){
+        setAnalysis(prev=>({...(prev||{}), recommendations: res.data.recommendations ?? prev?.recommendations, report: res.data.report ?? prev?.report}))
+        setToast('Recommendations loaded')
+      }
+    }catch(e){
+      // non-fatal
+    }
   }
 
   return (
