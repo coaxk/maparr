@@ -1,0 +1,11 @@
+/* small global resets and accessibility helpers */
+:root{font-size:16px}
+html,body,#root{height:100%}
+button{font-family:inherit}
+button:focus{outline:none}
+
+/* Ensure visible focus for keyboard users (complements App.css focus-visible) */
+:focus-visible{box-shadow:0 0 0 4px rgba(124,92,255,0.14);border-radius:6px}
+
+/* make images responsive */
+img{max-width:100%;height:auto}
