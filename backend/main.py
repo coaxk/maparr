@@ -20,6 +20,7 @@ import asyncio
 import uuid
 import json
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import docker
 from docker.errors import DockerException
@@ -1205,6 +1206,13 @@ async def shutdown_event():
     if docker_manager.client:
         docker_manager.client.close()
 
+
+# ═══════════════════════════════════════════════════════════
+# STATIC FILES - Serve frontend build
+# ═══════════════════════════════════════════════════════════
+
+if os.path.exists("frontend/dist"):
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
 
 # ═══════════════════════════════════════════════════════════
 # LOCAL DEVELOPMENT
