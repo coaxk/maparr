@@ -33,6 +33,114 @@ function Toast({message, onClose}){
   )
 }
 
+function detectClientOS(){
+  const ua = navigator.userAgent.toLowerCase()
+  const platform = navigator.platform?.toLowerCase() || ''
+  if(ua.includes('win')) return 'windows'
+  if(ua.includes('mac') || ua.includes('darwin')) return 'mac'
+  if(ua.includes('linux')){
+    // WSL2 browsers run on Windows but report Linux in some contexts
+    if(ua.includes('wsl') || ua.includes('microsoft')) return 'wsl2'
+    return 'linux'
+  }
+  if(platform.includes('win')) return 'windows'
+  if(platform.includes('mac')) return 'mac'
+  if(platform.includes('linux')) return 'linux'
+  return 'unknown'
+}
+
+function DockerHelp({onRetry, onSkip}){
+  const [retrying, setRetrying] = useState(false)
+  const os = detectClientOS()
+
+  async function handleRetry(){
+    setRetrying(true)
+    try{
+      if(onRetry) await onRetry()
+    }finally{
+      setRetrying(false)
+    }
+  }
+
+  const sections = [
+    {
+      id: 'desktop',
+      show: os === 'windows' || os === 'mac' || os === 'unknown',
+      title: 'Docker Desktop (Windows/Mac)',
+      steps: [
+        'Ensure the Docker Desktop app is running',
+        'Check: Icon in system tray should be active',
+        'If stuck: Restart Docker Desktop',
+      ],
+    },
+    {
+      id: 'engine',
+      show: os === 'linux' || os === 'unknown',
+      title: 'Docker Engine (Linux)',
+      steps: [
+        'Start the Docker service:',
+        'sudo systemctl start docker',
+        'Check status: docker --version',
+      ],
+    },
+    {
+      id: 'wsl2',
+      show: os === 'windows' || os === 'wsl2' || os === 'unknown',
+      title: 'WSL2 (Windows with Docker Desktop)',
+      steps: [
+        'Docker Desktop must be running on Windows',
+        'WSL2 integration auto-detects it',
+        'Check: run docker ps inside WSL terminal',
+      ],
+    },
+    {
+      id: 'podman',
+      show: true,
+      title: 'Podman (alternative to Docker)',
+      steps: ['Not yet supported (coming in v1.1)'],
+    },
+  ]
+
+  return (
+    <section className="card" role="alert" aria-label="Docker connection help">
+      <div className="card-header">
+        <div>
+          <div className="card-title">Docker Connection Failed</div>
+          <div className="card-sub">MapArr needs Docker to detect your containers. Here's how to fix it based on your setup:</div>
+        </div>
+      </div>
+
+      <div className="list" style={{marginTop:12}}>
+        {sections.filter(s=>s.show).map(s=>(
+          <div key={s.id} className="card" style={{padding:'12px 16px'}}>
+            <div className="card-title" style={{fontSize:'0.95rem'}}>{s.title}</div>
+            <ul style={{margin:'6px 0 0 0', paddingLeft:20, listStyle:'none'}}>
+              {s.steps.map((step,i)=>(
+                <li key={i} className="small" style={{marginTop:3, color: step.startsWith('sudo') || step.startsWith('docker') ? 'var(--accent)' : 'inherit'}}>
+                  {step.startsWith('sudo') || step.startsWith('docker') || step.startsWith('run ')
+                    ? <code className="mono" style={{fontSize:'0.85rem'}}>{step}</code>
+                    : step}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      <div className="row" style={{marginTop:16}}>
+        <button className="btn btn-primary" onClick={handleRetry} disabled={retrying}>
+          {retrying ? 'Retrying...' : 'Retry Connection'}
+        </button>
+        <button type="button" className="btn btn-outline" onClick={onSkip}>Skip & Continue Anyway</button>
+      </div>
+
+      <div className="small muted" style={{marginTop:12}}>
+        Still stuck? See <a href="/TROUBLESHOOTING.md" target="_blank" rel="noopener noreferrer" style={{color:'var(--accent)'}}>TROUBLESHOOTING.md</a> for more help.
+      </div>
+    </section>
+  )
+}
+
 function CodeBlock({code}){
   const [copied,setCopied]=useState(false)
   async function copy(){
@@ -323,19 +431,22 @@ export default function App(){
       )}
 
       {screen==='dockerError' && (
-        <section className="card" role="alert" aria-label="Docker error"> 
-          <div className="card-header">
-            <div>
-              <div className="card-title">Docker not available</div>
-              <div className="card-sub">MapArr requires Docker to run certain checks</div>
-            </div>
-            <div className="row">
-              <button className="btn btn-primary" onClick={retry}>Retry</button>
-              <button className="btn btn-outline" onClick={()=>setScreen('analysis')}>Skip checks</button>
-            </div>
-          </div>
-          <div className="small muted" style={{marginTop:8}}>Troubleshooting: Ensure Docker Desktop is running and accessible to your user.</div>
-        </section>
+        <DockerHelp
+          onRetry={async ()=>{
+            try{
+              const res = await axios.post('/api/docker/reconnect')
+              if(res?.data?.connected){
+                setToast('Docker connected!')
+                setScreen('landing')
+              } else {
+                setToast('Still not connected')
+              }
+            }catch(e){
+              setToast('Retry failed')
+            }
+          }}
+          onSkip={()=>{ setScreen('landing'); setToast('Continuing without Docker') }}
+        />
       )}
 
       {screen==='error' && (
