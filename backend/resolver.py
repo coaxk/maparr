@@ -190,6 +190,12 @@ def _resolve_manual(stack: Path, compose_file: Path) -> Dict[str, Any]:
             f"{compose_file.name} has no 'services' key — not a compose file"
         )
 
+    if not isinstance(data["services"], dict):
+        raise ResolveError(
+            f"{compose_file.name} has invalid 'services' — expected a mapping, "
+            f"got {type(data['services']).__name__}"
+        )
+
     return data
 
 

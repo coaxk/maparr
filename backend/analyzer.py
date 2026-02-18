@@ -624,10 +624,12 @@ def _get_path_root(path: str) -> Optional[str]:
 
     We go 2 levels deep for absolute paths, 1 for relative.
     """
+    original = path
     path = path.replace("\\", "/").rstrip("/")
 
     if not path:
-        return None
+        # "/" strips to "" — that's root. But "" input is None.
+        return "/" if original else None
 
     parts = path.split("/")
 
