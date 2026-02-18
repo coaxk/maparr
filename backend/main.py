@@ -1,15 +1,14 @@
 """
 MapArr v1.0 — Path Mapping Problem Solver
 
-Lean FastAPI backend. Three jobs:
+Lean FastAPI backend. Four jobs:
   1. Parse error text (extract service + path + error type)
   2. Discover compose stacks on the filesystem
-  3. Accept stack selection and prepare for analysis (WO2+)
+  3. Accept stack selection
+  4. Analyze stack: resolve compose, detect conflicts, generate fix
 
 No Docker SDK dependency. No SQLite. No SSE streaming.
 No history, no persistence, no jobs system.
-
-The old 1200-line monolith is gone. This is the foundation.
 """
 
 import logging
@@ -23,6 +22,8 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.parser import parse_error
 from backend.discovery import discover_stacks
+from backend.resolver import resolve_compose, ResolveError
+from backend.analyzer import analyze_stack
 
 # ─── Logging ───
 
@@ -178,6 +179,82 @@ async def api_select_stack(request: Request):
         "parsed_error": _session.get("parsed_error"),
         "next_step": "Analysis engine (Work Order 2)",
     }
+
+
+# ─── API: Analyze Stack (WO2) ───
+
+@app.post("/api/analyze")
+async def api_analyze(request: Request):
+    """
+    Full stack analysis: resolve compose, detect conflicts, generate fix.
+
+    This is where MapArr delivers its value. Takes the stack path and
+    optional error context from WO1, resolves the compose file, analyzes
+    volume mounts, detects path conflicts, and returns specific fixes.
+
+    Always returns 200 with results — errors are reported in the response
+    body with appropriate context, never as dead-end HTTP errors.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Invalid JSON in request body"},
+            status_code=400,
+        )
+
+    stack_path = body.get("stack_path", "").strip()
+    if not stack_path:
+        return JSONResponse(
+            {"error": "No stack_path provided"},
+            status_code=400,
+        )
+
+    if not os.path.isdir(stack_path):
+        return JSONResponse(
+            {"error": f"Directory not found: {os.path.basename(stack_path)}"},
+            status_code=400,
+        )
+
+    # Get error context (optional — from WO1 parse step)
+    error_info = body.get("error", _session.get("parsed_error"))
+    error_service = None
+    error_path = None
+    if isinstance(error_info, dict):
+        error_service = error_info.get("service")
+        error_path = error_info.get("path")
+
+    # Step 1: Resolve compose file
+    try:
+        resolved = resolve_compose(stack_path)
+    except ResolveError as e:
+        return JSONResponse({
+            "status": "error",
+            "error": str(e),
+            "stage": "resolution",
+            "stack_path": os.path.basename(stack_path),
+        }, status_code=200)
+
+    # Step 2: Analyze
+    try:
+        result = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=stack_path,
+            compose_file=resolved.get("_compose_file", ""),
+            resolution_method=resolved.get("_resolution", "unknown"),
+            error_service=error_service,
+            error_path=error_path,
+        )
+    except Exception as e:
+        logger.exception("Analysis failed for %s", os.path.basename(stack_path))
+        return JSONResponse({
+            "status": "error",
+            "error": f"Analysis failed: {e}",
+            "stage": "analysis",
+            "stack_path": os.path.basename(stack_path),
+        }, status_code=200)
+
+    return result.to_dict()
 
 
 # ─── API: Health ───

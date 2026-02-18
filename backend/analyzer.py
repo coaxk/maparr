@@ -1,0 +1,793 @@
+"""
+analyzer.py — The core analysis engine for MapArr v1.0.
+
+This is where MapArr earns its value. Given a resolved compose file
+and (optionally) the user's error context, it:
+
+  1. Extracts volume mounts per service
+  2. Classifies services (arr app, download client, media server)
+  3. Identifies service relationships (sonarr needs qbittorrent's paths)
+  4. Traces paths through volume mounts
+  5. Detects conflicts (hardlink-breaking mount structures)
+  6. Generates specific, actionable fixes
+
+The #1 problem this solves:
+  Sonarr mounts /host/tv:/data/tv
+  qBittorrent mounts /host/downloads:/downloads
+  → Hardlinks/atomic moves CANNOT work because they're separate mount trees.
+  → Fix: Both need a unified parent mount like /host/data:/data
+
+This is the TRaSH Guides pattern, and MapArr's job is to detect when
+a user's setup violates it and tell them exactly what to change.
+"""
+
+import logging
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import PurePosixPath
+from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger("maparr.analyzer")
+
+
+# ─── Known Services ───
+
+# These lists drive service classification and relationship detection.
+# Order doesn't matter — they're used for membership testing.
+
+ARR_APPS = {
+    "sonarr", "radarr", "lidarr", "readarr", "whisparr",
+    "prowlarr", "bazarr",
+}
+
+DOWNLOAD_CLIENTS = {
+    "qbittorrent", "sabnzbd", "nzbget", "transmission",
+    "deluge", "rtorrent", "jdownloader",
+}
+
+MEDIA_SERVERS = {
+    "plex", "jellyfin", "emby",
+}
+
+REQUEST_APPS = {
+    "overseerr", "jellyseerr", "ombi",
+}
+
+# Services that need to share filesystem paths for hardlinks/atomic moves.
+# An *arr app imports from a download client, then hardlinks/moves to media.
+# All three MUST share a common parent volume for hardlinks to work.
+HARDLINK_PARTICIPANTS = ARR_APPS | DOWNLOAD_CLIENTS | MEDIA_SERVERS
+
+
+# ─── Data Structures ───
+
+@dataclass
+class VolumeMount:
+    """A single volume mount for a service."""
+    raw: str                           # Original declaration from compose
+    source: str                        # Host path (or named volume)
+    target: str                        # Container path
+    read_only: bool = False            # :ro flag
+    is_named_volume: bool = False      # True if source is a named volume, not a path
+    is_bind_mount: bool = True         # True if host path → container path
+
+    def to_dict(self) -> dict:
+        return {
+            "raw": self.raw,
+            "source": self.source,
+            "target": self.target,
+            "read_only": self.read_only,
+            "is_named_volume": self.is_named_volume,
+            "is_bind_mount": self.is_bind_mount,
+        }
+
+
+@dataclass
+class ServiceInfo:
+    """Analyzed information about a single service."""
+    name: str
+    image: str = ""
+    role: str = "other"                # "arr", "download_client", "media_server", "request", "other"
+    volumes: List[VolumeMount] = field(default_factory=list)
+    environment: Dict[str, str] = field(default_factory=dict)
+    data_paths: List[str] = field(default_factory=list)  # Container paths used for media/downloads
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "image": self.image,
+            "role": self.role,
+            "volumes": [v.to_dict() for v in self.volumes],
+            "data_paths": self.data_paths,
+        }
+
+
+@dataclass
+class Conflict:
+    """A detected path mapping conflict."""
+    conflict_type: str       # "no_shared_mount", "different_host_paths", "hardlink_impossible", "path_unreachable"
+    severity: str            # "critical", "high", "medium", "low"
+    services: List[str]      # Affected service names
+    description: str         # Human-readable explanation
+    detail: str = ""         # Technical detail
+    fix: Optional[str] = None  # Suggested fix (set by fix generator)
+
+    def to_dict(self) -> dict:
+        return {
+            "type": self.conflict_type,
+            "severity": self.severity,
+            "services": self.services,
+            "description": self.description,
+            "detail": self.detail,
+            "fix": self.fix,
+        }
+
+
+@dataclass
+class AnalysisResult:
+    """Complete analysis result."""
+    stack_path: str
+    compose_file: str
+    resolution_method: str          # "docker" or "manual"
+    services: List[ServiceInfo]
+    conflicts: List[Conflict]
+    fix_summary: Optional[str] = None  # Overall fix recommendation
+    warnings: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "stack_path": self.stack_path,
+            "compose_file": os.path.basename(self.compose_file),
+            "resolution_method": self.resolution_method,
+            "services": [s.to_dict() for s in self.services],
+            "service_count": len(self.services),
+            "conflicts": [c.to_dict() for c in self.conflicts],
+            "conflict_count": len(self.conflicts),
+            "fix_summary": self.fix_summary,
+            "warnings": self.warnings,
+            "status": "healthy" if not self.conflicts else "conflicts_found",
+        }
+
+
+# ─── Main Entry Point ───
+
+def analyze_stack(
+    resolved_compose: Dict[str, Any],
+    stack_path: str,
+    compose_file: str,
+    resolution_method: str,
+    error_service: Optional[str] = None,
+    error_path: Optional[str] = None,
+) -> AnalysisResult:
+    """
+    Analyze a resolved compose file for path mapping issues.
+
+    Args:
+        resolved_compose: Output from resolver.resolve_compose()
+        stack_path: Path to the stack directory
+        compose_file: Path to the compose file
+        resolution_method: "docker" or "manual"
+        error_service: Service from parsed error (optional, for prioritization)
+        error_path: Path from parsed error (optional, for tracing)
+
+    Returns:
+        AnalysisResult with services, conflicts, and fix recommendations.
+    """
+    warnings = resolved_compose.get("_warnings", [])
+
+    # Step 1: Extract and classify services
+    services = _extract_services(resolved_compose)
+
+    # Step 2: Detect conflicts
+    conflicts = _detect_conflicts(services, error_service, error_path)
+
+    # Step 3: Generate fixes
+    _generate_fixes(conflicts, services)
+
+    # Step 4: Build summary
+    fix_summary = _build_fix_summary(conflicts, services, error_service)
+
+    return AnalysisResult(
+        stack_path=stack_path,
+        compose_file=compose_file,
+        resolution_method=resolution_method,
+        services=services,
+        conflicts=conflicts,
+        fix_summary=fix_summary,
+        warnings=warnings,
+    )
+
+
+# ─── Step 1: Extract Services ───
+
+def _extract_services(compose: Dict[str, Any]) -> List[ServiceInfo]:
+    """Extract and classify all services from resolved compose data."""
+    services = []
+    raw_services = compose.get("services", {})
+
+    for name, config in raw_services.items():
+        if not isinstance(config, dict):
+            continue
+
+        info = ServiceInfo(name=name)
+        info.image = config.get("image", "")
+        info.role = _classify_service(name, info.image)
+        info.volumes = _parse_volumes(config.get("volumes", []))
+        info.environment = _extract_env(config.get("environment", {}))
+        info.data_paths = _identify_data_paths(info)
+
+        services.append(info)
+
+    return services
+
+
+def _classify_service(name: str, image: str) -> str:
+    """Classify a service by its role in the media stack."""
+    name_lower = name.lower()
+    image_lower = image.lower()
+
+    # Check name first (most reliable for user-named services)
+    for check in (name_lower, image_lower):
+        for app in ARR_APPS:
+            if app in check:
+                return "arr"
+        for client in DOWNLOAD_CLIENTS:
+            if client in check:
+                return "download_client"
+        for server in MEDIA_SERVERS:
+            if server in check:
+                return "media_server"
+        for req in REQUEST_APPS:
+            if req in check:
+                return "request"
+
+    return "other"
+
+
+def _parse_volumes(volumes_raw: list) -> List[VolumeMount]:
+    """Parse volume declarations (short and long syntax)."""
+    mounts = []
+
+    for vol in volumes_raw:
+        if isinstance(vol, str):
+            mount = _parse_short_volume(vol)
+            if mount:
+                mounts.append(mount)
+        elif isinstance(vol, dict):
+            mount = _parse_long_volume(vol)
+            if mount:
+                mounts.append(mount)
+
+    return mounts
+
+
+def _parse_short_volume(vol_str: str) -> Optional[VolumeMount]:
+    """
+    Parse short-syntax volume: source:target[:ro]
+
+    Examples:
+      /host/path:/container/path
+      /host/path:/container/path:ro
+      named_volume:/container/path
+      ./relative:/container/path
+    """
+    parts = vol_str.split(":")
+
+    if len(parts) < 2:
+        # Single path — anonymous volume or just target
+        return VolumeMount(
+            raw=vol_str,
+            source="",
+            target=vol_str,
+            is_named_volume=False,
+            is_bind_mount=False,
+        )
+
+    # Handle Windows paths (C:\path → has a colon but it's a drive letter)
+    if len(parts) >= 3 and len(parts[0]) == 1 and parts[0].isalpha():
+        # Windows path: C:\host\path:/container/path[:ro]
+        source = parts[0] + ":" + parts[1]
+        target = parts[2]
+        read_only = len(parts) > 3 and parts[3].strip().lower() == "ro"
+    else:
+        source = parts[0]
+        target = parts[1]
+        read_only = len(parts) > 2 and parts[2].strip().lower() == "ro"
+
+    is_named = not (
+        source.startswith("/")
+        or source.startswith("./")
+        or source.startswith("../")
+        or source.startswith("~")
+        or (len(source) >= 2 and source[1] == ":")  # Windows drive
+    )
+
+    return VolumeMount(
+        raw=vol_str,
+        source=source,
+        target=target,
+        read_only=read_only,
+        is_named_volume=is_named,
+        is_bind_mount=not is_named,
+    )
+
+
+def _parse_long_volume(vol_dict: dict) -> Optional[VolumeMount]:
+    """Parse long-syntax volume: {type, source, target, read_only, ...}"""
+    source = vol_dict.get("source", "")
+    target = vol_dict.get("target", "")
+    vol_type = vol_dict.get("type", "volume")
+    read_only = vol_dict.get("read_only", False)
+
+    if not target:
+        return None
+
+    return VolumeMount(
+        raw=f"{source}:{target}" if source else target,
+        source=source,
+        target=target,
+        read_only=read_only,
+        is_named_volume=(vol_type == "volume"),
+        is_bind_mount=(vol_type == "bind"),
+    )
+
+
+def _extract_env(env_raw) -> Dict[str, str]:
+    """Extract environment variables (handles list and dict formats)."""
+    if isinstance(env_raw, dict):
+        return {k: str(v) for k, v in env_raw.items()}
+    if isinstance(env_raw, list):
+        result = {}
+        for item in env_raw:
+            if "=" in str(item):
+                key, _, val = str(item).partition("=")
+                result[key] = val
+        return result
+    return {}
+
+
+def _identify_data_paths(service: ServiceInfo) -> List[str]:
+    """
+    Identify which container paths are data paths (media, downloads, etc).
+
+    Data paths are the ones that matter for hardlinks and atomic moves.
+    Config paths (/config, /app) are not relevant.
+    """
+    data_paths = []
+    skip_targets = {"/config", "/app", "/etc", "/var", "/tmp", "/run", "/dev"}
+
+    for vol in service.volumes:
+        target = vol.target
+
+        # Skip config/system mounts
+        if any(target == s or target.startswith(s + "/") for s in skip_targets):
+            continue
+
+        # Skip named volumes (usually config)
+        if vol.is_named_volume:
+            continue
+
+        data_paths.append(target)
+
+    return data_paths
+
+
+def _is_config_mount(target: str) -> bool:
+    """Check if a container path is a config/system mount (not data)."""
+    config_targets = {"/config", "/app", "/etc", "/var", "/tmp", "/run", "/dev"}
+    target = target.rstrip("/")
+    return any(target == s or target.startswith(s + "/") for s in config_targets)
+
+
+# ─── Step 2: Conflict Detection ───
+
+def _detect_conflicts(
+    services: List[ServiceInfo],
+    error_service: Optional[str],
+    error_path: Optional[str],
+) -> List[Conflict]:
+    """
+    Detect path mapping conflicts.
+
+    Checks:
+    1. Hardlink-participant services without a shared parent mount
+    2. Same container path backed by different host paths across services
+    3. Error path unreachable by the error service
+    """
+    conflicts: List[Conflict] = []
+
+    # Get hardlink participants from this stack
+    participants = [s for s in services if s.role in ("arr", "download_client", "media_server")]
+
+    if len(participants) >= 2:
+        # Check 1: No shared parent mount (the #1 *arr problem)
+        conflicts.extend(_check_shared_mount(participants))
+
+        # Check 2: Inconsistent host path mapping
+        conflicts.extend(_check_host_path_consistency(participants))
+
+    # Check 3: Error path unreachable
+    if error_service and error_path:
+        conflicts.extend(
+            _check_error_path_reachable(services, error_service, error_path)
+        )
+
+    # Deduplicate and sort by severity
+    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    conflicts.sort(key=lambda c: severity_order.get(c.severity, 99))
+
+    return conflicts
+
+
+def _check_shared_mount(participants: List[ServiceInfo]) -> List[Conflict]:
+    """
+    Check if hardlink participants share a common parent mount.
+
+    For hardlinks to work, ALL services need to see data through the SAME
+    host directory. If sonarr mounts /host/tv:/data/tv and qbittorrent
+    mounts /host/downloads:/downloads, hardlinks fail because they're
+    separate bind mounts (different filesystems from Docker's perspective).
+
+    The fix: Mount a common parent like /host/data:/data for all services.
+    """
+    conflicts = []
+
+    # Collect bind mount sources (host paths) for DATA volumes only.
+    # Config mounts (/config, ./config) are irrelevant for hardlinks.
+    service_host_roots: Dict[str, set] = {}
+    for svc in participants:
+        roots = set()
+        for vol in svc.volumes:
+            if not vol.is_bind_mount or not vol.source:
+                continue
+            # Skip config/system targets — they don't affect hardlinks
+            if _is_config_mount(vol.target):
+                continue
+            root = _get_path_root(vol.source)
+            if root:
+                roots.add(root)
+        if roots:
+            service_host_roots[svc.name] = roots
+
+    if len(service_host_roots) < 2:
+        return conflicts
+
+    # Check if all services share at least one common host root
+    all_roots = list(service_host_roots.values())
+    common_roots = all_roots[0]
+    for roots in all_roots[1:]:
+        common_roots = common_roots & roots
+
+    if not common_roots:
+        # No shared root — this is the #1 problem
+        detail_lines = []
+        for svc_name, roots in service_host_roots.items():
+            detail_lines.append(f"  {svc_name}: {', '.join(sorted(roots))}")
+
+        conflicts.append(Conflict(
+            conflict_type="no_shared_mount",
+            severity="critical",
+            services=list(service_host_roots.keys()),
+            description=(
+                "Your services mount different host directories. "
+                "Hardlinks and atomic moves CANNOT work across separate bind mounts."
+            ),
+            detail="Host path roots per service:\n" + "\n".join(detail_lines),
+        ))
+
+    return conflicts
+
+
+def _check_host_path_consistency(participants: List[ServiceInfo]) -> List[Conflict]:
+    """
+    Check for services that map the same container path to different host paths.
+
+    Example conflict:
+      sonarr:       /host/media/tv:/data/tv
+      radarr:       /different/tv:/data/tv
+    Both see /data/tv but it points to different host directories.
+    """
+    conflicts = []
+
+    # Build target → [(service, source)] mapping (data volumes only)
+    target_sources: Dict[str, List[Tuple[str, str]]] = {}
+    for svc in participants:
+        for vol in svc.volumes:
+            if not vol.is_bind_mount or not vol.source:
+                continue
+            if _is_config_mount(vol.target):
+                continue
+            key = vol.target
+            if key not in target_sources:
+                target_sources[key] = []
+            target_sources[key].append((svc.name, vol.source))
+
+    for target, entries in target_sources.items():
+        sources = set(src for _, src in entries)
+        if len(sources) > 1:
+            svc_names = [svc for svc, _ in entries]
+            detail_lines = [f"  {svc}: {src}" for svc, src in entries]
+
+            conflicts.append(Conflict(
+                conflict_type="different_host_paths",
+                severity="high",
+                services=svc_names,
+                description=(
+                    f"Multiple services mount {target} but from different host paths. "
+                    f"They think they're sharing data, but they're not."
+                ),
+                detail="Mappings:\n" + "\n".join(detail_lines),
+            ))
+
+    return conflicts
+
+
+def _check_error_path_reachable(
+    services: List[ServiceInfo],
+    error_service: str,
+    error_path: str,
+) -> List[Conflict]:
+    """
+    Check if the path from the error message is reachable by the service.
+
+    If the user's error says "Sonarr can't find /data/downloads/file.mkv",
+    check whether Sonarr has a volume mount that covers /data/downloads.
+    """
+    conflicts = []
+
+    # Find the service
+    target_svc = None
+    for svc in services:
+        if error_service.lower() in svc.name.lower():
+            target_svc = svc
+            break
+
+    if not target_svc:
+        return conflicts
+
+    # Check if any volume mount covers the error path
+    error_path_posix = error_path.replace("\\", "/")
+    reachable = False
+
+    for vol in target_svc.volumes:
+        target = vol.target.rstrip("/")
+        if error_path_posix == target or error_path_posix.startswith(target + "/"):
+            reachable = True
+            break
+
+    if not reachable:
+        # Find the closest mount that COULD cover it
+        closest = _find_closest_mount(target_svc, error_path_posix)
+
+        conflicts.append(Conflict(
+            conflict_type="path_unreachable",
+            severity="critical",
+            services=[target_svc.name],
+            description=(
+                f"{target_svc.name} cannot access {error_path} — "
+                f"no volume mount covers this path inside the container."
+            ),
+            detail=(
+                f"Available mounts: {', '.join(v.target for v in target_svc.volumes)}"
+                + (f"\nClosest match: {closest}" if closest else "")
+            ),
+        ))
+
+    return conflicts
+
+
+def _find_closest_mount(service: ServiceInfo, path: str) -> Optional[str]:
+    """Find the volume mount target that most closely matches the given path."""
+    best = None
+    best_len = 0
+
+    for vol in service.volumes:
+        target = vol.target.rstrip("/")
+        # Check if they share a common prefix
+        common = os.path.commonpath([path, target]) if target else ""
+        if len(common) > best_len and common != "/":
+            best = vol.target
+            best_len = len(common)
+
+    return best
+
+
+def _get_path_root(path: str) -> Optional[str]:
+    """
+    Get the meaningful root of a host path.
+
+    /host/data/tv → /host/data
+    /mnt/nas/media → /mnt/nas
+    ./data → ./data
+
+    We go 2 levels deep for absolute paths, 1 for relative.
+    """
+    path = path.replace("\\", "/").rstrip("/")
+
+    if not path:
+        return None
+
+    parts = path.split("/")
+
+    # Absolute paths: use first 3 components (/host/data)
+    if path.startswith("/"):
+        meaningful = [p for p in parts if p]
+        if len(meaningful) >= 2:
+            return "/" + "/".join(meaningful[:2])
+        elif meaningful:
+            return "/" + meaningful[0]
+        return "/"
+
+    # Relative or Windows paths: use first 2 components
+    if len(parts) >= 2:
+        return "/".join(parts[:2])
+    return parts[0] if parts else None
+
+
+# ─── Step 3: Fix Generation ───
+
+def _generate_fixes(
+    conflicts: List[Conflict], services: List[ServiceInfo]
+) -> None:
+    """
+    Generate specific fix recommendations for each conflict.
+
+    Mutates conflicts in-place, setting the `fix` field.
+    """
+    participants = [s for s in services if s.role in ("arr", "download_client", "media_server")]
+
+    for conflict in conflicts:
+        if conflict.conflict_type == "no_shared_mount":
+            conflict.fix = _fix_no_shared_mount(conflict, participants)
+
+        elif conflict.conflict_type == "different_host_paths":
+            conflict.fix = _fix_different_host_paths(conflict)
+
+        elif conflict.conflict_type == "path_unreachable":
+            conflict.fix = _fix_path_unreachable(conflict, services)
+
+
+def _fix_no_shared_mount(
+    conflict: Conflict, participants: List[ServiceInfo]
+) -> str:
+    """
+    Generate fix for the #1 problem: no shared parent mount.
+
+    Recommends the TRaSH Guides unified /data structure:
+      /host/data:/data
+    with subdirectories:
+      /data/torrents  (download client)
+      /data/usenet    (usenet client)
+      /data/media/tv  (sonarr)
+      /data/media/movies (radarr)
+    """
+    lines = [
+        "RECOMMENDED FIX: Use a unified mount structure.",
+        "",
+        "Create a shared data directory on your host and mount it",
+        "identically in all services that handle media files.",
+        "",
+        "Example (TRaSH Guides pattern):",
+        "",
+        "  Host structure:",
+        "    /host/data/",
+        "      torrents/     ← download client saves here",
+        "      usenet/       ← usenet client saves here",
+        "      media/",
+        "        tv/         ← Sonarr manages",
+        "        movies/     ← Radarr manages",
+        "",
+        "  Compose volumes (ALL services get the same mount):",
+    ]
+
+    for svc in participants:
+        lines.append(f"    {svc.name}:")
+        lines.append(f"      - /host/data:/data")
+
+    lines.extend([
+        "",
+        "  Then configure each app:",
+        "    Download client root: /data/torrents (or /data/usenet)",
+        "    Sonarr root folder:   /data/media/tv",
+        "    Radarr root folder:   /data/media/movies",
+        "",
+        "This ensures hardlinks and atomic moves work because all",
+        "services see the same filesystem through the same mount.",
+    ])
+
+    return "\n".join(lines)
+
+
+def _fix_different_host_paths(conflict: Conflict) -> str:
+    """Fix for services mapping same container path to different host paths."""
+    lines = [
+        f"PROBLEM: Services share container path but map to different host directories.",
+        "",
+        "Pick ONE host path and use it consistently across all services:",
+        "",
+    ]
+
+    for svc in conflict.services:
+        lines.append(f"  {svc}:")
+        lines.append(f"    volumes:")
+        lines.append(f"      - /your/chosen/host/path:{conflict.description.split()[-1] if conflict.description else '/data'}")
+
+    return "\n".join(lines)
+
+
+def _fix_path_unreachable(
+    conflict: Conflict, services: List[ServiceInfo]
+) -> str:
+    """Fix for a service that can't reach the error path."""
+    svc_name = conflict.services[0] if conflict.services else "the service"
+
+    lines = [
+        f"PROBLEM: {svc_name} has no volume mount that covers the error path.",
+        "",
+        "You need to add or fix a volume mount so the path is accessible.",
+        "",
+        "Either:",
+        f"  1. Add a volume mount that covers the missing path",
+        f"  2. Change your app config to use a path that IS mounted",
+        "",
+        "Check your compose file's volumes section for this service.",
+    ]
+
+    return "\n".join(lines)
+
+
+# ─── Step 4: Summary ───
+
+def _build_fix_summary(
+    conflicts: List[Conflict],
+    services: List[ServiceInfo],
+    error_service: Optional[str],
+) -> Optional[str]:
+    """Build an overall human-readable summary."""
+    if not conflicts:
+        participant_count = sum(
+            1 for s in services
+            if s.role in ("arr", "download_client", "media_server")
+        )
+        if participant_count >= 2:
+            return (
+                "No path conflicts detected. Your volume mounts look correctly "
+                "structured for hardlinks and atomic moves."
+            )
+        elif participant_count == 1:
+            return (
+                "Only one media-related service found. Path conflicts typically "
+                "occur between *arr apps and download clients. Analysis is limited "
+                "with a single service."
+            )
+        else:
+            return (
+                "No *arr apps, download clients, or media servers detected in "
+                "this stack. MapArr is designed for media stack path analysis."
+            )
+
+    critical = [c for c in conflicts if c.severity == "critical"]
+    high = [c for c in conflicts if c.severity == "high"]
+
+    parts = []
+    if critical:
+        parts.append(f"{len(critical)} critical issue{'s' if len(critical) > 1 else ''}")
+    if high:
+        parts.append(f"{len(high)} high-severity issue{'s' if len(high) > 1 else ''}")
+
+    summary = f"Found {', '.join(parts)}. " if parts else ""
+
+    if any(c.conflict_type == "no_shared_mount" for c in conflicts):
+        summary += (
+            "Your services use separate mount trees, which prevents hardlinks "
+            "and atomic moves. See the fix recommendation for the unified mount pattern."
+        )
+    elif any(c.conflict_type == "path_unreachable" for c in conflicts):
+        svc = error_service or "your service"
+        summary += (
+            f"The error path is not reachable by {svc}. "
+            f"Check the volume mounts in your compose file."
+        )
+
+    return summary or None
