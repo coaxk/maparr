@@ -345,6 +345,7 @@ async function selectStack(stack, clickEvent) {
 function showAnalysisResult(data) {
     showCurrentSetup(data);
     showProblem(data);
+    showMountWarnings(data);
     showSolution(data);
     showWhyItWorks(data);
     showNextSteps();
@@ -451,6 +452,31 @@ function showProblem(data) {
             item.appendChild(detail);
         }
 
+        details.appendChild(item);
+    });
+
+    section.classList.remove("hidden");
+}
+
+// ─── Mount Warnings ───
+
+function showMountWarnings(data) {
+    const section = document.getElementById("step-mount-warnings");
+    if (!section) return;
+
+    const warnings = data.mount_warnings || [];
+    if (warnings.length === 0) {
+        section.classList.add("hidden");
+        return;
+    }
+
+    const details = document.getElementById("mount-warning-details");
+    details.replaceChildren();
+
+    warnings.forEach((text) => {
+        const item = document.createElement("div");
+        item.className = "callout callout-warning";
+        item.textContent = text;
         details.appendChild(item);
     });
 
@@ -660,6 +686,9 @@ function showHealthyResult(data) {
 
     // Still show current setup
     showCurrentSetup(data);
+
+    // Show mount warnings even for healthy stacks (e.g., NFS detected)
+    showMountWarnings(data);
 
     const callout = document.createElement("div");
     callout.className = "callout callout-success";

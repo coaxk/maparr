@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
+from backend.mounts import classify_path, check_hardlink_compatibility, MountClassification
+
 logger = logging.getLogger("maparr.analyzer")
 
 
@@ -134,6 +136,8 @@ class AnalysisResult:
     conflicts: List[Conflict]
     fix_summary: Optional[str] = None  # Overall fix recommendation
     solution_yaml: Optional[str] = None  # Copy-pasteable YAML fix
+    mount_warnings: List[str] = field(default_factory=list)  # Remote FS / hardlink warnings
+    mount_info: List[dict] = field(default_factory=list)  # Mount classifications
     warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -147,6 +151,8 @@ class AnalysisResult:
             "conflict_count": len(self.conflicts),
             "fix_summary": self.fix_summary,
             "solution_yaml": self.solution_yaml,
+            "mount_warnings": self.mount_warnings,
+            "mount_info": self.mount_info,
             "warnings": self.warnings,
             "status": "healthy" if not self.conflicts else "conflicts_found",
         }
@@ -193,6 +199,13 @@ def analyze_stack(
     # Step 5: Generate copy-pasteable solution YAML
     solution_yaml = _generate_solution_yaml(conflicts, services)
 
+    # Step 6: Mount intelligence — classify host paths and check hardlink compatibility
+    mount_classifications, mount_warnings = _analyze_mounts(services)
+    mount_info = [mc.to_dict() for mc in mount_classifications]
+
+    # Promote remote-FS warnings to conflicts if hardlink participants are affected
+    _add_mount_conflicts(conflicts, mount_classifications, services)
+
     return AnalysisResult(
         stack_path=stack_path,
         compose_file=compose_file,
@@ -201,6 +214,8 @@ def analyze_stack(
         conflicts=conflicts,
         fix_summary=fix_summary,
         solution_yaml=solution_yaml,
+        mount_warnings=mount_warnings,
+        mount_info=mount_info,
         warnings=warnings,
     )
 
@@ -899,3 +914,91 @@ def _get_recommended_container_path(service: ServiceInfo) -> Optional[str]:
         return "/data/media"
 
     return "/data"
+
+
+# ─── Step 6: Mount Intelligence ───
+
+def _analyze_mounts(
+    services: List[ServiceInfo],
+) -> Tuple[List[MountClassification], List[str]]:
+    """
+    Classify all host paths used by services and check hardlink compatibility.
+
+    Returns:
+        (classifications, warnings) — unique mount classifications and
+        any hardlink-relevant warnings (remote FS, mixed mount types, etc.)
+    """
+    # Collect unique host paths from bind mounts (skip config mounts)
+    seen_paths: set = set()
+    classifications: List[MountClassification] = []
+
+    for svc in services:
+        for vol in svc.volumes:
+            if not vol.is_bind_mount or not vol.source:
+                continue
+            if _is_config_mount(vol.target):
+                continue
+            if vol.source in seen_paths:
+                continue
+            seen_paths.add(vol.source)
+            classifications.append(classify_path(vol.source))
+
+    # Check hardlink compatibility across all classified paths
+    warnings = check_hardlink_compatibility(classifications)
+
+    return classifications, warnings
+
+
+def _add_mount_conflicts(
+    conflicts: List[Conflict],
+    classifications: List[MountClassification],
+    services: List[ServiceInfo],
+) -> None:
+    """
+    Add mount-related conflicts when remote filesystems are detected
+    on hardlink-participant services.
+    """
+    participants = [s for s in services if s.role in ("arr", "download_client", "media_server")]
+    if not participants:
+        return
+
+    # Collect host paths used by participants (data volumes only)
+    participant_sources: set = set()
+    for svc in participants:
+        for vol in svc.volumes:
+            if vol.is_bind_mount and vol.source and not _is_config_mount(vol.target):
+                participant_sources.add(vol.source)
+
+    # Check if any participant path is on a remote filesystem
+    remote_mounts = [
+        mc for mc in classifications
+        if mc.is_remote and mc.path in participant_sources
+    ]
+
+    if remote_mounts:
+        affected_services = set()
+        for svc in participants:
+            for vol in svc.volumes:
+                if vol.source in {m.path for m in remote_mounts}:
+                    affected_services.add(svc.name)
+
+        remote_detail = "\n".join(
+            f"  {mc.path}: {mc.detail}" for mc in remote_mounts
+        )
+
+        conflicts.append(Conflict(
+            conflict_type="remote_filesystem",
+            severity="high",
+            services=sorted(affected_services),
+            description=(
+                "Remote filesystem detected on media paths. "
+                "Hardlinks do not work over network shares (NFS/CIFS/SMB)."
+            ),
+            detail=remote_detail,
+            fix=(
+                "Move your media data to local storage, or ensure ALL "
+                "services access the same single NFS export. Hardlinks "
+                "only work within one filesystem — not across network "
+                "shares and local storage."
+            ),
+        ))
