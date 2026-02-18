@@ -133,6 +133,7 @@ class AnalysisResult:
     services: List[ServiceInfo]
     conflicts: List[Conflict]
     fix_summary: Optional[str] = None  # Overall fix recommendation
+    solution_yaml: Optional[str] = None  # Copy-pasteable YAML fix
     warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -145,6 +146,7 @@ class AnalysisResult:
             "conflicts": [c.to_dict() for c in self.conflicts],
             "conflict_count": len(self.conflicts),
             "fix_summary": self.fix_summary,
+            "solution_yaml": self.solution_yaml,
             "warnings": self.warnings,
             "status": "healthy" if not self.conflicts else "conflicts_found",
         }
@@ -188,6 +190,9 @@ def analyze_stack(
     # Step 4: Build summary
     fix_summary = _build_fix_summary(conflicts, services, error_service)
 
+    # Step 5: Generate copy-pasteable solution YAML
+    solution_yaml = _generate_solution_yaml(conflicts, services)
+
     return AnalysisResult(
         stack_path=stack_path,
         compose_file=compose_file,
@@ -195,6 +200,7 @@ def analyze_stack(
         services=services,
         conflicts=conflicts,
         fix_summary=fix_summary,
+        solution_yaml=solution_yaml,
         warnings=warnings,
     )
 
@@ -791,3 +797,105 @@ def _build_fix_summary(
         )
 
     return summary or None
+
+
+# ─── Step 5: Solution YAML ───
+
+# Role → recommended container path mapping.
+# Uses the TRaSH Guides unified /data structure.
+_ROLE_CONTAINER_PATHS = {
+    "sonarr": "/data/media/tv",
+    "radarr": "/data/media/movies",
+    "lidarr": "/data/media/music",
+    "readarr": "/data/media/books",
+    "whisparr": "/data/media/xxx",
+    "bazarr": "/data/media",
+    "prowlarr": None,  # Prowlarr doesn't need data mounts
+    "qbittorrent": "/data/torrents",
+    "transmission": "/data/torrents",
+    "deluge": "/data/torrents",
+    "rtorrent": "/data/torrents",
+    "sabnzbd": "/data/usenet",
+    "nzbget": "/data/usenet",
+    "jdownloader": "/data/downloads",
+    "plex": "/data/media",
+    "jellyfin": "/data/media",
+    "emby": "/data/media",
+}
+
+
+def _generate_solution_yaml(
+    conflicts: List[Conflict], services: List[ServiceInfo]
+) -> Optional[str]:
+    """
+    Generate copy-pasteable YAML showing the recommended volume configuration.
+
+    Only generated when there are conflicts to fix. The YAML shows
+    the volumes section for each affected service, using the TRaSH Guides
+    unified /data mount pattern.
+    """
+    if not conflicts:
+        return None
+
+    # Collect affected services
+    affected_names = set()
+    for conflict in conflicts:
+        affected_names.update(conflict.services)
+
+    if not affected_names:
+        return None
+
+    # Find affected ServiceInfo objects
+    affected = [s for s in services if s.name in affected_names]
+    if not affected:
+        return None
+
+    lines = [
+        "# Recommended volume configuration (TRaSH Guides pattern)",
+        "# All services share one host directory mounted as /data",
+        "#",
+        "# Host setup required:",
+        "#   mkdir -p /host/data/{media/{tv,movies,music},torrents,usenet}",
+        "#",
+        "# Replace /host/data with your actual host path.",
+        "",
+        "services:",
+    ]
+
+    for svc in affected:
+        lines.append(f"  {svc.name}:")
+        lines.append(f"    volumes:")
+
+        # Keep existing config mounts
+        for vol in svc.volumes:
+            if _is_config_mount(vol.target) or vol.is_named_volume:
+                lines.append(f"      - {vol.raw}")
+
+        # Add the unified data mount
+        container_path = _get_recommended_container_path(svc)
+        if container_path:
+            lines.append(f"      - /host/data:{container_path}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _get_recommended_container_path(service: ServiceInfo) -> Optional[str]:
+    """Get the recommended container data path for a service."""
+    name_lower = service.name.lower()
+
+    # Check the lookup table by service name
+    for key, path in _ROLE_CONTAINER_PATHS.items():
+        if key in name_lower:
+            return path
+
+    # Fallback by role
+    if service.role == "arr":
+        return "/data/media"
+    elif service.role == "download_client":
+        return "/data/torrents"
+    elif service.role == "media_server":
+        return "/data/media"
+
+    return "/data"

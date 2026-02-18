@@ -80,13 +80,113 @@
         <div id="stacks-search-note" class="search-note"></div>
     </section>
 
-    <!-- Step 3: Ready for Analysis (WO2 placeholder) -->
-    <section class="card hidden" id="step-ready">
+    <!-- Step 3: Analysis (loading) -->
+    <section class="card hidden" id="step-analyzing">
+        <div class="step-header">
+            <span class="step-number">3</span>
+            <h2>Analyzing Your Stack</h2>
+        </div>
+        <div class="loading">
+            <div class="spinner"></div>
+            <span>Resolving compose file, tracing volumes, detecting conflicts...</span>
+        </div>
+    </section>
+
+    <!-- Step 3: Results — Your Current Setup -->
+    <section class="card hidden" id="step-current-setup">
+        <div class="step-header">
+            <span class="step-number">3</span>
+            <h2>Your Current Setup</h2>
+        </div>
+        <p class="step-desc">
+            MapArr scanned your compose file and found this configuration.
+        </p>
+        <div id="current-setup-details"></div>
+    </section>
+
+    <!-- The Problem -->
+    <section class="card hidden" id="step-problem">
+        <div class="step-header">
+            <span class="step-number problem-icon">!</span>
+            <h2>The Problem</h2>
+        </div>
+        <div id="problem-details"></div>
+    </section>
+
+    <!-- The Solution -->
+    <section class="card hidden" id="step-solution">
         <div class="step-header">
             <span class="step-number ok">&#10003;</span>
-            <h2>Ready for Analysis</h2>
+            <h2>The Solution</h2>
         </div>
-        <div id="ready-details" class="ready-details"></div>
+        <p class="step-desc" id="solution-summary"></p>
+        <div class="code-block">
+            <pre id="solution-yaml"></pre>
+            <button class="copy-btn" id="btn-copy" onclick="copySolutionYaml()">Copy to Clipboard</button>
+        </div>
+        <p class="step-desc">
+            After making this change, restart your containers:
+        </p>
+        <div class="code-block code-block-small">
+            <pre>docker compose down &amp;&amp; docker compose up -d</pre>
+        </div>
+    </section>
+
+    <!-- Why This Works -->
+    <section class="card hidden" id="step-why">
+        <div class="step-header">
+            <span class="step-number info-icon">i</span>
+            <h2>Why This Works</h2>
+        </div>
+        <div id="why-details"></div>
+    </section>
+
+    <!-- Next Steps -->
+    <section class="card hidden" id="step-next">
+        <div class="step-header">
+            <span class="step-number">&#10003;</span>
+            <h2>Next Steps</h2>
+        </div>
+        <div class="checklist" id="next-steps-checklist"></div>
+    </section>
+
+    <!-- TRaSH Advisory -->
+    <section class="card hidden" id="step-trash">
+        <div class="step-header">
+            <span class="step-number gold-icon">&#9733;</span>
+            <h2>Gold Standard Setup (Optional)</h2>
+        </div>
+        <div id="trash-details"></div>
+    </section>
+
+    <!-- Healthy Result (no conflicts) -->
+    <section class="card hidden" id="step-healthy">
+        <div class="step-header">
+            <span class="step-number ok">&#10003;</span>
+            <h2>Your Setup Looks Good</h2>
+        </div>
+        <div id="healthy-details"></div>
+    </section>
+
+    <!-- Analysis Error -->
+    <section class="card hidden" id="step-analysis-error">
+        <div class="step-header">
+            <span class="step-number problem-icon">!</span>
+            <h2>Analysis Issue</h2>
+        </div>
+        <div id="analysis-error-details"></div>
+    </section>
+
+    <!-- Analyze Another -->
+    <section class="card hidden" id="step-again">
+        <div class="step-actions" style="justify-content: center;">
+            <button class="btn btn-primary" onclick="location.reload()">
+                Analyze Another Stack
+            </button>
+            <a class="btn btn-ghost" href="https://trash-guides.info/Hardlinks/Docker/" target="_blank" rel="noopener">
+                TRaSH Guides
+            </a>
+        </div>
     </section>
 
 </main>

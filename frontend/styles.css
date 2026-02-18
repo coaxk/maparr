@@ -483,20 +483,266 @@ body {
     color: var(--text-muted);
 }
 
-/* ─── Ready Details ─── */
+/* ─── Step Number Variants ─── */
 
-.ready-details {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+.step-number.problem-icon {
+    background: var(--error);
 }
 
-.ready-next {
-    margin-top: 0.75rem;
-    padding: 0.75rem 1rem;
-    background: rgba(63, 185, 80, 0.08);
-    border: 1px solid rgba(63, 185, 80, 0.15);
+.step-number.info-icon {
+    background: var(--accent);
+    font-style: italic;
+    font-family: serif;
+    font-size: 1rem;
+}
+
+.step-number.gold-icon {
+    background: var(--warning);
+}
+
+/* ─── Code Block (Solution YAML) ─── */
+
+.code-block {
+    position: relative;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
+    margin: 1rem 0;
+}
+
+.code-block pre {
+    margin: 0;
+    padding: 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.83rem;
+    line-height: 1.5;
+    color: var(--accent);
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.code-block-small pre {
+    padding: 0.6rem 1rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.copy-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: var(--accent);
+    color: var(--bg-body);
+    border: none;
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.copy-btn:hover {
+    opacity: 0.85;
+}
+
+.copy-btn.copied {
+    background: var(--success);
+}
+
+/* ─── Analysis: Service Volume Table ─── */
+
+.service-volume-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.75rem 0;
+    font-size: 0.85rem;
+}
+
+.service-volume-table th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+}
+
+.service-volume-table td {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid rgba(42, 46, 58, 0.5);
+    color: var(--text-secondary);
+}
+
+.service-volume-table .svc-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.service-volume-table .svc-role {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.service-volume-table .vol-path {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+}
+
+/* ─── Analysis: Conflict Cards ─── */
+
+.conflict-item {
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    border-radius: var(--radius-sm);
+    border-left: 3px solid;
+}
+
+.conflict-critical {
+    border-left-color: var(--error);
+    background: rgba(248, 81, 73, 0.06);
+}
+
+.conflict-high {
+    border-left-color: var(--warning);
+    background: rgba(210, 153, 34, 0.06);
+}
+
+.conflict-medium {
+    border-left-color: var(--accent);
+    background: rgba(74, 144, 217, 0.06);
+}
+
+.conflict-description {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    margin-bottom: 0.3rem;
+}
+
+.conflict-detail {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    white-space: pre-wrap;
+}
+
+.conflict-severity {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.4rem;
+}
+
+.severity-critical {
+    background: rgba(248, 81, 73, 0.15);
+    color: var(--error);
+}
+
+.severity-high {
+    background: rgba(210, 153, 34, 0.15);
+    color: var(--warning);
+}
+
+/* ─── Checklist ─── */
+
+.checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.checklist-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+}
+
+.checklist-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    cursor: pointer;
+    accent-color: var(--success);
+    flex-shrink: 0;
+}
+
+.checklist-item label {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.checklist-item code {
+    padding: 0.1rem 0.35rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--accent);
+}
+
+/* ─── Callouts ─── */
+
+.callout {
+    padding: 0.75rem 1rem;
+    border-left: 3px solid var(--accent);
+    background: rgba(74, 144, 217, 0.06);
+    border-radius: var(--radius-sm);
+    margin: 0.75rem 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.callout.callout-success {
+    border-left-color: var(--success);
+    background: rgba(63, 185, 80, 0.06);
+}
+
+.callout.callout-warning {
+    border-left-color: var(--warning);
+    background: rgba(210, 153, 34, 0.06);
+}
+
+.callout a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.callout a:hover {
+    text-decoration: underline;
+}
+
+/* ─── TRaSH Advisory ─── */
+
+.trash-structure {
+    font-family: var(--font-mono);
+    font-size: 0.83rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    padding: 0.75rem 1rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin: 0.75rem 0;
+    white-space: pre;
+}
+
+/* ─── Healthy State ─── */
+
+.healthy-message {
+    font-size: 0.95rem;
+    color: var(--success);
+    margin-bottom: 0.5rem;
+}
+
+.healthy-detail {
     font-size: 0.85rem;
     color: var(--text-secondary);
 }
