@@ -40,7 +40,8 @@ async function checkHealth() {
     try {
         const resp = await fetch("/api/health");
         if (resp.ok) {
-            el.textContent = "Connected";
+            const data = await resp.json();
+            el.textContent = "Connected · v" + (data.version || "1.0.0");
             el.className = "header-status connected";
         } else {
             el.textContent = "Backend error";
@@ -204,6 +205,12 @@ async function showStackSelection() {
         if (data.search_note) {
             note.textContent = data.search_note;
         }
+
+        // Update connection status with stack count
+        const healthEl = document.getElementById("health-status");
+        if (healthEl.classList.contains("connected") && state.stacks.length > 0) {
+            healthEl.textContent = "Connected · " + state.stacks.length + " stacks";
+        }
     } catch (err) {
         loading.classList.add("hidden");
         empty.classList.remove("hidden");
@@ -216,74 +223,132 @@ async function showStackSelection() {
 
 // ─── Render Stacks ───
 
+// Known service names for classification (must match backend)
+const _ARR_APPS = ["sonarr", "radarr", "lidarr", "readarr", "whisparr", "prowlarr", "bazarr"];
+const _DL_CLIENTS = ["qbittorrent", "sabnzbd", "nzbget", "transmission", "deluge", "rtorrent", "jdownloader"];
+const _MEDIA_SERVERS = ["plex", "jellyfin", "emby"];
+
+function classifyStack(stack) {
+    const names = (stack.services || []).map((s) => s.toLowerCase());
+    if (names.some((n) => _ARR_APPS.some((a) => n.includes(a)))) return "arr";
+    if (names.some((n) => _DL_CLIENTS.some((d) => n.includes(d)))) return "download";
+    if (names.some((n) => _MEDIA_SERVERS.some((m) => n.includes(m)))) return "media";
+    return "other";
+}
+
 function renderStacks(stacks) {
     const list = document.getElementById("stacks-list");
     list.replaceChildren();
 
     const detectedService = state.parsedError?.service?.toLowerCase() || "";
 
+    // Group stacks by role
+    const groups = { arr: [], download: [], media: [], other: [] };
     stacks.forEach((stack) => {
-        const item = document.createElement("div");
-        item.className = "stack-item";
-        item.addEventListener("click", (e) => selectStack(stack, e));
-
-        // Left: info
-        const info = document.createElement("div");
-        info.className = "stack-info";
-
-        const name = document.createElement("div");
-        name.className = "stack-name";
-        const dirName = extractDirName(stack.path);
-        name.textContent = dirName;
-        info.appendChild(name);
-
-        const path = document.createElement("div");
-        path.className = "stack-path";
-        path.textContent = stack.path;
-        info.appendChild(path);
-
-        // Service tags
-        if (stack.services && stack.services.length > 0) {
-            const tags = document.createElement("div");
-            tags.className = "stack-services";
-            stack.services.forEach((svc) => {
-                const tag = document.createElement("span");
-                tag.className = "service-tag";
-                if (detectedService && svc.toLowerCase().includes(detectedService)) {
-                    tag.className += " highlight";
-                }
-                tag.textContent = svc;
-                tags.appendChild(tag);
-            });
-            info.appendChild(tags);
-        }
-
-        if (stack.error) {
-            const err = document.createElement("div");
-            err.className = "stack-error";
-            err.textContent = stack.error;
-            info.appendChild(err);
-        }
-
-        item.appendChild(info);
-
-        // Right: meta
-        const meta = document.createElement("div");
-        meta.className = "stack-meta";
-
-        const count = document.createElement("span");
-        count.className = "stack-count";
-        count.textContent = stack.service_count + " service" + (stack.service_count !== 1 ? "s" : "");
-        meta.appendChild(count);
-
-        const source = document.createElement("span");
-        source.className = "stack-source";
-        source.textContent = stack.source;
-        meta.appendChild(source);
-
-        item.appendChild(meta);
-        list.appendChild(item);
+        const role = classifyStack(stack);
+        groups[role].push(stack);
     });
+
+    // Sort within each group alphabetically
+    Object.values(groups).forEach((g) =>
+        g.sort((a, b) => extractDirName(a.path).localeCompare(extractDirName(b.path)))
+    );
+
+    // Total count
+    const total = document.createElement("div");
+    total.className = "stacks-total";
+    total.textContent = stacks.length + " stack" + (stacks.length !== 1 ? "s" : "") + " detected";
+    list.appendChild(total);
+
+    // Render each group
+    const groupMeta = [
+        { key: "arr", label: "*arr Apps", items: groups.arr },
+        { key: "download", label: "Download Clients", items: groups.download },
+        { key: "media", label: "Media Servers", items: groups.media },
+        { key: "other", label: "Infrastructure & Other", items: groups.other },
+    ];
+
+    groupMeta.forEach(({ label, items }) => {
+        if (items.length === 0) return;
+
+        const header = document.createElement("div");
+        header.className = "stack-group-header";
+        const headerText = document.createElement("span");
+        headerText.textContent = label;
+        header.appendChild(headerText);
+        const headerCount = document.createElement("span");
+        headerCount.className = "stack-group-count";
+        headerCount.textContent = "(" + items.length + ")";
+        header.appendChild(headerCount);
+        list.appendChild(header);
+
+        items.forEach((stack) => {
+            list.appendChild(renderStackItem(stack, detectedService));
+        });
+    });
+}
+
+function renderStackItem(stack, detectedService) {
+    const item = document.createElement("div");
+    item.className = "stack-item";
+    item.addEventListener("click", (e) => selectStack(stack, e));
+
+    // Left: info
+    const info = document.createElement("div");
+    info.className = "stack-info";
+
+    const name = document.createElement("div");
+    name.className = "stack-name";
+    const dirName = extractDirName(stack.path);
+    name.textContent = dirName;
+    info.appendChild(name);
+
+    const path = document.createElement("div");
+    path.className = "stack-path";
+    path.textContent = stack.path;
+    info.appendChild(path);
+
+    // Service tags
+    if (stack.services && stack.services.length > 0) {
+        const tags = document.createElement("div");
+        tags.className = "stack-services";
+        stack.services.forEach((svc) => {
+            const tag = document.createElement("span");
+            tag.className = "service-tag";
+            if (detectedService && svc.toLowerCase().includes(detectedService)) {
+                tag.className += " highlight";
+            }
+            tag.textContent = svc;
+            tags.appendChild(tag);
+        });
+        info.appendChild(tags);
+    }
+
+    if (stack.error) {
+        const err = document.createElement("div");
+        err.className = "stack-error";
+        err.textContent = stack.error;
+        info.appendChild(err);
+    }
+
+    item.appendChild(info);
+
+    // Right: meta
+    const meta = document.createElement("div");
+    meta.className = "stack-meta";
+
+    const count = document.createElement("span");
+    count.className = "stack-count";
+    count.textContent = stack.service_count + " service" + (stack.service_count !== 1 ? "s" : "");
+    meta.appendChild(count);
+
+    const source = document.createElement("span");
+    source.className = "stack-source";
+    source.textContent = stack.source;
+    meta.appendChild(source);
+
+    item.appendChild(meta);
+    return item;
 }
 
 // ─── Select Stack → Analyze ───
@@ -300,11 +365,14 @@ async function selectStack(stack, clickEvent) {
 
     state.selectedStack = stack.path;
 
-    // Show analyzing spinner
-    document.getElementById("step-analyzing").classList.remove("hidden");
-    document.getElementById("step-analyzing").scrollIntoView({
-        behavior: "smooth", block: "nearest",
-    });
+    // Show terminal with initial message
+    const termSection = document.getElementById("step-analyzing");
+    const termOutput = document.getElementById("terminal-output");
+    termOutput.replaceChildren();
+    setTerminalDots("running");
+    addTerminalLine("run", "Resolving compose for " + extractDirName(stack.path) + "...");
+    termSection.classList.remove("hidden");
+    termSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
     try {
         const resp = await fetch("/api/analyze", {
@@ -316,10 +384,10 @@ async function selectStack(stack, clickEvent) {
             }),
         });
 
-        document.getElementById("step-analyzing").classList.add("hidden");
-
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ error: "Analysis failed" }));
+            addTerminalLine("fail", err.error || "Analysis request failed");
+            setTerminalDots("error");
             showAnalysisError(err.error || "Analysis request failed");
             return;
         }
@@ -327,16 +395,73 @@ async function selectStack(stack, clickEvent) {
         const data = await resp.json();
         state.analysis = data;
 
+        // Render terminal steps with staggered animation
+        await renderTerminalSteps(data.steps || []);
+
         if (data.status === "error") {
+            setTerminalDots("error");
             showAnalysisError(data.error, data.stage);
-        } else if (data.status === "healthy") {
-            showHealthyResult(data);
         } else {
-            showAnalysisResult(data);
+            setTerminalDots("done");
+            if (data.status === "healthy") {
+                showHealthyResult(data);
+            } else {
+                showAnalysisResult(data);
+            }
         }
     } catch {
-        document.getElementById("step-analyzing").classList.add("hidden");
+        setTerminalDots("error");
+        addTerminalLine("fail", "Could not reach the backend. Is MapArr running?");
         showAnalysisError("Could not reach the backend. Is MapArr running?");
+    }
+}
+
+// ─── Terminal Rendering ───
+
+function setTerminalDots(state) {
+    const red = document.getElementById("dot-red");
+    const yellow = document.getElementById("dot-yellow");
+    const green = document.getElementById("dot-green");
+    // Reset all
+    red.className = "terminal-dot";
+    yellow.className = "terminal-dot";
+    green.className = "terminal-dot";
+
+    if (state === "running") {
+        yellow.classList.add("active-yellow");
+    } else if (state === "done") {
+        green.classList.add("active-green");
+    } else if (state === "error") {
+        red.classList.add("active-red");
+    }
+}
+
+function addTerminalLine(icon, text) {
+    const termOutput = document.getElementById("terminal-output");
+    const line = document.createElement("div");
+    line.className = "terminal-line" + (icon === "done" ? " done-line" : "");
+    const iconSpan = document.createElement("span");
+    iconSpan.className = "terminal-icon " + icon;
+    line.appendChild(iconSpan);
+    const textSpan = document.createElement("span");
+    textSpan.textContent = text;
+    line.appendChild(textSpan);
+    termOutput.appendChild(line);
+    termOutput.scrollTop = termOutput.scrollHeight;
+    return line;
+}
+
+async function renderTerminalSteps(steps) {
+    const termOutput = document.getElementById("terminal-output");
+    // Clear the initial "Resolving..." line
+    termOutput.replaceChildren();
+
+    for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        addTerminalLine(step.icon || "info", step.text);
+        // Stagger delay — faster for info lines, slight pause for results
+        const delay = step.icon === "info" ? 60 : 120;
+        await new Promise((r) => setTimeout(r, delay));
     }
 }
 
@@ -349,6 +474,7 @@ function showAnalysisResult(data) {
     showSolution(data);
     showWhyItWorks(data);
     showNextSteps();
+    showCategoryAdvisory(data);
     showTrashAdvisory();
     showAgainButton();
 }
@@ -374,14 +500,12 @@ function showCurrentSetup(data) {
     thead.appendChild(headerRow);
     table.appendChild(thead);
 
-    // Body
+    // Body — show ALL volumes, dim config mounts for transparency
     const tbody = document.createElement("tbody");
     (data.services || []).forEach((svc) => {
-        const dataVols = (svc.volumes || []).filter(
-            (v) => !isConfigVolume(v.target)
-        );
+        const allVols = svc.volumes || [];
 
-        if (dataVols.length === 0 && svc.role === "other") return;
+        if (allVols.length === 0 && svc.role === "other") return;
 
         const row = document.createElement("tr");
 
@@ -397,15 +521,16 @@ function showCurrentSetup(data) {
 
         const volCell = document.createElement("td");
         volCell.className = "vol-path";
-        if (dataVols.length > 0) {
-            dataVols.forEach((v, i) => {
+        if (allVols.length > 0) {
+            allVols.forEach((v, i) => {
                 if (i > 0) volCell.appendChild(document.createElement("br"));
                 const span = document.createElement("span");
                 span.textContent = v.source + " : " + v.target;
+                span.className = isConfigVolume(v.target) ? "vol-config" : "vol-data";
                 volCell.appendChild(span);
             });
         } else {
-            volCell.textContent = "(no data volumes)";
+            volCell.textContent = "(no volumes)";
         }
         row.appendChild(volCell);
 
@@ -615,6 +740,84 @@ function showNextSteps() {
     section.classList.remove("hidden");
 }
 
+// ─── Category Path Advisory ───
+
+function showCategoryAdvisory(data) {
+    const section = document.getElementById("step-category-warning");
+    if (!section) return;
+
+    // Only show when we detect both an *arr app and a download client
+    const services = data.services || [];
+    const hasArr = services.some((s) => s.role === "arr");
+    const hasDl = services.some((s) => s.role === "download_client");
+
+    if (!hasArr || !hasDl) {
+        section.classList.add("hidden");
+        return;
+    }
+
+    const details = document.getElementById("category-warning-details");
+    details.replaceChildren();
+
+    const intro = document.createElement("p");
+    intro.className = "category-intro";
+    intro.textContent =
+        "MapArr analyzes your Docker volume mounts — but there's one layer it can't see. " +
+        "This is the #1 cause of import failures that survives a correct volume setup.";
+    details.appendChild(intro);
+
+    const callout = document.createElement("div");
+    callout.className = "callout callout-category";
+
+    const title = document.createElement("strong");
+    title.style.cssText = "display: block; margin-bottom: 0.4rem; font-size: 0.95rem;";
+    title.textContent = "Your download client's category save path must match your volume mounts.";
+    callout.appendChild(title);
+
+    // Build specific guidance based on detected services
+    const arrNames = services.filter((s) => s.role === "arr").map((s) => s.name);
+    const dlNames = services.filter((s) => s.role === "download_client").map((s) => s.name);
+
+    const example = document.createElement("p");
+    example.style.cssText = "margin: 0.5rem 0; font-size: 0.85rem; color: var(--text-secondary);";
+
+    const dlName = dlNames[0] || "your download client";
+    const arrName = arrNames[0] || "your *arr app";
+    const isQbit = dlName.toLowerCase().includes("qbit") || dlName.toLowerCase().includes("torrent");
+    const isSab = dlName.toLowerCase().includes("sab") || dlName.toLowerCase().includes("nzb");
+
+    if (isQbit) {
+        example.textContent =
+            "In qBittorrent: go to Options > Downloads. Check the Default Save Path " +
+            "AND each category's save path (right-click a category > Edit). " +
+            "These must point to a directory inside a volume mount that " +
+            arrName + " can also see. Example: /data/torrents/tv-sonarr";
+    } else if (isSab) {
+        example.textContent =
+            "In SABnzbd: go to Config > Folders. Check the Completed Download Folder " +
+            "and any category-specific output folders. " +
+            "These must point to a directory inside a volume mount that " +
+            arrName + " can also see. Example: /data/usenet/tv-sonarr";
+    } else {
+        example.textContent =
+            "In " + dlName + ": find the download save path / category output folder settings. " +
+            "These must point to a directory inside a volume mount that " +
+            arrName + " can also see.";
+    }
+    callout.appendChild(example);
+
+    const why = document.createElement("p");
+    why.style.cssText = "margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--text-muted);";
+    why.textContent =
+        "Why this matters: when " + arrName + " tries to import a completed download, " +
+        "it looks at the path " + dlName + " reports. If that path isn't under a " +
+        "shared volume mount, the import fails — even if your compose volumes are perfect.";
+    callout.appendChild(why);
+
+    details.appendChild(callout);
+    section.classList.remove("hidden");
+}
+
 // ─── TRaSH Advisory ───
 
 function showTrashAdvisory() {
@@ -694,11 +897,96 @@ function showHealthyResult(data) {
     callout.className = "callout callout-success";
     callout.textContent =
         "Your volume mounts look correctly structured for hardlinks and atomic moves. " +
-        "If you're still experiencing errors, the issue may be with app configuration " +
-        "(root folder settings) rather than Docker path mapping.";
+        "If you're still experiencing errors, the issue is likely app configuration, not Docker.";
     details.appendChild(callout);
 
+    // Actionable next steps when setup is healthy
+    const guidance = document.createElement("div");
+    guidance.className = "healthy-guidance";
+
+    const guidanceTitle = document.createElement("h3");
+    guidanceTitle.textContent = "If you still have errors, check:";
+    guidanceTitle.style.cssText = "font-size: 0.9rem; margin: 1rem 0 0.5rem; color: var(--text-primary);";
+    guidance.appendChild(guidanceTitle);
+
+    // Secret sauce callout — download client categories
+    const categoryCallout = document.createElement("div");
+    categoryCallout.className = "callout callout-category";
+
+    const catTitle = document.createElement("strong");
+    catTitle.textContent = "Most likely cause: Download client category paths";
+    catTitle.style.cssText = "display: block; margin-bottom: 0.4rem; color: var(--text-primary); font-size: 0.9rem;";
+    categoryCallout.appendChild(catTitle);
+
+    const catDesc = document.createElement("p");
+    catDesc.style.cssText = "margin: 0 0 0.5rem; color: var(--text-secondary); font-size: 0.85rem;";
+    catDesc.textContent =
+        "This is the #1 overlooked cause of import failures. Your Docker volumes can be perfect " +
+        "and imports will still fail if your download client's category save path doesn't match " +
+        "a path your *arr app can see.";
+    categoryCallout.appendChild(catDesc);
+
+    const catHow = document.createElement("p");
+    catHow.style.cssText = "margin: 0; color: var(--text-secondary); font-size: 0.85rem;";
+    catHow.textContent =
+        "In qBittorrent: Options > Downloads > Default Save Path (and per-category paths). " +
+        "In SABnzbd: Config > Folders > Completed Download Folder. " +
+        "These paths must be under a directory that your *arr app's volume mounts also cover. " +
+        "Example: if Sonarr mounts /data, qBittorrent's category path for 'tv-sonarr' must save to /data/torrents/tv-sonarr.";
+    categoryCallout.appendChild(catHow);
+    guidance.appendChild(categoryCallout);
+
+    const checks = [
+        {
+            label: "Root Folder settings",
+            detail: "In your *arr app, go to Settings > Media Management > Root Folders. " +
+                "Make sure the root folder path matches a mounted container path (e.g., /data/media/tv)."
+        },
+        {
+            label: "File permissions (PUID/PGID)",
+            detail: "Ensure all containers run with the same PUID/PGID. " +
+                "Check that the user has read/write access to the data directories on the host."
+        },
+    ];
+
+    checks.forEach((check) => {
+        const item = document.createElement("div");
+        item.style.cssText = "margin-bottom: 0.6rem;";
+        const strong = document.createElement("strong");
+        strong.textContent = check.label;
+        strong.style.cssText = "color: var(--text-primary); font-size: 0.85rem;";
+        item.appendChild(strong);
+        const p = document.createElement("p");
+        p.textContent = check.detail;
+        p.style.cssText = "color: var(--text-muted); font-size: 0.8rem; margin: 0.2rem 0 0;";
+        item.appendChild(p);
+        guidance.appendChild(item);
+    });
+
+    // RPM note — reframed, not circular
+    const rpmNote = document.createElement("div");
+    rpmNote.style.cssText = "margin-top: 0.75rem; padding: 0.6rem 0.75rem; background: rgba(74,144,217,0.06); border-radius: 4px; font-size: 0.8rem; color: var(--text-muted);";
+    rpmNote.textContent =
+        "About Remote Path Mappings: MapArr has already analyzed the Docker volume layer that " +
+        "RPMs sit on top of. If your volumes are correct (as shown above), you likely don't need " +
+        "Remote Path Mappings at all — they're a workaround for mismatched mounts, not a fix. " +
+        "Correct volume mounts eliminate the need for RPMs entirely.";
+    guidance.appendChild(rpmNote);
+
+    const trashLink = document.createElement("div");
+    trashLink.className = "callout";
+    const link = document.createElement("a");
+    link.href = "https://trash-guides.info/Hardlinks/Docker/";
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "TRaSH Guides: Docker Hardlinks & Atomic Moves — the full walkthrough";
+    trashLink.appendChild(link);
+    guidance.appendChild(trashLink);
+
+    details.appendChild(guidance);
+
     section.classList.remove("hidden");
+    showCategoryAdvisory(data);
     showAgainButton();
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -732,6 +1020,30 @@ function showAnalysisError(error, stage) {
 
 function showAgainButton() {
     document.getElementById("step-again").classList.remove("hidden");
+}
+
+// ─── Analyze Another (return to stack list) ───
+
+function analyzeAnother() {
+    // Hide all result sections
+    const resultSections = [
+        "step-analyzing", "step-current-setup", "step-problem",
+        "step-mount-warnings", "step-solution", "step-why",
+        "step-next", "step-category-warning", "step-trash",
+        "step-healthy", "step-analysis-error", "step-again",
+    ];
+    resultSections.forEach((id) => {
+        document.getElementById(id).classList.add("hidden");
+    });
+
+    // Deselect any selected stack
+    document.querySelectorAll(".stack-item").forEach((el) =>
+        el.classList.remove("selected")
+    );
+
+    // Scroll back to stack list
+    const stackSection = document.getElementById("step-stacks");
+    stackSection.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 // ─── Copy Solution YAML ───

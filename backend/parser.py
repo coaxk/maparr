@@ -184,11 +184,17 @@ def _extract_error_type(text: str) -> Optional[str]:
 
     # Order matters: check more specific patterns first
     patterns = [
-        ("import_failed", ["cannot import", "import failed", "failed to import"]),
-        ("path_not_found", ["not found", "not exist", "no such file", "does not exist", "missing"]),
+        ("import_failed", ["cannot import", "import failed", "failed to import",
+                          "no files found are eligible for import"]),
+        ("remote_path_mapping", ["remote path mapping", "remote path mappings",
+                                "not a valid local path", "you may need a remote path mapping",
+                                "not a valid *nix path"]),
+        ("path_not_found", ["not found", "not exist", "no such file", "does not exist",
+                          "missing root folder", "does not appear to exist inside the container"]),
         ("permission_denied", ["permission denied", "access denied", "permission", "cannot access"]),
         ("mount_issue", ["mount", "unmount", "not mounted"]),
-        ("hardlink_failed", ["hardlink", "hard link", "atomic move", "cross-device"]),
+        ("hardlink_failed", ["hardlink", "hard link", "atomic move", "cross-device",
+                            "cross-device link", "invalid cross-device link", "exdev"]),
         ("disk_space", ["no space", "disk full", "insufficient space"]),
     ]
 

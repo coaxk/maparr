@@ -195,6 +195,22 @@ body {
     color: var(--text-muted);
 }
 
+/* ─── Input Helpers ─── */
+
+.input-examples {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    font-style: italic;
+}
+
+.skip-hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+    width: 100%;
+}
+
 /* ─── Buttons ─── */
 
 .step-actions {
@@ -479,8 +495,13 @@ body {
 
 .search-note {
     margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
     font-size: 0.8rem;
     color: var(--text-muted);
+    font-family: var(--font-mono);
+    background: rgba(74, 144, 217, 0.05);
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(74, 144, 217, 0.1);
 }
 
 /* ─── Step Number Variants ─── */
@@ -710,6 +731,19 @@ body {
     background: rgba(210, 153, 34, 0.06);
 }
 
+.callout.callout-category {
+    border-left-color: var(--warning);
+    background: rgba(210, 153, 34, 0.08);
+    border-left-width: 3px;
+    padding: 1rem 1.25rem;
+}
+
+.category-intro {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+}
+
 .callout a {
     color: var(--accent);
     text-decoration: none;
@@ -771,6 +805,127 @@ body {
 
 .separator {
     color: var(--border);
+}
+
+/* ─── Analysis Terminal ─── */
+
+.terminal {
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 1px solid #333;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+}
+
+.terminal-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: #2a2a2a;
+}
+
+.terminal-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.terminal-dot { background: #444; transition: background 0.3s; }
+.terminal-dot.active-red { background: #ff5f57; }
+.terminal-dot.active-yellow { background: #febc2e; }
+.terminal-dot.active-green { background: #28c840; }
+
+.terminal-title {
+    margin-left: 8px;
+    font-size: 0.75rem;
+    color: #888;
+}
+
+.terminal-body {
+    background: #0c0c0c;
+    padding: 12px 16px;
+    min-height: 60px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.terminal-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.6;
+    color: #b0b0b0;
+    opacity: 0;
+    animation: terminalReveal 0.15s ease-out forwards;
+}
+
+@keyframes terminalReveal {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.terminal-icon {
+    flex-shrink: 0;
+    display: inline-block;
+    width: 16px;
+    text-align: center;
+    margin-top: 2px;
+}
+
+.terminal-icon.ok::before { content: "\2713"; color: #28c840; }
+.terminal-icon.run::before { content: "\2192"; color: #4a90d9; }
+.terminal-icon.info::before { content: "\2022"; color: #888; }
+.terminal-icon.warn::before { content: "!"; color: #febc2e; font-weight: 700; }
+.terminal-icon.fail::before { content: "\2717"; color: #ff5f57; }
+.terminal-icon.done::before { content: "\2713"; color: #28c840; font-weight: 700; }
+
+.terminal-line.done-line {
+    color: #28c840;
+    font-weight: 600;
+    margin-top: 4px;
+}
+
+/* ─── Stack Group Headers ─── */
+
+.stack-group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    margin-top: 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.stack-group-header:first-child {
+    margin-top: 0;
+}
+
+.stack-group-count {
+    font-weight: 400;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.stacks-total {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+/* ─── Volume Table: Config Dimming ─── */
+
+.vol-config {
+    opacity: 0.45;
+    font-style: italic;
+}
+
+.vol-data {
+    color: var(--text-primary);
 }
 
 /* ─── Responsive ─── */

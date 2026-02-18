@@ -27,16 +27,20 @@
             <h2>Paste Your Error</h2>
         </div>
         <p class="step-desc">
-            Paste the error message from your *arr app, download client, or media server.
+            Paste the error from your *arr app's Activity &gt; Queue page or System &gt; Status health check.
             MapArr will extract the service, path, and error type automatically.
         </p>
         <textarea
             id="error-input"
             class="error-textarea"
-            placeholder="Example: Sonarr - Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01"
+            placeholder="Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01/Episode.mkv"
             rows="5"
             spellcheck="false"
         ></textarea>
+        <p class="input-examples">
+            Also works with: "Remote Path Mapping" errors, "Cross-device link" failures,
+            permission denied, and download client path warnings.
+        </p>
         <div class="step-actions">
             <button id="btn-parse" class="btn btn-primary" onclick="parseError()">
                 Analyze Error
@@ -44,6 +48,9 @@
             <button id="btn-skip" class="btn btn-ghost" onclick="skipToStacks()">
                 Skip — browse stacks directly
             </button>
+            <p class="skip-hint">
+                No error message? Browse all detected stacks and run a full health check.
+            </p>
         </div>
     </section>
 
@@ -80,15 +87,25 @@
         <div id="stacks-search-note" class="search-note"></div>
     </section>
 
-    <!-- Step 3: Analysis (loading) -->
+    <!-- Step 3: Analysis Terminal -->
     <section class="card hidden" id="step-analyzing">
         <div class="step-header">
             <span class="step-number">3</span>
             <h2>Analyzing Your Stack</h2>
         </div>
-        <div class="loading">
-            <div class="spinner"></div>
-            <span>Resolving compose file, tracing volumes, detecting conflicts...</span>
+        <div class="terminal" id="analysis-terminal">
+            <div class="terminal-header">
+                <span class="terminal-dot" id="dot-red"></span>
+                <span class="terminal-dot" id="dot-yellow"></span>
+                <span class="terminal-dot" id="dot-green"></span>
+                <span class="terminal-title">maparr — analysis</span>
+            </div>
+            <div class="terminal-body" id="terminal-output">
+                <div class="terminal-line">
+                    <span class="terminal-icon run"></span>
+                    <span>Starting analysis...</span>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -189,10 +206,19 @@
         <div id="analysis-error-details"></div>
     </section>
 
+    <!-- Category Path Advisory -->
+    <section class="card hidden" id="step-category-warning">
+        <div class="step-header">
+            <span class="step-number gold-icon">!</span>
+            <h2>Check Your Download Client Categories</h2>
+        </div>
+        <div id="category-warning-details"></div>
+    </section>
+
     <!-- Analyze Another -->
     <section class="card hidden" id="step-again">
         <div class="step-actions" style="justify-content: center;">
-            <button class="btn btn-primary" onclick="location.reload()">
+            <button class="btn btn-primary" onclick="analyzeAnother()">
                 Analyze Another Stack
             </button>
             <a class="btn btn-ghost" href="https://trash-guides.info/Hardlinks/Docker/" target="_blank" rel="noopener">
@@ -207,7 +233,11 @@
 <footer class="footer">
     <span>MapArr v1.0</span>
     <span class="separator">·</span>
+    <a href="https://github.com/coaxk/maparr" target="_blank" rel="noopener">GitHub</a>
+    <span class="separator">·</span>
     <a href="https://trash-guides.info/Hardlinks/Docker/" target="_blank" rel="noopener">TRaSH Guides</a>
+    <span class="separator">·</span>
+    <span>MIT Licensed</span>
 </footer>
 
 <script src="/static/app.js"></script>

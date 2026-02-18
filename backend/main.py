@@ -225,14 +225,19 @@ async def api_analyze(request: Request):
         error_path = error_info.get("path")
 
     # Step 1: Resolve compose file
+    steps = [
+        {"icon": "run", "text": f"Resolving compose for {os.path.basename(stack_path)}..."},
+    ]
     try:
         resolved = resolve_compose(stack_path)
     except ResolveError as e:
+        steps.append({"icon": "fail", "text": f"Resolution failed: {e}"})
         return JSONResponse({
             "status": "error",
             "error": str(e),
             "stage": "resolution",
             "stack_path": os.path.basename(stack_path),
+            "steps": steps,
         }, status_code=200)
 
     # Step 2: Analyze
@@ -247,11 +252,13 @@ async def api_analyze(request: Request):
         )
     except Exception as e:
         logger.exception("Analysis failed for %s", os.path.basename(stack_path))
+        steps.append({"icon": "fail", "text": f"Analysis failed: {e}"})
         return JSONResponse({
             "status": "error",
             "error": f"Analysis failed: {e}",
             "stage": "analysis",
             "stack_path": os.path.basename(stack_path),
+            "steps": steps,
         }, status_code=200)
 
     return result.to_dict()

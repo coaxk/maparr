@@ -139,6 +139,7 @@ class AnalysisResult:
     mount_warnings: List[str] = field(default_factory=list)  # Remote FS / hardlink warnings
     mount_info: List[dict] = field(default_factory=list)  # Mount classifications
     warnings: List[str] = field(default_factory=list)
+    steps: List[dict] = field(default_factory=list)  # Analysis step log for terminal UI
 
     def to_dict(self) -> dict:
         return {
@@ -154,6 +155,7 @@ class AnalysisResult:
             "mount_warnings": self.mount_warnings,
             "mount_info": self.mount_info,
             "warnings": self.warnings,
+            "steps": self.steps,
             "status": "healthy" if not self.conflicts else "conflicts_found",
         }
 
@@ -183,28 +185,56 @@ def analyze_stack(
         AnalysisResult with services, conflicts, and fix recommendations.
     """
     warnings = resolved_compose.get("_warnings", [])
+    steps: List[dict] = []
 
-    # Step 1: Extract and classify services
+    # Step 1: Resolve compose file (already done by caller, log it)
+    steps.append({"icon": "ok", "text": f"Resolved {os.path.basename(compose_file)} via {resolution_method}"})
+
+    # Step 2: Extract and classify services
     services = _extract_services(resolved_compose)
+    participants = [s for s in services if s.role in ("arr", "download_client", "media_server")]
+    arr_names = [s.name for s in services if s.role == "arr"]
+    dl_names = [s.name for s in services if s.role == "download_client"]
+    ms_names = [s.name for s in services if s.role == "media_server"]
+    steps.append({"icon": "ok", "text": f"Found {len(services)} services ({len(participants)} media-related)"})
+    if arr_names:
+        steps.append({"icon": "info", "text": f"*arr apps: {', '.join(arr_names)}"})
+    if dl_names:
+        steps.append({"icon": "info", "text": f"Download clients: {', '.join(dl_names)}"})
+    if ms_names:
+        steps.append({"icon": "info", "text": f"Media servers: {', '.join(ms_names)}"})
 
-    # Step 2: Detect conflicts
+    # Step 3: Check volume mounts
+    total_vols = sum(len(s.volumes) for s in services)
+    data_vols = sum(len(s.data_paths) for s in services)
+    steps.append({"icon": "ok", "text": f"Scanned {total_vols} volume mounts ({data_vols} data paths)"})
+
+    # Step 4: Detect conflicts
     conflicts = _detect_conflicts(services, error_service, error_path)
+    if conflicts:
+        steps.append({"icon": "warn", "text": f"Detected {len(conflicts)} path conflict{'s' if len(conflicts) != 1 else ''}"})
+    else:
+        steps.append({"icon": "ok", "text": "No path conflicts detected"})
 
-    # Step 3: Generate fixes
-    _generate_fixes(conflicts, services)
-
-    # Step 4: Build summary
-    fix_summary = _build_fix_summary(conflicts, services, error_service)
-
-    # Step 5: Generate copy-pasteable solution YAML
-    solution_yaml = _generate_solution_yaml(conflicts, services)
-
-    # Step 6: Mount intelligence — classify host paths and check hardlink compatibility
+    # Step 5: Mount intelligence
     mount_classifications, mount_warnings = _analyze_mounts(services)
     mount_info = [mc.to_dict() for mc in mount_classifications]
+    if mount_classifications:
+        steps.append({"icon": "ok", "text": f"Classified {len(mount_classifications)} host mount{'s' if len(mount_classifications) != 1 else ''}"})
+    if mount_warnings:
+        steps.append({"icon": "warn", "text": f"{len(mount_warnings)} filesystem warning{'s' if len(mount_warnings) != 1 else ''}"})
 
-    # Promote remote-FS warnings to conflicts if hardlink participants are affected
+    # Promote remote-FS warnings to conflicts
     _add_mount_conflicts(conflicts, mount_classifications, services)
+
+    # Step 6: Generate fixes
+    _generate_fixes(conflicts, services)
+    fix_summary = _build_fix_summary(conflicts, services, error_service)
+    solution_yaml = _generate_solution_yaml(conflicts, services)
+    if solution_yaml:
+        steps.append({"icon": "ok", "text": "Generated fix recommendation"})
+
+    steps.append({"icon": "done", "text": "Analysis complete"})
 
     return AnalysisResult(
         stack_path=stack_path,
@@ -217,6 +247,7 @@ def analyze_stack(
         mount_warnings=mount_warnings,
         mount_info=mount_info,
         warnings=warnings,
+        steps=steps,
     )
 
 
