@@ -7,13 +7,13 @@ You have a path error in Sonarr, Radarr, or your download client. You don't know
 ## Quick Start
 
 ```bash
-docker run -d -p 3000:3000 \
+docker run -d -p 9494:9494 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v /path/to/your/stacks:/stacks:ro \
   maparr:latest
 ```
 
-Open **http://localhost:3000** and paste your error.
+Open **http://localhost:9494** and paste your error.
 
 ## What It Solves
 
@@ -83,7 +83,7 @@ services:
     image: maparr:latest
     container_name: maparr
     ports:
-      - "3000:3000"
+      - "9494:9494"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /path/to/your/stacks:/stacks:ro

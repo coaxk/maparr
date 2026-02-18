@@ -58,9 +58,9 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     MAPARR_STACKS_PATH=/stacks
 
-EXPOSE 3000
+EXPOSE 9494
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:3000/api/health || exit 1
+    CMD curl -f http://localhost:9494/api/health || exit 1
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "3000", "--log-level", "info"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "9494", "--log-level", "info"]

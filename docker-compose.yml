@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
 
     ports:
-      - "${MAPARR_PORT:-3000}:3000"
+      - "${MAPARR_PORT:-9494}:9494"
 
     volumes:
       # Docker socket — lets MapArr run `docker compose config`
@@ -29,7 +29,7 @@ services:
       MAPARR_STACKS_PATH: /stacks
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9494/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
