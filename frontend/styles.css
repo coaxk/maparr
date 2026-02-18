@@ -488,6 +488,25 @@ body {
 .health-label-warning { color: var(--warning); }
 .health-label-problem { color: var(--error); }
 
+.health-legend {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.legend-item .health-dot {
+    width: 8px;
+    height: 8px;
+}
+
 /* ─── Loading & Empty ─── */
 
 .loading {

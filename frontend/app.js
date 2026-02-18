@@ -266,11 +266,31 @@ function renderStacks(stacks) {
         )
     );
 
-    // Total count
+    // Total count + health legend
     const total = document.createElement("div");
     total.className = "stacks-total";
     total.textContent = stacks.length + " stack" + (stacks.length !== 1 ? "s" : "") + " detected";
     list.appendChild(total);
+
+    // Count health statuses for legend
+    const healthCounts = { ok: 0, warning: 0, problem: 0 };
+    stacks.forEach((s) => { if (s.health in healthCounts) healthCounts[s.health]++; });
+    const hasHealth = healthCounts.ok + healthCounts.warning + healthCounts.problem > 0;
+
+    if (hasHealth) {
+        const legend = document.createElement("div");
+        legend.className = "health-legend";
+        if (healthCounts.problem > 0) {
+            legend.appendChild(_legendDot("problem", healthCounts.problem + " with issues"));
+        }
+        if (healthCounts.warning > 0) {
+            legend.appendChild(_legendDot("warning", healthCounts.warning + " need review"));
+        }
+        if (healthCounts.ok > 0) {
+            legend.appendChild(_legendDot("ok", healthCounts.ok + " healthy"));
+        }
+        list.appendChild(legend);
+    }
 
     // Render each group
     const groupMeta = [
@@ -309,7 +329,7 @@ function renderStackItem(stack, detectedService) {
     if (stack.health && stack.health !== "unknown") {
         const dot = document.createElement("span");
         dot.className = "health-dot health-" + stack.health;
-        dot.title = stack.health_hint || stack.health;
+        dot.title = _healthTooltip(stack.health, stack.health_hint);
         item.appendChild(dot);
     }
 
@@ -1128,6 +1148,28 @@ function formatRole(role) {
         other: "Other",
     };
     return roles[role] || role;
+}
+
+function _legendDot(health, label) {
+    const span = document.createElement("span");
+    span.className = "legend-item";
+    const dot = document.createElement("span");
+    dot.className = "health-dot health-" + health;
+    span.appendChild(dot);
+    const text = document.createElement("span");
+    text.textContent = label;
+    span.appendChild(text);
+    return span;
+}
+
+function _healthTooltip(health, hint) {
+    const criteria = {
+        ok: "GREEN: All media services share a common host mount path. Hardlinks and atomic moves should work.",
+        warning: "YELLOW: Only one media service found, or unable to fully determine. Click to run full analysis.",
+        problem: "RED: Media services mount different host directories. Hardlinks cannot work across separate bind mounts.",
+    };
+    const base = criteria[health] || "";
+    return hint ? base + "\n\n" + hint : base;
 }
 
 function isConfigVolume(target) {
