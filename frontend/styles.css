@@ -468,6 +468,10 @@ body {
     box-shadow: 0 0 4px rgba(248, 81, 73, 0.4);
 }
 
+.health-unknown {
+    background: #444;
+}
+
 .stack-health-hint {
     font-size: 0.75rem;
     margin-top: 0.2rem;

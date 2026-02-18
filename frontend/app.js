@@ -325,13 +325,11 @@ function renderStackItem(stack, detectedService) {
     item.className = "stack-item";
     item.addEventListener("click", (e) => selectStack(stack, e));
 
-    // Health indicator (traffic light)
-    if (stack.health && stack.health !== "unknown") {
-        const dot = document.createElement("span");
-        dot.className = "health-dot health-" + stack.health;
-        dot.title = _healthTooltip(stack.health, stack.health_hint);
-        item.appendChild(dot);
-    }
+    // Health indicator (traffic light) — always show for consistent alignment
+    const dot = document.createElement("span");
+    dot.className = "health-dot health-" + (stack.health || "unknown");
+    dot.title = _healthTooltip(stack.health || "unknown", stack.health_hint);
+    item.appendChild(dot);
 
     // Left: info
     const info = document.createElement("div");
@@ -1167,6 +1165,7 @@ function _healthTooltip(health, hint) {
         ok: "GREEN: All media services share a common host mount path. Hardlinks and atomic moves should work.",
         warning: "YELLOW: Only one media service found, or unable to fully determine. Click to run full analysis.",
         problem: "RED: Media services mount different host directories. Hardlinks cannot work across separate bind mounts.",
+        unknown: "GREY: No media services detected in this stack. Not applicable for hardlink analysis.",
     };
     const base = criteria[health] || "";
     return hint ? base + "\n\n" + hint : base;
