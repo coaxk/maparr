@@ -1,12 +1,103 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MapArr v1.0</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MapArr — Path Mapping Problem Solver</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ─── Header ─── -->
+<header class="header">
+    <div class="header-brand">
+        <h1 class="logo">MapArr</h1>
+        <span class="tagline">Path Mapping Problem Solver</span>
+    </div>
+    <div class="header-status" id="health-status"></div>
+</header>
+
+<!-- ─── Main Content ─── -->
+<main class="main">
+
+    <!-- Step 1: Error Input -->
+    <section class="card" id="step-error">
+        <div class="step-header">
+            <span class="step-number">1</span>
+            <h2>Paste Your Error</h2>
+        </div>
+        <p class="step-desc">
+            Paste the error message from your *arr app, download client, or media server.
+            MapArr will extract the service, path, and error type automatically.
+        </p>
+        <textarea
+            id="error-input"
+            class="error-textarea"
+            placeholder="Example: Sonarr - Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01"
+            rows="5"
+            spellcheck="false"
+        ></textarea>
+        <div class="step-actions">
+            <button id="btn-parse" class="btn btn-primary" onclick="parseError()">
+                Analyze Error
+            </button>
+            <button id="btn-skip" class="btn btn-ghost" onclick="skipToStacks()">
+                Skip — browse stacks directly
+            </button>
+        </div>
+    </section>
+
+    <!-- Parse Result (hidden until parsed) -->
+    <section class="card hidden" id="step-parse-result">
+        <div class="step-header">
+            <span class="step-number ok">&#10003;</span>
+            <h2>What We Found</h2>
+        </div>
+        <div id="parse-details" class="parse-details"></div>
+    </section>
+
+    <!-- Step 2: Stack Selection -->
+    <section class="card hidden" id="step-stacks">
+        <div class="step-header">
+            <span class="step-number">2</span>
+            <h2>Select Your Stack</h2>
+        </div>
+        <p class="step-desc" id="stacks-desc">
+            Choose the Docker Compose stack to analyze.
+        </p>
+        <div id="stacks-loading" class="loading">
+            <div class="spinner"></div>
+            <span>Scanning for compose stacks...</span>
+        </div>
+        <div id="stacks-list" class="stacks-list hidden"></div>
+        <div id="stacks-empty" class="empty-state hidden">
+            <p>No compose stacks found.</p>
+            <p class="hint">
+                If running in Docker, mount your stacks directory:<br>
+                <code>docker run -v /path/to/stacks:/stacks:ro -p 3000:3000 maparr</code>
+            </p>
+        </div>
+        <div id="stacks-search-note" class="search-note"></div>
+    </section>
+
+    <!-- Step 3: Ready for Analysis (WO2 placeholder) -->
+    <section class="card hidden" id="step-ready">
+        <div class="step-header">
+            <span class="step-number ok">&#10003;</span>
+            <h2>Ready for Analysis</h2>
+        </div>
+        <div id="ready-details" class="ready-details"></div>
+    </section>
+
+</main>
+
+<!-- ─── Footer ─── -->
+<footer class="footer">
+    <span>MapArr v1.0</span>
+    <span class="separator">·</span>
+    <a href="https://trash-guides.info/Hardlinks/Docker/" target="_blank" rel="noopener">TRaSH Guides</a>
+</footer>
+
+<script src="app.js"></script>
+</body>
 </html>
