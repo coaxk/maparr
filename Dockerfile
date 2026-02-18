@@ -1,53 +1,66 @@
 # ══════════════════════════════════════════════════════════════
 # MapArr v1.0 — Production Dockerfile
-# Multi-stage build: Python deps → Frontend build → Final image
-# Target: <300MB final image size
+# Two-stage build: install deps → lean runtime image
+# No Node build step — frontend is static HTML/CSS/JS
 # ══════════════════════════════════════════════════════════════
 
-# ── Stage 1: Python dependencies ─────────────────────────────
-FROM python:3.11-slim AS python-deps
-WORKDIR /app
+# ── Stage 1: Install Python dependencies ─────────────────────
+FROM python:3.11-slim AS deps
+
+WORKDIR /build
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ── Stage 2: Frontend build ──────────────────────────────────
-FROM node:18-alpine AS frontend-build
-WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --include=dev 2>/dev/null || npm install
-COPY frontend/ ./
-RUN npm run build 2>/dev/null || mkdir -p dist
+# ── Stage 2: Production image ────────────────────────────────
+FROM python:3.11-slim
 
-# ── Stage 3: Final production image ─────────────────────────
-FROM python:3.11-slim AS production
-LABEL org.opencontainers.image.title="MapArr"
-LABEL org.opencontainers.image.version="1.0.0"
-LABEL org.opencontainers.image.description="Path mapping intelligence for Docker *arr applications"
+LABEL org.opencontainers.image.title="MapArr" \
+      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.description="Path Mapping Problem Solver for Docker *arr apps"
 
+# Install curl (healthcheck) and Docker CLI + compose plugin.
+# Docker CLI is needed for `docker compose config` resolution.
+# The full Docker daemon is NOT installed — we talk to the host
+# daemon via the mounted socket.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends \
+       curl \
+       ca-certificates \
+       gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+       | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+       https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+       docker-ce-cli \
+       docker-compose-plugin \
+    && apt-get purge -y gnupg \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY --from=python-deps /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
-COPY --from=python-deps /usr/local/bin/uvicorn /usr/local/bin/uvicorn
-COPY --from=frontend-build /app/frontend/dist/ /app/frontend/dist/
+# Copy Python packages from deps stage
+COPY --from=deps /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
+COPY --from=deps /usr/local/bin/uvicorn /usr/local/bin/uvicorn
+
+# Copy application code (no tests in production image)
 COPY backend/ /app/backend/
+COPY frontend/ /app/frontend/
 
-RUN touch /app/backend/__init__.py
-RUN mkdir -p /data /logs
+# Create stacks mount point
+RUN mkdir -p /stacks
 
-ENV API_HOST=0.0.0.0 \
-    API_PORT=9900 \
-    LOG_LEVEL=info \
-    LOG_RETENTION_DAYS=7 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MAPARR_STACKS_PATH=/stacks
 
-EXPOSE 9900
+EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:9900/health || exit 1
+    CMD curl -f http://localhost:3000/api/health || exit 1
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "9900", "--log-level", "info"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "3000", "--log-level", "info"]

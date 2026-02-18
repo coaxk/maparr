@@ -11,12 +11,11 @@ __pycache__
 .pytest_cache
 .coverage
 htmlcov/
-venv/
 .venv/
+venv/
 
-# Node (rebuilt inside Docker)
-node_modules/
-frontend/node_modules/
+# Tests (not needed in production image)
+tests/
 
 # IDE
 .vscode/
@@ -27,23 +26,20 @@ frontend/node_modules/
 
 # Secrets
 .env
-.env.local
-.env.*.local
-
-# Docker meta
-Dockerfile
-docker-compose*.yml
-.dockerignore
+.env.*
 
 # Docs (not needed in image)
 *.md
 LICENSE
-docs/
 
-# Runtime artifacts
-*.log
-/data
-/logs
+# Work orders and old Charm TUI code
+maparr_charm/
+
+# Build artifacts
+screenshots/
+job_result.json
+recs.json
+backend/tests.py
 
 # OS
 .DS_Store

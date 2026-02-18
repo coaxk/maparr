@@ -1,57 +1,42 @@
 # ══════════════════════════════════════════════════════════════
 # MapArr v1.0 — Docker Compose
+#
+# Usage:
+#   STACKS_DIR=/path/to/your/stacks docker compose up
+#
+# Or edit the STACKS_DIR default below to match your setup.
 # ══════════════════════════════════════════════════════════════
-
-version: '3.8'
 
 services:
   maparr:
-    image: maparr:v1.0
+    build: .
     container_name: maparr
     restart: unless-stopped
 
-    networks:
-      - maparr-net
-
     ports:
-      - "${MAPARR_PORT:-9900}:9900"
-
-    environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
-      API_HOST: 0.0.0.0
-      API_PORT: 9900
+      - "${MAPARR_PORT:-3000}:3000"
 
     volumes:
+      # Docker socket — lets MapArr run `docker compose config`
+      # for full variable resolution. Optional but recommended.
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
-      - maparr-data:/data
-      - maparr-logs:/logs
+
+      # Your compose stacks directory. MapArr scans this read-only
+      # to discover and analyze your Docker setups.
+      - ${STACKS_DIR:-.}:/stacks:ro
+
+    environment:
+      MAPARR_STACKS_PATH: /stacks
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9900/health"]
-      interval: 60s
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
       timeout: 5s
-      retries: 2
+      retries: 3
       start_period: 10s
 
     logging:
       driver: "json-file"
       options:
-        max-size: "${LOG_MAX_SIZE:-100M}"
-        max-file: "${LOG_MAX_FILES:-5}"
-
-    labels:
-      com.maparr.app: "core"
-      com.maparr.description: "Path mapping intelligence"
-      maintenance_log: "[2026-02-13] MapArr v1.0 - universal networking, optional docker socket"
-
-networks:
-  maparr-net:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.25.0.0/16
-
-volumes:
-  maparr-data:
-  maparr-logs:
+        max-size: "10m"
+        max-file: "3"
