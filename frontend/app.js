@@ -305,6 +305,14 @@ function renderStackItem(stack, detectedService) {
     item.className = "stack-item";
     item.addEventListener("click", (e) => selectStack(stack, e));
 
+    // Health indicator (traffic light)
+    if (stack.health && stack.health !== "unknown") {
+        const dot = document.createElement("span");
+        dot.className = "health-dot health-" + stack.health;
+        dot.title = stack.health_hint || stack.health;
+        item.appendChild(dot);
+    }
+
     // Left: info
     const info = document.createElement("div");
     info.className = "stack-info";
@@ -336,6 +344,13 @@ function renderStackItem(stack, detectedService) {
         info.appendChild(tags);
     }
 
+    if (stack.health_hint && stack.health === "problem") {
+        const hint = document.createElement("div");
+        hint.className = "stack-health-hint problem";
+        hint.textContent = stack.health_hint;
+        info.appendChild(hint);
+    }
+
     if (stack.error) {
         const err = document.createElement("div");
         err.className = "stack-error";
@@ -354,10 +369,13 @@ function renderStackItem(stack, detectedService) {
     count.textContent = stack.service_count + " service" + (stack.service_count !== 1 ? "s" : "");
     meta.appendChild(count);
 
-    const source = document.createElement("span");
-    source.className = "stack-source";
-    source.textContent = stack.source;
-    meta.appendChild(source);
+    if (stack.health && stack.health !== "unknown") {
+        const healthLabel = document.createElement("span");
+        healthLabel.className = "stack-health-label health-label-" + stack.health;
+        healthLabel.textContent = stack.health === "ok" ? "healthy" :
+            stack.health === "warning" ? "check" : "issues found";
+        meta.appendChild(healthLabel);
+    }
 
     item.appendChild(meta);
     return item;

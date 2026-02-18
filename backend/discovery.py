@@ -68,8 +68,10 @@ class Stack:
     compose_file: str                  # Path to the compose file used
     services: List[str] = field(default_factory=list)  # Service names
     service_count: int = 0             # Number of services
-    source: str = "scan"               # How we found it: "env", "common", "scan"
+    source: str = "scan"               # How we found it: "env", "common", "scan", "custom"
     error: Optional[str] = None        # Parse error (stack still returned)
+    health: str = "unknown"            # Quick health: "ok", "warning", "problem", "unknown"
+    health_hint: str = ""              # Brief explanation of health status
 
     def to_dict(self) -> dict:
         return {
@@ -79,6 +81,8 @@ class Stack:
             "service_count": self.service_count,
             "source": self.source,
             "error": self.error,
+            "health": self.health,
+            "health_hint": self.health_hint,
         }
 
 
@@ -259,12 +263,17 @@ def _parse_compose_minimal(compose_path: str, source: str) -> Optional[Stack]:
 
         service_names = list(services_raw.keys())
 
+        # Quick health check — lightweight volume analysis
+        health, health_hint = _quick_health_check(service_names, services_raw)
+
         return Stack(
             path=str(Path(compose_path).parent),
             compose_file=compose_path,
             services=service_names,
             service_count=len(service_names),
             source=source,
+            health=health,
+            health_hint=health_hint,
         )
 
     except yaml.YAMLError as e:
@@ -284,3 +293,131 @@ def _parse_compose_minimal(compose_path: str, source: str) -> Optional[Stack]:
     except Exception as e:
         logger.debug(f"Error parsing {compose_path}: {e}")
         return None
+
+
+# ─── Quick Health Check ───
+
+# Services that participate in hardlink workflows
+_HL_ARR = {"sonarr", "radarr", "lidarr", "readarr", "whisparr", "bazarr"}
+_HL_DL = {"qbittorrent", "sabnzbd", "nzbget", "transmission", "deluge", "rtorrent", "jdownloader"}
+_HL_MEDIA = {"plex", "jellyfin", "emby"}
+_HL_ALL = _HL_ARR | _HL_DL | _HL_MEDIA
+
+# Config/system container paths to skip
+_CONFIG_TARGETS = {"/config", "/app", "/etc", "/var", "/tmp", "/run", "/dev"}
+
+
+def _quick_health_check(
+    service_names: List[str],
+    services_raw: dict,
+) -> tuple:
+    """
+    Lightweight health check using raw YAML data (no docker compose config).
+
+    Returns (health, health_hint) where health is one of:
+      "ok"      — shared parent mount detected across participants (green)
+      "warning" — can't fully determine / single participant / no data vols (yellow)
+      "problem" — separate mount trees detected (red)
+      "unknown" — no hardlink participants in this stack (grey)
+    """
+    # Identify hardlink participants by name
+    participants = {}  # service_name -> set of host path roots
+    for name in service_names:
+        name_lower = name.lower()
+        is_participant = any(app in name_lower for app in _HL_ALL)
+        if not is_participant:
+            continue
+
+        config = services_raw.get(name, {})
+        if not isinstance(config, dict):
+            continue
+
+        volumes = config.get("volumes", [])
+        roots = _extract_host_roots(volumes)
+        if roots:
+            participants[name] = roots
+
+    # No hardlink participants → unknown (infrastructure stack)
+    if not participants:
+        return "unknown", ""
+
+    # Only one participant with data volumes → warning
+    if len(participants) < 2:
+        return "warning", "Single media service — analyze for full picture"
+
+    # Check for shared roots
+    all_root_sets = list(participants.values())
+    common = all_root_sets[0]
+    for roots in all_root_sets[1:]:
+        common = common & roots
+
+    if common:
+        return "ok", "Shared mount detected"
+    else:
+        return "problem", "Separate mount trees — hardlinks will fail"
+
+
+def _extract_host_roots(volumes: list) -> set:
+    """Extract host path roots from volume declarations (quick and dirty)."""
+    roots = set()
+
+    for vol in volumes:
+        source = ""
+        target = ""
+
+        if isinstance(vol, str):
+            parts = vol.split(":")
+            if len(parts) < 2:
+                continue
+            # Handle Windows paths (C:\path:...)
+            if len(parts) >= 3 and len(parts[0]) == 1 and parts[0].isalpha():
+                source = parts[0] + ":" + parts[1]
+                target = parts[2]
+            else:
+                source = parts[0]
+                target = parts[1]
+        elif isinstance(vol, dict):
+            source = vol.get("source", "")
+            target = vol.get("target", "")
+
+        if not source or not target:
+            continue
+
+        # Skip config mounts
+        target_clean = target.rstrip("/").split(":")[0]  # strip :ro etc
+        if any(target_clean == c or target_clean.startswith(c + "/") for c in _CONFIG_TARGETS):
+            continue
+
+        # Skip named volumes (no path separator)
+        if not (source.startswith("/") or source.startswith("./") or
+                source.startswith("../") or source.startswith("~") or
+                (len(source) >= 2 and source[1] == ":")):
+            continue
+
+        # Get root (first 2 meaningful path components)
+        root = _get_quick_root(source)
+        if root:
+            roots.add(root)
+
+    return roots
+
+
+def _get_quick_root(path: str) -> Optional[str]:
+    """Get first 2 meaningful components of a path for root comparison."""
+    path = path.replace("\\", "/").rstrip("/")
+    if not path:
+        return None
+
+    if path.startswith("/"):
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2:
+            return "/" + "/".join(parts[:2])
+        elif parts:
+            return "/" + parts[0]
+        return "/"
+
+    # Relative or Windows
+    parts = path.split("/")
+    if len(parts) >= 2:
+        return "/".join(parts[:2])
+    return parts[0] if parts else None
