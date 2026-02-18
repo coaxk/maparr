@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MapArr — Path Mapping Problem Solver</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
 
@@ -74,7 +74,7 @@
             <p>No compose stacks found.</p>
             <p class="hint">
                 If running in Docker, mount your stacks directory:<br>
-                <code>docker run -v /path/to/stacks:/stacks:ro -p 3000:3000 maparr</code>
+                <code>docker run -v /path/to/stacks:/stacks:ro -p 9494:9494 maparr</code>
             </p>
         </div>
         <div id="stacks-search-note" class="search-note"></div>
@@ -210,6 +210,6 @@
     <a href="https://trash-guides.info/Hardlinks/Docker/" target="_blank" rel="noopener">TRaSH Guides</a>
 </footer>
 
-<script src="app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>
