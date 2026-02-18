@@ -504,6 +504,45 @@ body {
     border: 1px solid rgba(74, 144, 217, 0.1);
 }
 
+/* ─── Path Change ─── */
+
+.path-change {
+    margin-top: 0.75rem;
+}
+
+.path-input-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    align-items: center;
+}
+
+.path-input {
+    flex: 1;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.45rem 0.75rem;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    transition: border-color 0.15s;
+}
+
+.path-input:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+.path-input::placeholder {
+    color: var(--text-muted);
+}
+
+.btn-sm {
+    padding: 0.35rem 0.8rem;
+    font-size: 0.8rem;
+}
+
 /* ─── Step Number Variants ─── */
 
 .step-number.problem-icon {

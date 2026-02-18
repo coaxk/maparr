@@ -82,9 +82,13 @@ class Stack:
         }
 
 
-def discover_stacks() -> List[Stack]:
+def discover_stacks(custom_path: Optional[str] = None) -> List[Stack]:
     """
     Find all Docker stacks on the filesystem.
+
+    Args:
+        custom_path: If provided, scan ONLY this directory (user override).
+                     If None, use MAPARR_STACKS_PATH + common locations.
 
     Returns a deduplicated list of stacks sorted by service count (largest
     first), so the most interesting stacks appear at the top of the UI.
@@ -92,15 +96,20 @@ def discover_stacks() -> List[Stack]:
     stacks: List[Stack] = []
     seen_paths: set = set()
 
-    # 1. Check MAPARR_STACKS_PATH (Docker container mount point)
-    stacks_env = os.environ.get("MAPARR_STACKS_PATH", "")
-    if stacks_env and os.path.isdir(stacks_env):
-        _scan_directory(stacks_env, stacks, seen_paths, source="env")
+    if custom_path:
+        # User specified a custom path — scan only that
+        if os.path.isdir(custom_path):
+            _scan_directory(custom_path, stacks, seen_paths, source="custom")
+    else:
+        # 1. Check MAPARR_STACKS_PATH (Docker container mount point)
+        stacks_env = os.environ.get("MAPARR_STACKS_PATH", "")
+        if stacks_env and os.path.isdir(stacks_env):
+            _scan_directory(stacks_env, stacks, seen_paths, source="env")
 
-    # 2. Check common host locations (when running outside Docker)
-    for search_path in _get_search_paths():
-        if os.path.isdir(search_path):
-            _scan_directory(search_path, stacks, seen_paths, source="common")
+        # 2. Check common host locations (when running outside Docker)
+        for search_path in _get_search_paths():
+            if os.path.isdir(search_path):
+                _scan_directory(search_path, stacks, seen_paths, source="common")
 
     # Sort: largest stacks first (most useful for analysis)
     stacks.sort(key=lambda s: s.service_count, reverse=True)

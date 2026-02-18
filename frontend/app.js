@@ -31,6 +31,17 @@ document.addEventListener("DOMContentLoaded", () => {
             parseError();
         }
     });
+
+    // Enter in path input triggers scan
+    const pathInput = document.getElementById("custom-path-input");
+    if (pathInput) {
+        pathInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                changeStacksPath();
+            }
+        });
+    }
 });
 
 // ─── Health Check ───
@@ -206,11 +217,8 @@ async function showStackSelection() {
             note.textContent = data.search_note;
         }
 
-        // Update connection status with stack count
-        const healthEl = document.getElementById("health-status");
-        if (healthEl.classList.contains("connected") && state.stacks.length > 0) {
-            healthEl.textContent = "Connected · " + state.stacks.length + " stacks";
-        }
+        // Update connection status with scan path and stack count
+        updateConnectionStatus(data);
     } catch (err) {
         loading.classList.add("hidden");
         empty.classList.remove("hidden");
@@ -249,9 +257,13 @@ function renderStacks(stacks) {
         groups[role].push(stack);
     });
 
-    // Sort within each group alphabetically
+    // Sort within each group alphabetically (case-insensitive)
     Object.values(groups).forEach((g) =>
-        g.sort((a, b) => extractDirName(a.path).localeCompare(extractDirName(b.path)))
+        g.sort((a, b) =>
+            extractDirName(a.path).toLowerCase().localeCompare(
+                extractDirName(b.path).toLowerCase()
+            )
+        )
     );
 
     // Total count
@@ -1105,4 +1117,106 @@ function isConfigVolume(target) {
     return configPaths.some(
         (p) => target === p || target.startsWith(p + "/")
     );
+}
+
+function updateConnectionStatus(data) {
+    const el = document.getElementById("health-status");
+    if (!el.classList.contains("connected")) return;
+
+    const count = (data && data.total) || state.stacks.length;
+    const scanPath = (data && data.scan_path) || "";
+
+    let text = "Connected";
+    if (scanPath) {
+        // Show just the last directory name for brevity, full path in stacks section
+        const shortPath = scanPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || scanPath;
+        text += " · " + shortPath;
+    }
+    if (count > 0) {
+        text += " · " + count + " stacks";
+    }
+    el.textContent = text;
+}
+
+// ─── Path Change ───
+
+function togglePathInput() {
+    const row = document.getElementById("path-input-row");
+    row.classList.toggle("hidden");
+    if (!row.classList.contains("hidden")) {
+        document.getElementById("custom-path-input").focus();
+    }
+}
+
+async function changeStacksPath() {
+    const input = document.getElementById("custom-path-input");
+    const newPath = input.value.trim();
+    if (!newPath) {
+        input.focus();
+        return;
+    }
+
+    const loading = document.getElementById("stacks-loading");
+    const list = document.getElementById("stacks-list");
+    const empty = document.getElementById("stacks-empty");
+
+    list.classList.add("hidden");
+    empty.classList.add("hidden");
+    loading.classList.remove("hidden");
+
+    try {
+        const resp = await fetch("/api/change-stacks-path", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: newPath }),
+        });
+
+        const data = await resp.json();
+        loading.classList.add("hidden");
+
+        if (!resp.ok || data.error) {
+            empty.classList.remove("hidden");
+            const emptyP = empty.querySelector("p");
+            if (emptyP) emptyP.textContent = data.error || "Failed to scan path.";
+            return;
+        }
+
+        state.stacks = data.stacks || [];
+        const note = document.getElementById("stacks-search-note");
+        if (data.search_note) note.textContent = data.search_note;
+
+        if (state.stacks.length === 0) {
+            empty.classList.remove("hidden");
+            const emptyP = empty.querySelector("p");
+            if (emptyP) emptyP.textContent = "No compose stacks found in " + newPath;
+        } else {
+            renderStacks(state.stacks);
+            list.classList.remove("hidden");
+        }
+
+        updateConnectionStatus(data);
+    } catch {
+        loading.classList.add("hidden");
+        empty.classList.remove("hidden");
+        const emptyP = empty.querySelector("p");
+        if (emptyP) emptyP.textContent = "Could not reach the backend.";
+    }
+}
+
+async function resetStacksPath() {
+    document.getElementById("custom-path-input").value = "";
+
+    try {
+        await fetch("/api/change-stacks-path", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: "" }),
+        });
+    } catch {
+        // Ignore — we'll re-scan with defaults
+    }
+
+    // Re-run default discovery
+    showStackSelection();
+    document.getElementById("path-input-row").classList.add("hidden");
 }

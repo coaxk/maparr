@@ -85,6 +85,22 @@
             </p>
         </div>
         <div id="stacks-search-note" class="search-note"></div>
+        <div class="path-change" id="path-change">
+            <button class="btn btn-ghost btn-sm" id="btn-change-path" onclick="togglePathInput()">
+                Change scan path
+            </button>
+            <div class="path-input-row hidden" id="path-input-row">
+                <input
+                    type="text"
+                    id="custom-path-input"
+                    class="path-input"
+                    placeholder="/path/to/your/stacks"
+                    spellcheck="false"
+                />
+                <button class="btn btn-primary btn-sm" onclick="changeStacksPath()">Scan</button>
+                <button class="btn btn-ghost btn-sm" onclick="resetStacksPath()">Reset</button>
+            </div>
+        </div>
     </section>
 
     <!-- Step 3: Analysis Terminal -->

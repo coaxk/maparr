@@ -119,21 +119,73 @@ async def api_discover_stacks():
     This is shallow discovery — just enough to populate the stack list.
     Deep resolution via `docker compose config` happens in WO2.
     """
-    stacks = discover_stacks()
+    custom = _session.get("custom_stacks_path")
+    if custom:
+        stacks = discover_stacks(custom_path=custom)
+    else:
+        stacks = discover_stacks()
 
     return {
         "stacks": [s.to_dict() for s in stacks],
         "total": len(stacks),
-        "search_note": _get_search_note(),
+        "scan_path": custom or os.environ.get("MAPARR_STACKS_PATH", ""),
+        "search_note": _get_search_note(custom),
     }
 
 
-def _get_search_note() -> str:
+def _get_search_note(custom_path: Optional[str] = None) -> str:
     """Generate a human-readable note about where we searched."""
+    if custom_path:
+        return f"Scanning custom path: {custom_path}"
     stacks_env = os.environ.get("MAPARR_STACKS_PATH", "")
     if stacks_env:
-        return f"Scanned mounted path: {stacks_env}"
-    return "Scanned common locations. Set MAPARR_STACKS_PATH to specify your stacks directory."
+        return f"Scanning mounted path: {stacks_env}"
+    return "Scanned common locations. Set MAPARR_STACKS_PATH or use Change Path below."
+
+
+# ─── API: Change Stacks Path ───
+
+@app.post("/api/change-stacks-path")
+async def api_change_stacks_path(request: Request):
+    """
+    Let the user change the stacks scan directory at runtime.
+
+    This doesn't modify environment variables — it stores the custom path
+    in session state and re-runs discovery against it.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Invalid JSON in request body"},
+            status_code=400,
+        )
+
+    new_path = body.get("path", "").strip()
+    if not new_path:
+        # Clear custom path, revert to default
+        _session["custom_stacks_path"] = None
+        return {"status": "reset", "message": "Reverted to default scan locations."}
+
+    if not os.path.isdir(new_path):
+        return JSONResponse(
+            {"error": f"Directory not found: {new_path}"},
+            status_code=400,
+        )
+
+    _session["custom_stacks_path"] = new_path
+    logger.info("Stacks path changed to: %s", new_path)
+
+    # Run discovery on the new path immediately
+    stacks = discover_stacks(custom_path=new_path)
+
+    return {
+        "status": "ok",
+        "path": new_path,
+        "stacks": [s.to_dict() for s in stacks],
+        "total": len(stacks),
+        "search_note": _get_search_note(new_path),
+    }
 
 
 # ─── API: Select Stack ───
