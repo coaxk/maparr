@@ -2326,12 +2326,10 @@ function renderYamlWithHighlights(preEl, yamlText, changedLines) {
         const lineNum = idx + 1; // 1-indexed
         const span = document.createElement("span");
         span.className = "yaml-line" + (changedSet.has(lineNum) ? " diff-changed" : "");
-        span.textContent = line;
+        // Use non-breaking content for empty lines to preserve height
+        span.textContent = line || " ";
         preEl.appendChild(span);
-        // Don't add newline after last line
-        if (idx < lines.length - 1) {
-            preEl.appendChild(document.createTextNode("\n"));
-        }
+        // No \n text nodes — .yaml-line is display:block, which handles line breaks
     });
 }
 
@@ -3081,4 +3079,344 @@ function showUpdateBadge(latestVersion) {
     el.addEventListener("click", () => {
         window.open("https://github.com/coaxk/maparr/releases/latest", "_blank");
     });
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+// LOG PANEL + TOAST SYSTEM
+//
+// Three-tier logging UX:
+//   1. Collapsible log panel in footer — full history, filterable
+//   2. Download button — exports all buffered logs as .txt
+//   3. Toast notifications — WARN/ERROR pop up as dismissible toasts
+//
+// Discrete by default. The footer shows a tiny log icon with a badge
+// count for errors. Clicking opens the full panel. Toasts auto-dismiss
+// after 8 seconds but stay if hovered.
+// ═══════════════════════════════════════════════════════════════════
+
+const _logState = {
+    entries: [],
+    errorCount: 0,
+    panelOpen: false,
+    sseSource: null,
+    lastFetchTs: 0,
+};
+
+// ─── Log Panel Init ───
+
+function initLogSystem() {
+    const toggleBtn = document.getElementById("footer-log-toggle");
+    const closeBtn = document.getElementById("log-close-btn");
+    const downloadBtn = document.getElementById("log-download-btn");
+    const clearBtn = document.getElementById("log-clear-btn");
+    const levelFilter = document.getElementById("log-level-filter");
+
+    if (toggleBtn) toggleBtn.addEventListener("click", toggleLogPanel);
+    if (closeBtn) closeBtn.addEventListener("click", () => closeLogPanel());
+    if (downloadBtn) downloadBtn.addEventListener("click", downloadLogs);
+    if (clearBtn) clearBtn.addEventListener("click", clearLogPanel);
+    if (levelFilter) levelFilter.addEventListener("change", () => renderLogEntries());
+
+    // Fetch initial logs
+    fetchLogs();
+
+    // Connect SSE for live updates
+    connectLogStream();
+}
+
+// Start log system after DOM is ready
+document.addEventListener("DOMContentLoaded", () => {
+    // Small delay to let the main UI render first
+    setTimeout(initLogSystem, 1000);
+});
+
+// ─── Log Panel Toggle ───
+
+function toggleLogPanel() {
+    if (_logState.panelOpen) {
+        closeLogPanel();
+    } else {
+        openLogPanel();
+    }
+}
+
+function openLogPanel() {
+    const panel = document.getElementById("log-panel");
+    if (panel) panel.classList.remove("hidden");
+    _logState.panelOpen = true;
+    // Clear error badge when panel is opened
+    _logState.errorCount = 0;
+    updateLogBadge();
+    // Scroll to bottom
+    const entries = document.getElementById("log-entries");
+    if (entries) entries.scrollTop = entries.scrollHeight;
+}
+
+function closeLogPanel() {
+    const panel = document.getElementById("log-panel");
+    if (panel) panel.classList.add("hidden");
+    _logState.panelOpen = false;
+}
+
+// ─── Fetch Logs from API ───
+
+async function fetchLogs() {
+    try {
+        const resp = await fetch("/api/logs?limit=200");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        _logState.entries = (data.entries || []).reverse(); // API returns newest first, we want oldest first
+        if (_logState.entries.length > 0) {
+            _logState.lastFetchTs = _logState.entries[_logState.entries.length - 1].ts;
+        }
+        renderLogEntries();
+    } catch {
+        // Backend not ready yet — will get entries via SSE
+    }
+}
+
+// ─── SSE Live Stream ───
+
+function connectLogStream() {
+    if (_logState.sseSource) {
+        _logState.sseSource.close();
+    }
+
+    try {
+        const es = new EventSource("/api/logs/stream");
+        _logState.sseSource = es;
+
+        es.addEventListener("log", (event) => {
+            try {
+                const entry = JSON.parse(event.data);
+                addLogEntry(entry);
+            } catch {}
+        });
+
+        es.addEventListener("error", () => {
+            // Reconnect after delay
+            es.close();
+            _logState.sseSource = null;
+            setTimeout(connectLogStream, 5000);
+        });
+    } catch {
+        // SSE not supported or network error
+        // Fall back to polling
+        setInterval(fetchLogs, 10000);
+    }
+}
+
+// ─── Add Log Entry ───
+
+function addLogEntry(entry) {
+    _logState.entries.push(entry);
+    // Cap at 500 entries in memory
+    if (_logState.entries.length > 500) {
+        _logState.entries.shift();
+    }
+
+    // Render if panel is open
+    if (_logState.panelOpen) {
+        appendLogEntryToDOM(entry);
+    }
+
+    // Toast for WARN/ERROR/CRITICAL
+    if (entry.level === "WARNING" || entry.level === "ERROR" || entry.level === "CRITICAL") {
+        // Increment badge counter if panel is closed
+        if (!_logState.panelOpen) {
+            _logState.errorCount++;
+            updateLogBadge();
+        }
+
+        // Only toast for ERROR and CRITICAL (WARN would be too noisy)
+        if (entry.level === "ERROR" || entry.level === "CRITICAL") {
+            showToast(entry);
+        }
+    }
+}
+
+// ─── Render Log Entries ───
+
+function renderLogEntries() {
+    const container = document.getElementById("log-entries");
+    if (!container) return;
+    container.replaceChildren();
+
+    const levelFilter = document.getElementById("log-level-filter");
+    const minLevel = levelFilter ? levelFilter.value : "";
+    const levelOrder = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 4 };
+    const minLevelNum = minLevel ? (levelOrder[minLevel] || 0) : 0;
+
+    _logState.entries.forEach((entry) => {
+        const entryLevel = levelOrder[entry.level] || 0;
+        if (entryLevel >= minLevelNum) {
+            appendLogEntryToDOM(entry);
+        }
+    });
+
+    // Auto-scroll to bottom
+    container.scrollTop = container.scrollHeight;
+}
+
+function appendLogEntryToDOM(entry) {
+    const container = document.getElementById("log-entries");
+    if (!container) return;
+
+    const levelFilter = document.getElementById("log-level-filter");
+    const minLevel = levelFilter ? levelFilter.value : "";
+    const levelOrder = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 4 };
+    if (minLevel && (levelOrder[entry.level] || 0) < (levelOrder[minLevel] || 0)) {
+        return; // Filtered out
+    }
+
+    const row = document.createElement("div");
+    row.className = "log-entry log-entry-" + entry.level;
+
+    const ts = document.createElement("span");
+    ts.className = "log-ts";
+    const date = new Date(entry.ts * 1000);
+    ts.textContent = date.toLocaleTimeString();
+    row.appendChild(ts);
+
+    const level = document.createElement("span");
+    level.className = "log-level log-level-" + entry.level;
+    level.textContent = entry.level.substring(0, 4);
+    row.appendChild(level);
+
+    const source = document.createElement("span");
+    source.className = "log-source";
+    source.textContent = entry.logger ? entry.logger.replace("maparr.", "") : "";
+    row.appendChild(source);
+
+    const msg = document.createElement("span");
+    msg.className = "log-msg";
+    msg.textContent = entry.message;
+    msg.title = entry.message; // Full text on hover
+    row.appendChild(msg);
+
+    container.appendChild(row);
+
+    // Auto-scroll if near bottom
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+    if (isNearBottom) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
+// ─── Log Badge ───
+
+function updateLogBadge() {
+    const badge = document.getElementById("log-badge");
+    if (!badge) return;
+    if (_logState.errorCount > 0) {
+        badge.textContent = _logState.errorCount > 99 ? "99+" : _logState.errorCount;
+        badge.classList.remove("hidden");
+    } else {
+        badge.classList.add("hidden");
+    }
+}
+
+// ─── Download Logs ───
+
+function downloadLogs() {
+    const lines = _logState.entries.map((e) => {
+        const date = new Date(e.ts * 1000);
+        const ts = date.toISOString();
+        return ts + " [" + e.level + "] " + (e.logger || "") + ": " + e.message;
+    });
+
+    const text = "MapArr Application Logs\n"
+        + "Generated: " + new Date().toISOString() + "\n"
+        + "Entries: " + lines.length + "\n"
+        + "─".repeat(60) + "\n\n"
+        + lines.join("\n");
+
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "maparr-logs-" + new Date().toISOString().slice(0, 10) + ".txt";
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+// ─── Clear Log Panel ───
+
+function clearLogPanel() {
+    _logState.entries = [];
+    _logState.errorCount = 0;
+    updateLogBadge();
+    const container = document.getElementById("log-entries");
+    if (container) container.replaceChildren();
+}
+
+// ─── Toast Notifications ───
+
+function showToast(entry) {
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+
+    const toast = document.createElement("div");
+    toast.className = "toast toast-" + (entry.level === "ERROR" || entry.level === "CRITICAL" ? "error" : "warning");
+
+    const icon = document.createElement("span");
+    icon.className = "toast-icon";
+    icon.textContent = entry.level === "ERROR" || entry.level === "CRITICAL" ? "\u274C" : "\u26A0\uFE0F";
+    toast.appendChild(icon);
+
+    const body = document.createElement("div");
+    body.className = "toast-body";
+    const msg = document.createElement("div");
+    msg.className = "toast-message";
+    // Truncate long messages
+    const text = entry.message.length > 120 ? entry.message.substring(0, 117) + "..." : entry.message;
+    msg.textContent = text;
+    body.appendChild(msg);
+    const meta = document.createElement("div");
+    meta.className = "toast-meta";
+    meta.textContent = (entry.logger || "").replace("maparr.", "") + " \u2022 " + new Date(entry.ts * 1000).toLocaleTimeString();
+    body.appendChild(meta);
+    toast.appendChild(body);
+
+    const actions = document.createElement("div");
+    actions.className = "toast-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "toast-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(entry.message).then(() => {
+            copyBtn.textContent = "Copied";
+            setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
+        });
+    });
+    actions.appendChild(copyBtn);
+    toast.appendChild(actions);
+
+    // Click toast body → open log panel
+    toast.addEventListener("click", () => {
+        dismissToast(toast);
+        openLogPanel();
+    });
+
+    container.appendChild(toast);
+
+    // Auto-dismiss after 8 seconds
+    const timer = setTimeout(() => dismissToast(toast), 8000);
+
+    // Pause on hover
+    toast.addEventListener("mouseenter", () => clearTimeout(timer));
+    toast.addEventListener("mouseleave", () => {
+        setTimeout(() => dismissToast(toast), 3000);
+    });
+}
+
+function dismissToast(toast) {
+    if (!toast.parentNode) return;
+    toast.classList.add("toast-dismiss");
+    setTimeout(() => {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 200);
 }

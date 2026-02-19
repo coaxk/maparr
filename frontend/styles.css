@@ -526,6 +526,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .error-live-preview {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 0.4rem;
     margin-top: 0.5rem;
     min-height: 0;
@@ -544,6 +545,8 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     border-radius: 12px;
     font-size: 0.75rem;
     font-weight: 500;
+    line-height: 1.4;
+    vertical-align: middle;
     background: rgba(74, 144, 217, 0.08);
     border: 1px solid rgba(74, 144, 217, 0.15);
     color: var(--text-secondary);
@@ -1220,6 +1223,8 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     display: block;
     padding: 0 0.5rem;
     white-space: pre;
+    line-height: 1.5;
+    min-height: 1.5em;
 }
 
 .yaml-line.diff-changed {
@@ -1961,4 +1966,288 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .error-icon {
     background: var(--error) !important;
     color: white !important;
+}
+
+/* ─── Log Panel ─── */
+
+.log-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-height: 40vh;
+    background: var(--bg-body);
+    border-top: 1px solid var(--border);
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.log-panel.hidden {
+    display: none;
+}
+
+.log-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.75rem;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.log-panel-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.log-panel-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.log-filter-select {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-size: 0.75rem;
+    padding: 0.15rem 0.4rem;
+    cursor: pointer;
+}
+
+.log-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    padding: 0.25rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.log-btn:hover {
+    color: var(--text);
+    border-color: var(--border);
+}
+
+.log-entries {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.25rem 0;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.6;
+}
+
+.log-entry {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.1rem 0.75rem;
+    white-space: nowrap;
+}
+
+.log-entry:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.log-ts {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    font-size: 0.7rem;
+}
+
+.log-level {
+    flex-shrink: 0;
+    font-weight: 600;
+    font-size: 0.7rem;
+    padding: 0 0.3rem;
+    border-radius: 3px;
+    text-transform: uppercase;
+    min-width: 3.5em;
+    text-align: center;
+}
+
+.log-level-DEBUG { color: var(--text-muted); }
+.log-level-INFO { color: var(--accent); }
+.log-level-WARNING { color: var(--warning); background: rgba(227, 179, 65, 0.1); }
+.log-level-ERROR { color: var(--error); background: rgba(248, 81, 73, 0.1); }
+.log-level-CRITICAL { color: #fff; background: var(--error); }
+
+.log-source {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    font-size: 0.7rem;
+}
+
+.log-msg {
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.log-entry-WARNING .log-msg { color: var(--warning); }
+.log-entry-ERROR .log-msg { color: var(--error); }
+.log-entry-CRITICAL .log-msg { color: var(--error); font-weight: 600; }
+
+/* ─── Footer Log Toggle ─── */
+
+.footer-log-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    padding: 0.2rem 0.4rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    position: relative;
+}
+
+.footer-log-toggle:hover {
+    color: var(--text);
+    border-color: var(--border);
+}
+
+.log-badge {
+    position: absolute;
+    top: -4px;
+    right: -6px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 7px;
+    background: var(--error);
+    color: #fff;
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
+}
+
+.log-badge.hidden { display: none; }
+
+/* ─── Toast Notifications ─── */
+
+.toast-container {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    pointer-events: none;
+    max-width: 420px;
+}
+
+.toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    font-size: 0.82rem;
+    pointer-events: auto;
+    animation: toastIn 0.25s ease-out;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.toast:hover {
+    opacity: 0.9;
+}
+
+.toast.toast-warning {
+    border-color: rgba(227, 179, 65, 0.4);
+    background: rgba(227, 179, 65, 0.08);
+}
+
+.toast.toast-error {
+    border-color: rgba(248, 81, 73, 0.4);
+    background: rgba(248, 81, 73, 0.08);
+}
+
+.toast-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+    line-height: 1;
+}
+
+.toast-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.toast-message {
+    color: var(--text);
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.toast-meta {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: 0.15rem;
+}
+
+.toast-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.toast-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+
+.toast-btn:hover {
+    color: var(--text);
+}
+
+.toast-dismiss {
+    animation: toastOut 0.2s ease-in forwards;
+}
+
+@keyframes toastIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes toastOut {
+    to { opacity: 0; transform: translateX(20px); }
+}
+
+@media (max-width: 600px) {
+    .toast-container {
+        right: 0.5rem;
+        left: 0.5rem;
+        max-width: none;
+    }
+
+    .log-panel {
+        max-height: 50vh;
+    }
 }

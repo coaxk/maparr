@@ -1,23 +1,25 @@
 """
 MapArr v1.0 — Path Mapping Problem Solver
 
-Lean FastAPI backend. Four jobs:
+Lean FastAPI backend. Five jobs:
   1. Parse error text (extract service + path + error type)
   2. Discover compose stacks on the filesystem
   3. Accept stack selection
   4. Analyze stack: resolve compose, detect conflicts, generate fix
+  5. Serve application logs to the frontend log panel
 
-No Docker SDK dependency. No SQLite. No SSE streaming.
-No history, no persistence, no jobs system.
+No Docker SDK dependency. No SQLite. No persistence, no jobs system.
 """
 
+import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.parser import parse_error
@@ -25,6 +27,7 @@ from backend.discovery import discover_stacks
 from backend.resolver import resolve_compose, ResolveError
 from backend.analyzer import analyze_stack
 from backend.smart_match import smart_match
+from backend.log_handler import install_log_handler, get_log_handler
 
 # ─── Logging ───
 
@@ -33,6 +36,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("maparr")
+
+# Install the in-memory log handler so logs are available via /api/logs
+_log_handler = install_log_handler()
 
 # ─── Version ───
 # Single source of truth — used in FastAPI metadata and /api/health.
@@ -415,6 +421,79 @@ async def api_smart_match(request: Request):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": VERSION}
+
+
+# ─── API: Logs ───
+
+@app.get("/api/logs")
+async def api_get_logs(limit: int = 100, level: str = "", since: float = 0):
+    """
+    Fetch recent log entries from the in-memory buffer.
+
+    Query params:
+      limit — max entries to return (default 100, max 500)
+      level — minimum level filter: "DEBUG", "INFO", "WARNING", "ERROR"
+      since — Unix timestamp, only return entries after this time
+    """
+    handler = get_log_handler()
+    limit = min(limit, 500)
+    entries = handler.get_entries(
+        limit=limit,
+        level=level or None,
+        since=since or None,
+    )
+    return {
+        "entries": [e.to_dict() for e in entries],
+        "total_buffered": handler.count,
+    }
+
+
+@app.get("/api/logs/stream")
+async def api_log_stream():
+    """
+    Server-Sent Events stream for live log entries.
+
+    The frontend connects once and receives log entries as they happen.
+    Used by the log panel for real-time updates and by the toast system
+    for WARN/ERROR notifications.
+    """
+    async def event_generator():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def on_log(entry):
+            try:
+                queue.put_nowait(entry)
+            except asyncio.QueueFull:
+                pass  # Drop if consumer is too slow
+
+        handler = get_log_handler()
+        handler.add_listener(on_log)
+        try:
+            # Send initial keepalive
+            yield "event: connected\ndata: {}\n\n"
+            while True:
+                try:
+                    entry = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    import json
+                    data = json.dumps(entry.to_dict())
+                    yield f"event: log\ndata: {data}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive to prevent connection timeout
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            handler.remove_listener(on_log)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ─── Dev Server ───
