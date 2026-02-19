@@ -72,6 +72,7 @@ class Stack:
     error: Optional[str] = None        # Parse error (stack still returned)
     health: str = "unknown"            # Quick health: "ok", "warning", "problem", "unknown"
     health_hint: str = ""              # Brief explanation of health status
+    volume_targets: List[str] = field(default_factory=list)  # Container-side data mount targets (for error path matching)
 
     def to_dict(self) -> dict:
         return {
@@ -83,6 +84,7 @@ class Stack:
             "error": self.error,
             "health": self.health,
             "health_hint": self.health_hint,
+            "volume_targets": self.volume_targets,
         }
 
 
@@ -266,6 +268,9 @@ def _parse_compose_minimal(compose_path: str, source: str) -> Optional[Stack]:
         # Quick health check — lightweight volume analysis
         health, health_hint = _quick_health_check(service_names, services_raw)
 
+        # Extract container-side volume targets for error path matching
+        volume_targets = _extract_volume_targets(services_raw)
+
         return Stack(
             path=str(Path(compose_path).parent),
             compose_file=compose_path,
@@ -274,6 +279,7 @@ def _parse_compose_minimal(compose_path: str, source: str) -> Optional[Stack]:
             source=source,
             health=health,
             health_hint=health_hint,
+            volume_targets=volume_targets,
         )
 
     except yaml.YAMLError as e:
@@ -321,7 +327,10 @@ def _quick_health_check(
       "unknown" — no hardlink participants in this stack (grey)
     """
     # Identify hardlink participants by name
-    participants = {}  # service_name -> set of host path roots
+    participants = {}       # service_name -> set of normalized source paths
+    named_vol_only = []     # participants with only named volumes
+    has_named_vols = False  # any participant uses named volumes for data
+
     for name in service_names:
         name_lower = name.lower()
         is_participant = any(app in name_lower for app in _HL_ALL)
@@ -333,33 +342,73 @@ def _quick_health_check(
             continue
 
         volumes = config.get("volumes", [])
-        roots = _extract_host_roots(volumes)
-        if roots:
-            participants[name] = roots
+        sources, has_named = _extract_host_sources(volumes)
+        if has_named:
+            has_named_vols = True
+        if sources:
+            participants[name] = sources
+        elif has_named:
+            named_vol_only.append(name)
 
-    # No hardlink participants → unknown (infrastructure stack)
-    if not participants:
+    # Participants with ONLY named volumes → problem
+    if named_vol_only and not participants:
+        return "problem", "Named volumes used — hardlinks impossible"
+
+    # No hardlink participants at all → unknown (infrastructure stack)
+    if not participants and not named_vol_only:
         return "unknown", ""
+
+    # Some have named volumes mixed with bind mounts → warning at minimum
+    if named_vol_only:
+        return "problem", "Mixed named volumes and bind mounts"
 
     # Only one participant with data volumes → warning
     if len(participants) < 2:
         return "warning", "Single media service — analyze for full picture"
 
-    # Check for shared roots
-    all_root_sets = list(participants.values())
-    common = all_root_sets[0]
-    for roots in all_root_sets[1:]:
-        common = common & roots
+    # Check if all participants share a common mount source
+    # Use FULL source paths — not just roots (roots are too coarse)
+    all_source_sets = list(participants.values())
+
+    # First: check if any single source path is shared by ALL participants
+    common = all_source_sets[0]
+    for sources in all_source_sets[1:]:
+        common = common & sources
 
     if common:
         return "ok", "Shared mount detected"
-    else:
-        return "problem", "Separate mount trees — hardlinks will fail"
+
+    # Second: check if all sources share a common PARENT
+    # Only flag as OK if ALL sources from ALL participants fall under one tree
+    all_sources = set()
+    for sources in all_source_sets:
+        all_sources.update(sources)
+
+    # Check if any source is a parent that encompasses ALL sources from ALL services
+    for candidate in sorted(all_sources, key=len):
+        candidate_norm = candidate.rstrip("/") + "/"
+        all_under_candidate = True
+        for sources in all_source_sets:
+            # Every source in this participant must be under the candidate
+            if not all(s == candidate or s.startswith(candidate_norm) for s in sources):
+                all_under_candidate = False
+                break
+        if all_under_candidate:
+            return "ok", "Shared mount detected"
+
+    return "problem", "Separate mount trees — hardlinks will fail"
 
 
-def _extract_host_roots(volumes: list) -> set:
-    """Extract host path roots from volume declarations (quick and dirty)."""
-    roots = set()
+def _extract_host_sources(volumes: list) -> tuple:
+    """
+    Extract normalized host source paths from volume declarations.
+
+    Returns (sources: set, has_named_volumes: bool).
+    sources contains full normalized paths (not roots).
+    has_named_volumes is True if any data volume uses a named volume.
+    """
+    sources = set()
+    has_named = False
 
     for vol in volumes:
         source = ""
@@ -371,6 +420,11 @@ def _extract_host_roots(volumes: list) -> set:
                 continue
             # Handle Windows paths (C:\path:...)
             if len(parts) >= 3 and len(parts[0]) == 1 and parts[0].isalpha():
+                source = parts[0] + ":" + parts[1]
+                target = parts[2]
+            # Handle NFS syntax (nfs-server:/remote/path:/container/path)
+            elif len(parts) >= 3 and "/" in parts[1]:
+                # nfs-server:/remote/path:/container/path
                 source = parts[0] + ":" + parts[1]
                 target = parts[2]
             else:
@@ -388,18 +442,66 @@ def _extract_host_roots(volumes: list) -> set:
         if any(target_clean == c or target_clean.startswith(c + "/") for c in _CONFIG_TARGETS):
             continue
 
-        # Skip named volumes (no path separator)
-        if not (source.startswith("/") or source.startswith("./") or
-                source.startswith("../") or source.startswith("~") or
-                (len(source) >= 2 and source[1] == ":")):
+        # Check for named volumes (no path separator) — flag but don't add
+        is_host_path = (source.startswith("/") or source.startswith("./") or
+                        source.startswith("../") or source.startswith("~") or
+                        (len(source) >= 2 and source[1] == ":"))
+
+        # Also detect NFS/remote mounts (contain :/ pattern)
+        is_remote = ":/" in source
+
+        if not is_host_path and not is_remote:
+            has_named = True
             continue
 
-        # Get root (first 2 meaningful path components)
-        root = _get_quick_root(source)
-        if root:
-            roots.add(root)
+        # Normalize path for comparison
+        norm = source.replace("\\", "/").rstrip("/")
+        if norm:
+            sources.add(norm)
 
-    return roots
+    return sources, has_named
+
+
+def _extract_volume_targets(services_raw: dict) -> List[str]:
+    """
+    Extract unique container-side data volume targets from all services.
+
+    Used by the frontend to match error paths (e.g. /downloads/tv-sonarr/...)
+    against a specific stack's volume layout. Skips config mounts.
+    """
+    targets = set()
+
+    for name, config in services_raw.items():
+        if not isinstance(config, dict):
+            continue
+        for vol in config.get("volumes", []):
+            target = ""
+            if isinstance(vol, str):
+                parts = vol.split(":")
+                if len(parts) < 2:
+                    continue
+                # Windows paths (C:\path:container:opts)
+                if len(parts) >= 3 and len(parts[0]) == 1 and parts[0].isalpha():
+                    target = parts[2]
+                # NFS syntax: hostname:/remote:/container (hostname has no /)
+                elif len(parts) >= 3 and "/" not in parts[0] and "/" in parts[1]:
+                    target = parts[2]
+                else:
+                    # Standard: /host:/container or /host:/container:ro
+                    target = parts[1]
+            elif isinstance(vol, dict):
+                target = vol.get("target", "")
+
+            if not target:
+                continue
+
+            target_clean = target.rstrip("/").split(":")[0]  # strip :ro etc
+            if any(target_clean == c or target_clean.startswith(c + "/") for c in _CONFIG_TARGETS):
+                continue
+            if target_clean:
+                targets.add(target_clean)
+
+    return sorted(targets)
 
 
 def _get_quick_root(path: str) -> Optional[str]:
