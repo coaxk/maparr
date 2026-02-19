@@ -1975,13 +1975,47 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     bottom: 0;
     left: 0;
     right: 0;
-    max-height: 40vh;
+    height: 250px;
+    max-height: 70vh;
+    min-height: 120px;
     background: var(--bg-body);
     border-top: 1px solid var(--border);
     z-index: 900;
     display: flex;
     flex-direction: column;
     box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.log-resize-handle {
+    height: 5px;
+    cursor: ns-resize;
+    background: transparent;
+    flex-shrink: 0;
+    position: relative;
+    transition: background 0.15s;
+}
+
+.log-resize-handle::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 32px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    transition: background 0.15s;
+}
+
+.log-resize-handle:hover,
+.log-resize-handle.dragging {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.log-resize-handle:hover::after,
+.log-resize-handle.dragging::after {
+    background: var(--text-muted);
 }
 
 .log-panel.hidden {
@@ -2038,6 +2072,11 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .log-btn:hover {
     color: var(--text);
     border-color: var(--border);
+}
+
+.log-btn-flip svg {
+    transform: rotate(180deg);
+    transition: transform 0.2s;
 }
 
 .log-entries {

@@ -3101,6 +3101,7 @@ const _logState = {
     panelOpen: false,
     sseSource: null,
     lastFetchTs: 0,
+    panelHeight: 250,  // Default panel height in px
 };
 
 // ─── Log Panel Init ───
@@ -3117,6 +3118,9 @@ function initLogSystem() {
     if (downloadBtn) downloadBtn.addEventListener("click", downloadLogs);
     if (clearBtn) clearBtn.addEventListener("click", clearLogPanel);
     if (levelFilter) levelFilter.addEventListener("change", () => renderLogEntries());
+
+    // Set up drag-to-resize handle
+    initLogPanelResize();
 
     // Fetch initial logs
     fetchLogs();
@@ -3143,12 +3147,23 @@ function toggleLogPanel() {
 
 function openLogPanel() {
     const panel = document.getElementById("log-panel");
-    if (panel) panel.classList.remove("hidden");
+    if (!panel) return;
+    panel.classList.remove("hidden");
+    panel.style.height = _logState.panelHeight + "px";
     _logState.panelOpen = true;
+
+    // Flip close arrow to point down (panel is open, click to close/collapse)
+    const closeBtn = document.getElementById("log-close-btn");
+    if (closeBtn) closeBtn.classList.add("log-btn-flip");
+
     // Clear error badge when panel is opened
     _logState.errorCount = 0;
     updateLogBadge();
-    // Scroll to bottom
+
+    // Add bottom padding to page so content isn't hidden behind panel
+    _updatePagePadding();
+
+    // Scroll log entries to bottom
     const entries = document.getElementById("log-entries");
     if (entries) entries.scrollTop = entries.scrollHeight;
 }
@@ -3157,6 +3172,74 @@ function closeLogPanel() {
     const panel = document.getElementById("log-panel");
     if (panel) panel.classList.add("hidden");
     _logState.panelOpen = false;
+
+    // Flip close arrow back to up
+    const closeBtn = document.getElementById("log-close-btn");
+    if (closeBtn) closeBtn.classList.remove("log-btn-flip");
+
+    // Remove bottom padding
+    _updatePagePadding();
+}
+
+function _updatePagePadding() {
+    // Add/remove padding at the bottom of the page so the log panel
+    // doesn't cover content. Users can always scroll to see buttons.
+    const body = document.body;
+    if (_logState.panelOpen) {
+        body.style.paddingBottom = (_logState.panelHeight + 20) + "px";
+    } else {
+        body.style.paddingBottom = "";
+    }
+}
+
+// ─── Drag-to-Resize ───
+
+function initLogPanelResize() {
+    const panel = document.getElementById("log-panel");
+    if (!panel) return;
+
+    // Create the resize handle (thin bar at the top of the panel)
+    const handle = document.createElement("div");
+    handle.className = "log-resize-handle";
+    handle.title = "Drag to resize";
+    panel.insertBefore(handle, panel.firstChild);
+
+    let startY = 0;
+    let startHeight = 0;
+
+    function onMouseDown(e) {
+        e.preventDefault();
+        startY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+        startHeight = panel.offsetHeight;
+        document.addEventListener("mousemove", onMouseMove);
+        document.addEventListener("mouseup", onMouseUp);
+        document.addEventListener("touchmove", onMouseMove, { passive: false });
+        document.addEventListener("touchend", onMouseUp);
+        document.body.style.userSelect = "none";
+        handle.classList.add("dragging");
+    }
+
+    function onMouseMove(e) {
+        e.preventDefault();
+        const clientY = e.clientY || (e.touches && e.touches[0].clientY) || 0;
+        const delta = startY - clientY; // Dragging up = positive delta = taller
+        const newHeight = Math.min(Math.max(startHeight + delta, 120), window.innerHeight * 0.7);
+        _logState.panelHeight = newHeight;
+        panel.style.height = newHeight + "px";
+        _updatePagePadding();
+    }
+
+    function onMouseUp() {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        document.removeEventListener("touchmove", onMouseMove);
+        document.removeEventListener("touchend", onMouseUp);
+        document.body.style.userSelect = "";
+        handle.classList.remove("dragging");
+    }
+
+    handle.addEventListener("mousedown", onMouseDown);
+    handle.addEventListener("touchstart", onMouseDown, { passive: false });
 }
 
 // ─── Fetch Logs from API ───
