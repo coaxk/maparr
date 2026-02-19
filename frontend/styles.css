@@ -164,6 +164,17 @@ body {
     text-decoration: underline;
 }
 
+.header-path-chevron {
+    font-size: 0.6rem;
+    margin-left: 0.25rem;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+}
+
+.header-scan-path:hover .header-path-chevron {
+    opacity: 1;
+}
+
 /* ─── Header Path Dropdown ─── */
 
 .header-path-dropdown {
@@ -338,7 +349,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     color: var(--text-primary);
     font-size: 0.82rem;
     white-space: nowrap;
-    line-height: 1;
+    line-height: 1.2;
 }
 
 .fix-match-pill:hover {
@@ -347,21 +358,25 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 }
 
 .fix-match-pill .health-dot {
-    width: 8px;
-    height: 8px;
+    width: 8px !important;
+    height: 8px !important;
     min-width: 8px;
     min-height: 8px;
-    margin: 0;
+    margin: 0 !important;
     flex-shrink: 0;
+    box-shadow: none;
+    align-self: center;
 }
 
 .fix-pill-name {
     font-weight: 600;
+    line-height: 1;
 }
 
 .fix-pill-count {
     font-size: 0.7rem;
     color: var(--text-muted);
+    line-height: 1;
 }
 
 .fix-match-hint {
@@ -564,6 +579,42 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 /* ─── Input Helpers ─── */
 
+/* ─── Example Error Pills ─── */
+
+.example-errors {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
+}
+
+.example-label {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-right: 0.2rem;
+}
+
+.example-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.65rem;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    font-family: var(--font-sans);
+}
+
+.example-pill:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: rgba(74, 144, 217, 0.06);
+}
+
 .input-examples {
     font-size: 0.8rem;
     color: var(--text-muted);
@@ -721,6 +772,16 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     border-radius: var(--radius-sm);
     font-size: 0.88rem;
     color: var(--text-secondary);
+}
+
+/* ─── Stack Filter ─── */
+
+.stack-filter {
+    margin-bottom: 0.75rem;
+}
+
+.stack-filter input {
+    width: 100%;
 }
 
 /* ─── Stacks List ─── */
@@ -1423,6 +1484,54 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .healthy-detail {
     font-size: 0.88rem;
     color: var(--text-secondary);
+}
+
+/* ─── Compact Healthy: Collapsible Setup Table ─── */
+
+.healthy-setup-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.4s ease;
+}
+
+.healthy-setup-content.expanded {
+    max-height: 600px;
+}
+
+.healthy-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+}
+
+.healthy-trash-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.75rem;
+    border-radius: 14px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-top: 0.75rem;
+}
+
+.healthy-trash-badge.compliant {
+    background: rgba(63, 185, 80, 0.1);
+    color: var(--success);
+    border: 1px solid rgba(63, 185, 80, 0.25);
+}
+
+.healthy-trash-badge.close {
+    background: rgba(210, 153, 34, 0.1);
+    color: var(--warning);
+    border: 1px solid rgba(210, 153, 34, 0.25);
+}
+
+.healthy-trash-badge.non-compliant {
+    background: rgba(92, 99, 112, 0.1);
+    color: var(--text-muted);
+    border: 1px solid rgba(92, 99, 112, 0.2);
 }
 
 /* ─── Footer ─── */

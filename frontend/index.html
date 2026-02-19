@@ -59,10 +59,12 @@
             spellcheck="false"
         ></textarea>
         <div id="error-live-preview" class="error-live-preview"></div>
-        <p class="input-examples">
-            Also works with: "Remote Path Mapping" errors, "Cross-device link" failures,
-            permission denied, and download client path warnings.
-        </p>
+        <div class="example-errors" id="example-errors">
+            <span class="example-label">Try an example:</span>
+            <button class="example-pill" onclick="fillExample('import')">Import failed</button>
+            <button class="example-pill" onclick="fillExample('remote')">Remote path mapping</button>
+            <button class="example-pill" onclick="fillExample('permission')">Permission denied</button>
+        </div>
         <div class="step-actions">
             <button id="btn-parse" class="btn btn-primary" onclick="parseError()">
                 Analyze Error
@@ -114,6 +116,10 @@
         <div id="stacks-loading" class="loading">
             <div class="spinner"></div>
             <span>Scanning for compose stacks...</span>
+        </div>
+        <div class="stack-filter hidden" id="stack-filter">
+            <input type="text" id="stack-filter-input" class="path-input"
+                   placeholder="Filter stacks..." spellcheck="false" />
         </div>
         <div id="stacks-list" class="stacks-list hidden"></div>
         <div id="stacks-empty" class="empty-state hidden">
@@ -208,18 +214,6 @@
         <div id="current-setup-details"></div>
     </section>
 
-    <!-- Mount Warnings (NFS/CIFS/remote FS) -->
-    <section class="card hidden" id="step-mount-warnings">
-        <div class="step-header">
-            <span class="step-number info-icon">i</span>
-            <h2>Filesystem Notes</h2>
-        </div>
-        <p class="step-desc">
-            MapArr detected filesystem details that may affect hardlinks.
-        </p>
-        <div id="mount-warning-details"></div>
-    </section>
-
     <!-- The Solution -->
     <section class="card hidden" id="step-solution">
         <div class="step-header">
@@ -239,15 +233,6 @@
             <pre id="solution-yaml-original"></pre>
             <button class="copy-btn" id="btn-copy-original" onclick="copySolutionYaml()">Copy to Clipboard</button>
         </div>
-    </section>
-
-    <!-- Category Path Advisory (companion to the fix) -->
-    <section class="card hidden" id="step-category-warning">
-        <div class="step-header">
-            <span class="step-number gold-icon">!</span>
-            <h2>Check Your Download Client Categories</h2>
-        </div>
-        <div id="category-warning-details"></div>
     </section>
 
     <!-- Why This Works -->

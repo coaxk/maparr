@@ -143,9 +143,13 @@ function startOver() {
     if (stackList) stackList.classList.remove("hidden");
     const summary = document.getElementById("selected-stack-summary");
     if (summary) summary.remove();
-    // Clear textarea
+    // Clear textarea and filter
     const textarea = document.getElementById("error-input");
     if (textarea) textarea.value = "";
+    const filterInput = document.getElementById("stack-filter-input");
+    if (filterInput) filterInput.value = "";
+    const filterDiv = document.getElementById("stack-filter");
+    if (filterDiv) filterDiv.classList.add("hidden");
     // Show mode selector
     document.getElementById("step-mode").classList.remove("hidden");
     document.getElementById("step-mode").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -562,6 +566,21 @@ function updateLivePreview(text) {
     });
 }
 
+// ─── Example Error Fill ───
+
+function fillExample(type) {
+    const examples = {
+        import: "Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01/Episode.mkv",
+        remote: "Download client qBittorrent places downloads in /downloads/tv but this directory is not reachable from Radarr. Remote path mapping may be needed.",
+        permission: "Access to the path '/data/media/movies/Movie Name (2024)' is denied. Sonarr does not have permission.",
+    };
+    const textarea = document.getElementById("error-input");
+    if (!textarea || !examples[type]) return;
+    textarea.value = examples[type];
+    textarea.focus();
+    updateLivePreview(textarea.value.trim());
+}
+
 // ─── Stack Selection ───
 
 async function showStackSelection() {
@@ -597,6 +616,8 @@ async function showStackSelection() {
         } else {
             renderStacks(state.stacks);
             list.classList.remove("hidden");
+            // Show filter for large stack lists
+            showStackFilter(state.stacks.length);
         }
 
         if (data.search_note) {
@@ -617,6 +638,47 @@ async function showStackSelection() {
             emptyP.textContent = "Could not scan for stacks. Is the backend running?";
         }
     }
+}
+
+// ─── Stack Filter ───
+
+function showStackFilter(stackCount) {
+    const filter = document.getElementById("stack-filter");
+    const input = document.getElementById("stack-filter-input");
+    if (!filter || !input) return;
+
+    // Only show filter when there are enough stacks to warrant it
+    if (stackCount >= 6) {
+        filter.classList.remove("hidden");
+        // Attach listener once
+        if (!input._filterBound) {
+            input.addEventListener("input", () => filterStacks(input.value));
+            input._filterBound = true;
+        }
+    } else {
+        filter.classList.add("hidden");
+    }
+}
+
+function filterStacks(query) {
+    const q = query.trim().toLowerCase();
+    const list = document.getElementById("stacks-list");
+    if (!list) return;
+
+    if (!q) {
+        // Show all — re-render full list
+        renderStacks(state.stacks);
+        return;
+    }
+
+    // Filter stacks by name or service match
+    const filtered = state.stacks.filter((stack) => {
+        const name = extractDirName(stack.path).toLowerCase();
+        if (name.includes(q)) return true;
+        return (stack.services || []).some((svc) => svc.toLowerCase().includes(q));
+    });
+
+    renderStacks(filtered);
 }
 
 // ─── Render Stacks ───
@@ -974,9 +1036,7 @@ function showAnalysisResult(data) {
     // Problem first — users want the punchline before the evidence table
     showProblem(data);
     showCurrentSetup(data);
-    showMountWarnings(data);
     showSolution(data);
-    showCategoryAdvisory(data);
     showWhyItWorks(data);
     showNextSteps(data);
     showTrashAdvisory(data);
@@ -1084,32 +1144,29 @@ function showProblem(data) {
         details.appendChild(item);
     });
 
+    // Mount warnings rendered inline in the Problem card
+    renderMountWarningsInto(details, data);
+
     section.classList.remove("hidden");
 }
 
-// ─── Mount Warnings ───
+// ─── Mount Warnings (inline — rendered into the calling card's container) ───
 
-function showMountWarnings(data) {
-    const section = document.getElementById("step-mount-warnings");
-    if (!section) return;
-
+/**
+ * Render mount warnings inline into a given container element.
+ * No longer a standalone card — merged into Problem or Healthy card.
+ */
+function renderMountWarningsInto(container, data) {
     const warnings = data.mount_warnings || [];
-    if (warnings.length === 0) {
-        section.classList.add("hidden");
-        return;
-    }
-
-    const details = document.getElementById("mount-warning-details");
-    details.replaceChildren();
+    if (warnings.length === 0) return;
 
     warnings.forEach((text) => {
         const item = document.createElement("div");
         item.className = "callout callout-warning";
+        item.style.marginTop = "0.75rem";
         item.textContent = text;
-        details.appendChild(item);
+        container.appendChild(item);
     });
-
-    section.classList.remove("hidden");
 }
 
 // ─── Solution ───
@@ -1252,6 +1309,9 @@ function showNextSteps(data) {
     const container = document.getElementById("next-steps-checklist");
     container.replaceChildren();
 
+    // Category advisory inline at the top of Next Steps
+    renderCategoryAdvisoryInto(container, data);
+
     const steps = [
         "Copy the corrected YAML above into your docker-compose.yml",
         "Create the host directory structure if it doesn't exist",
@@ -1291,82 +1351,63 @@ function showNextSteps(data) {
     section.classList.remove("hidden");
 }
 
-// ─── Category Path Advisory ───
+// ─── Category Path Advisory (inline — rendered into Next Steps) ───
 
-function showCategoryAdvisory(data) {
-    const section = document.getElementById("step-category-warning");
-    if (!section) return;
-
-    // Only show when we detect both an *arr app and a download client
+/**
+ * Render category advisory inline into a container.
+ * Returns true if content was rendered, false if not applicable.
+ */
+function renderCategoryAdvisoryInto(container, data) {
     const services = data.services || [];
     const hasArr = services.some((s) => s.role === "arr");
     const hasDl = services.some((s) => s.role === "download_client");
 
-    if (!hasArr || !hasDl) {
-        section.classList.add("hidden");
-        return;
-    }
-
-    const details = document.getElementById("category-warning-details");
-    details.replaceChildren();
-
-    const intro = document.createElement("p");
-    intro.className = "category-intro";
-    intro.textContent =
-        "MapArr analyzes your Docker volume mounts — but there's one layer it can't see. " +
-        "This is the #1 cause of import failures that survives a correct volume setup.";
-    details.appendChild(intro);
+    if (!hasArr || !hasDl) return false;
 
     const callout = document.createElement("div");
     callout.className = "callout callout-category";
+    callout.style.marginBottom = "1rem";
 
     const title = document.createElement("strong");
     title.style.cssText = "display: block; margin-bottom: 0.4rem; font-size: 0.9rem;";
-    title.textContent = "Your download client's category save path must match your volume mounts.";
+    title.textContent = "Also check: download client category save paths";
     callout.appendChild(title);
 
-    // Build specific guidance based on detected services
     const arrNames = services.filter((s) => s.role === "arr").map((s) => s.name);
     const dlNames = services.filter((s) => s.role === "download_client").map((s) => s.name);
-
-    const example = document.createElement("p");
-    example.style.cssText = "margin: 0.5rem 0; font-size: 0.88rem; color: var(--text-secondary);";
 
     const dlName = dlNames[0] || "your download client";
     const arrName = arrNames[0] || "your *arr app";
     const isQbit = dlName.toLowerCase().includes("qbit") || dlName.toLowerCase().includes("torrent");
     const isSab = dlName.toLowerCase().includes("sab") || dlName.toLowerCase().includes("nzb");
 
+    const example = document.createElement("p");
+    example.style.cssText = "margin: 0.5rem 0; font-size: 0.88rem; color: var(--text-secondary);";
+
     if (isQbit) {
         example.textContent =
-            "In qBittorrent: go to Options > Downloads. Check the Default Save Path " +
-            "AND each category's save path (right-click a category > Edit). " +
-            "These must point to a directory inside a volume mount that " +
-            arrName + " can also see. Example: /data/torrents/tv-sonarr";
+            "In qBittorrent: Options > Downloads — check Default Save Path AND each category's save path. " +
+            "These must point inside a volume mount that " + arrName + " can also see.";
     } else if (isSab) {
         example.textContent =
-            "In SABnzbd: go to Config > Folders. Check the Completed Download Folder " +
-            "and any category-specific output folders. " +
-            "These must point to a directory inside a volume mount that " +
-            arrName + " can also see. Example: /data/usenet/tv-sonarr";
+            "In SABnzbd: Config > Folders — check the Completed Download Folder and category output folders. " +
+            "These must point inside a volume mount that " + arrName + " can also see.";
     } else {
         example.textContent =
-            "In " + dlName + ": find the download save path / category output folder settings. " +
-            "These must point to a directory inside a volume mount that " +
-            arrName + " can also see.";
+            "In " + dlName + ": check the download save path / category output folders. " +
+            "These must point inside a volume mount that " + arrName + " can also see.";
     }
     callout.appendChild(example);
 
     const why = document.createElement("p");
     why.style.cssText = "margin: 0.5rem 0 0; font-size: 0.82rem; color: var(--text-muted);";
     why.textContent =
-        "Why this matters: when " + arrName + " tries to import a completed download, " +
-        "it looks at the path " + dlName + " reports. If that path isn't under a " +
-        "shared volume mount, the import fails — even if your compose volumes are perfect.";
+        "This is the #1 cause of import failures that survives a correct volume setup. " +
+        "If " + dlName + "'s category path isn't under a shared mount, imports fail even with perfect volumes.";
     callout.appendChild(why);
 
-    details.appendChild(callout);
-    section.classList.remove("hidden");
+    container.appendChild(callout);
+    return true;
 }
 
 // ─── TRaSH Advisory (Contextual) ───
@@ -1535,9 +1576,11 @@ function showHealthyResult(data) {
     }
     if (heading) heading.textContent = "Your Setup Looks Good";
 
+    // ─── One-line summary ───
+    const serviceCount = (data.services || []).length;
     const msg = document.createElement("p");
     msg.className = "healthy-message";
-    msg.textContent = "No path conflicts detected in your setup.";
+    msg.textContent = "No path conflicts detected across " + serviceCount + " service" + (serviceCount !== 1 ? "s" : "") + ".";
     details.appendChild(msg);
 
     if (data.fix_summary) {
@@ -1547,107 +1590,149 @@ function showHealthyResult(data) {
         details.appendChild(detail);
     }
 
-    // Still show current setup
-    showCurrentSetup(data);
+    // ─── Mount warnings inline (compact) ───
+    renderMountWarningsInto(details, data);
 
-    // Show mount warnings even for healthy stacks (e.g., NFS detected)
-    showMountWarnings(data);
+    // ─── TRaSH compliance badge (one line) ───
+    const compliance = detectTrashCompliance(data);
+    const trashBadge = document.createElement("div");
+    trashBadge.className = "healthy-trash-badge " + compliance;
+    const trashLabels = {
+        compliant: "\u2713 TRaSH Guides compliant — gold standard setup",
+        close: "\u2192 Almost TRaSH compliant — some paths don't use /data root",
+        "non-compliant": "\u2605 Consider the TRaSH Guides folder structure for best results",
+    };
+    trashBadge.textContent = trashLabels[compliance];
+    details.appendChild(trashBadge);
 
-    const callout = document.createElement("div");
-    callout.className = "callout callout-success";
-    callout.textContent =
-        "Your volume mounts look correctly structured for hardlinks and atomic moves. " +
-        "If you're still experiencing errors, the issue is likely app configuration, not Docker.";
-    details.appendChild(callout);
+    // ─── Collapsible setup table ───
+    const setupToggle = document.createElement("button");
+    setupToggle.className = "why-toggle";
+    setupToggle.style.marginTop = "1rem";
+    const setupArrow = document.createElement("span");
+    setupArrow.className = "why-toggle-arrow";
+    setupArrow.textContent = "\u25B8";
+    setupToggle.appendChild(setupArrow);
+    setupToggle.appendChild(document.createTextNode(" View full setup"));
+    details.appendChild(setupToggle);
 
-    // Actionable next steps when setup is healthy
-    const guidance = document.createElement("div");
-    guidance.className = "healthy-guidance";
+    const setupContent = document.createElement("div");
+    setupContent.className = "healthy-setup-content";
 
-    const guidanceTitle = document.createElement("h3");
-    guidanceTitle.textContent = "If you still have errors, check:";
-    guidanceTitle.style.cssText = "font-size: 0.9rem; margin: 1rem 0 0.5rem; color: var(--text-primary); font-weight: 600;";
-    guidance.appendChild(guidanceTitle);
-
-    // Secret sauce callout — download client categories
-    const categoryCallout = document.createElement("div");
-    categoryCallout.className = "callout callout-category";
-
-    const catTitle = document.createElement("strong");
-    catTitle.textContent = "Most likely cause: Download client category paths";
-    catTitle.style.cssText = "display: block; margin-bottom: 0.4rem; color: var(--text-primary); font-size: 0.9rem; font-weight: 600;";
-    categoryCallout.appendChild(catTitle);
-
-    const catDesc = document.createElement("p");
-    catDesc.style.cssText = "margin: 0 0 0.5rem; color: var(--text-secondary); font-size: 0.88rem;";
-    catDesc.textContent =
-        "This is the #1 overlooked cause of import failures. Your Docker volumes can be perfect " +
-        "and imports will still fail if your download client's category save path doesn't match " +
-        "a path your *arr app can see.";
-    categoryCallout.appendChild(catDesc);
-
-    const catHow = document.createElement("p");
-    catHow.style.cssText = "margin: 0; color: var(--text-secondary); font-size: 0.88rem;";
-    catHow.textContent =
-        "In qBittorrent: Options > Downloads > Default Save Path (and per-category paths). " +
-        "In SABnzbd: Config > Folders > Completed Download Folder. " +
-        "These paths must be under a directory that your *arr app's volume mounts also cover. " +
-        "Example: if Sonarr mounts /data, qBittorrent's category path for 'tv-sonarr' must save to /data/torrents/tv-sonarr.";
-    categoryCallout.appendChild(catHow);
-    guidance.appendChild(categoryCallout);
-
-    const checks = [
-        {
-            label: "Root Folder settings",
-            detail: "In your *arr app, go to Settings > Media Management > Root Folders. " +
-                "Make sure the root folder path matches a mounted container path (e.g., /data/media/tv)."
-        },
-        {
-            label: "File permissions (PUID/PGID)",
-            detail: "Ensure all containers run with the same PUID/PGID. " +
-                "Check that the user has read/write access to the data directories on the host."
-        },
-    ];
-
-    checks.forEach((check) => {
-        const item = document.createElement("div");
-        item.style.cssText = "margin-bottom: 0.6rem;";
-        const strong = document.createElement("strong");
-        strong.textContent = check.label;
-        strong.style.cssText = "color: var(--text-primary); font-size: 0.88rem;";
-        item.appendChild(strong);
-        const p = document.createElement("p");
-        p.textContent = check.detail;
-        p.style.cssText = "color: var(--text-muted); font-size: 0.82rem; margin: 0.2rem 0 0;";
-        item.appendChild(p);
-        guidance.appendChild(item);
+    // Build setup table inline (same logic as showCurrentSetup)
+    const table = document.createElement("table");
+    table.className = "service-volume-table";
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    ["Service", "Role", "Volume Mapping"].forEach((text) => {
+        const th = document.createElement("th");
+        th.textContent = text;
+        headerRow.appendChild(th);
     });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
 
-    // RPM note — reframed, not circular
-    const rpmNote = document.createElement("div");
-    rpmNote.style.cssText = "margin-top: 0.75rem; padding: 0.6rem 0.75rem; background: rgba(74,144,217,0.06); border-radius: 4px; font-size: 0.82rem; color: var(--text-muted);";
-    rpmNote.textContent =
-        "About Remote Path Mappings: MapArr has already analyzed the Docker volume layer that " +
-        "RPMs sit on top of. If your volumes are correct (as shown above), you likely don't need " +
-        "Remote Path Mappings at all — they're a workaround for mismatched mounts, not a fix. " +
-        "Correct volume mounts eliminate the need for RPMs entirely.";
-    guidance.appendChild(rpmNote);
+    const tbody = document.createElement("tbody");
+    (data.services || []).forEach((svc) => {
+        const allVols = svc.volumes || [];
+        if (allVols.length === 0 && svc.role === "other") return;
+        const row = document.createElement("tr");
+        const nameCell = document.createElement("td");
+        nameCell.className = "svc-name";
+        nameCell.textContent = svc.name;
+        row.appendChild(nameCell);
+        const roleCell = document.createElement("td");
+        roleCell.className = "svc-role";
+        roleCell.textContent = formatRole(svc.role);
+        row.appendChild(roleCell);
+        const volCell = document.createElement("td");
+        volCell.className = "vol-path";
+        if (allVols.length > 0) {
+            allVols.forEach((v, i) => {
+                if (i > 0) volCell.appendChild(document.createElement("br"));
+                const span = document.createElement("span");
+                span.textContent = v.source + " : " + v.target;
+                span.className = isConfigVolume(v.target) ? "vol-config" : "vol-data";
+                volCell.appendChild(span);
+            });
+        } else {
+            volCell.textContent = "(no volumes)";
+        }
+        row.appendChild(volCell);
+        tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    setupContent.appendChild(table);
 
+    // Category advisory inline in the setup details
+    renderCategoryAdvisoryInto(setupContent, data);
+
+    // Compact troubleshooting hints
+    const troubleHint = document.createElement("p");
+    troubleHint.style.cssText = "font-size: 0.82rem; color: var(--text-muted); margin-top: 0.5rem;";
+    troubleHint.textContent =
+        "Still seeing errors? Check your Root Folder settings (Settings > Media Management) " +
+        "and ensure all containers share the same PUID/PGID for file permissions.";
+    setupContent.appendChild(troubleHint);
+
+    // TRaSH link
     const trashLink = document.createElement("div");
     trashLink.className = "callout";
+    trashLink.style.marginTop = "0.5rem";
     const link = document.createElement("a");
     link.href = "https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/";
     link.target = "_blank";
     link.rel = "noopener";
-    link.textContent = "TRaSH Guides: Docker Hardlinks & Atomic Moves — the full walkthrough";
+    link.textContent = "TRaSH Guides: Docker Hardlinks & Atomic Moves";
     trashLink.appendChild(link);
-    guidance.appendChild(trashLink);
+    setupContent.appendChild(trashLink);
 
-    details.appendChild(guidance);
+    details.appendChild(setupContent);
 
+    // Toggle handler
+    setupToggle.addEventListener("click", () => {
+        const isExpanded = setupContent.classList.toggle("expanded");
+        setupToggle.classList.toggle("expanded", isExpanded);
+        Array.from(setupToggle.childNodes).forEach((n) => {
+            if (n.nodeType === Node.TEXT_NODE) setupToggle.removeChild(n);
+        });
+        setupToggle.appendChild(document.createTextNode(isExpanded ? " Hide setup" : " View full setup"));
+    });
+
+    // ─── Inline actions (Copy Diagnostic + Analyze Another) ───
+    const actions = document.createElement("div");
+    actions.className = "healthy-inline-actions";
+
+    const analyzeBtn = document.createElement("button");
+    analyzeBtn.className = "btn btn-primary";
+    analyzeBtn.textContent = "Analyze Another Stack";
+    analyzeBtn.addEventListener("click", () => analyzeAnother());
+    actions.appendChild(analyzeBtn);
+
+    const diagBtn = document.createElement("button");
+    diagBtn.className = "btn btn-subtle";
+    const diagIcon = document.createElement("span");
+    diagIcon.className = "btn-icon";
+    diagIcon.textContent = "\uD83D\uDCCB";
+    diagBtn.appendChild(diagIcon);
+    diagBtn.appendChild(document.createTextNode(" Copy Diagnostic"));
+    diagBtn.addEventListener("click", () => copyDiagnosticSummary());
+    actions.appendChild(diagBtn);
+
+    const startOverBtn = document.createElement("button");
+    startOverBtn.className = "btn btn-subtle";
+    const soIcon = document.createElement("span");
+    soIcon.className = "btn-icon";
+    soIcon.textContent = "\u21BA";
+    startOverBtn.appendChild(soIcon);
+    startOverBtn.appendChild(document.createTextNode(" Start Over"));
+    startOverBtn.addEventListener("click", () => startOver());
+    actions.appendChild(startOverBtn);
+
+    details.appendChild(actions);
+
+    // Don't show separate setup, trash, or again cards for healthy results
     section.classList.remove("hidden");
-    showCategoryAdvisory(data);
-    showAgainButton();
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -1690,7 +1775,7 @@ function showIncompleteResult(data) {
 
     // Show what IS in the stack
     showCurrentSetup(data);
-    showMountWarnings(data);
+    renderMountWarningsInto(details, data);
 
     const callout = document.createElement("div");
     callout.className = "callout callout-warning";
@@ -1789,8 +1874,8 @@ function clearAnalysisResults() {
     // Hide ALL result sections — called before any new analysis cycle
     const resultSections = [
         "step-analyzing", "step-current-setup", "step-problem",
-        "step-mount-warnings", "step-solution", "step-why",
-        "step-next", "step-category-warning", "step-trash",
+        "step-solution", "step-why",
+        "step-next", "step-trash",
         "step-healthy", "step-analysis-error", "step-again",
     ];
     resultSections.forEach((id) => {
@@ -2033,8 +2118,13 @@ function updateConnectionStatus(data) {
     if (displayPath) {
         const line2 = document.createElement("span");
         line2.className = "header-scan-path";
-        line2.textContent = displayPath;
         line2.title = "Click to change scan location";
+        const pathText = document.createTextNode(displayPath);
+        line2.appendChild(pathText);
+        const chevron = document.createElement("span");
+        chevron.className = "header-path-chevron";
+        chevron.textContent = "\u25BE";
+        line2.appendChild(chevron);
         line2.style.cursor = "pointer";
         line2.addEventListener("click", (e) => {
             e.stopPropagation();
