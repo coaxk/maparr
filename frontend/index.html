@@ -139,9 +139,14 @@
         </div>
         <div id="stacks-search-note" class="search-note"></div>
         <div class="path-change" id="path-change">
-            <button class="btn btn-subtle btn-sm" id="btn-change-path" onclick="togglePathInput()">
-                <span class="btn-icon">&#9881;</span> Change scan path
-            </button>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <button class="btn btn-subtle btn-sm" id="btn-change-path" onclick="togglePathInput()">
+                    <span class="btn-icon">&#9881;</span> Change scan path
+                </button>
+                <button class="btn btn-subtle btn-sm" onclick="switchToFixMode()">
+                    <span class="btn-icon">&#128295;</span> Have an error to fix?
+                </button>
+            </div>
             <div class="path-input-row hidden" id="path-input-row">
                 <div class="detected-dirs hidden" id="detected-dirs">
                     <span class="detected-dirs-label">Detected locations:</span>
@@ -159,11 +164,6 @@
                     <button class="btn btn-ghost btn-sm" onclick="resetStacksPath()">Reset</button>
                 </div>
             </div>
-        </div>
-        <div class="step-actions" style="margin-top: 0.75rem;">
-            <button class="btn btn-subtle" onclick="switchToFixMode()">
-                <span class="btn-icon">&#128295;</span> Have an error to fix?
-            </button>
         </div>
     </section>
 

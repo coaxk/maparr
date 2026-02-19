@@ -533,7 +533,7 @@ function updateLivePreview(text) {
     // Detect service
     for (const svc of _ALL_SERVICES) {
         if (lower.includes(svc)) {
-            pills.push({ type: "service", icon: "\uD83D\uDD0D", text: svc });
+            pills.push({ type: "service", icon: "\uD83D\uDD0D", text: svc, tooltip: "Detected service — MapArr will look for this in your stacks" });
             break;
         }
     }
@@ -547,13 +547,13 @@ function updateLivePreview(text) {
         const display = detectedPath.length > 50
             ? detectedPath.slice(0, 47) + "..."
             : detectedPath;
-        pills.push({ type: "path", icon: "\uD83D\uDCC1", text: display });
+        pills.push({ type: "path", icon: "\uD83D\uDCC1", text: display, tooltip: "Detected container path — MapArr will check if this is reachable via volume mounts" });
     }
 
     // Detect error type
     for (const [label, regex] of Object.entries(_ERROR_KEYWORDS)) {
         if (regex.test(text)) {
-            pills.push({ type: "error", icon: "\u26A0", text: label });
+            pills.push({ type: "error", icon: "\u26A0", text: label, tooltip: "Detected error type — helps MapArr prioritize the right fix" });
             break;
         }
     }
@@ -563,6 +563,7 @@ function updateLivePreview(text) {
     pills.forEach((p) => {
         const pill = document.createElement("span");
         pill.className = "preview-pill pill-" + p.type;
+        if (p.tooltip) pill.title = p.tooltip;
         const icon = document.createElement("span");
         icon.className = "preview-pill-icon";
         icon.textContent = p.icon;
@@ -1457,7 +1458,14 @@ function showTrashAdvisory(data) {
     const details = document.getElementById("trash-details");
     details.replaceChildren();
 
-    const compliance = data ? detectTrashCompliance(data) : "non-compliant";
+    let compliance = data ? detectTrashCompliance(data) : "non-compliant";
+
+    // Don't show "compliant" when there are active conflicts — that's misleading.
+    // The folder structure might follow TRaSH conventions, but the stack still has issues.
+    const hasConflicts = (data.conflicts || []).length > 0;
+    if (compliance === "compliant" && hasConflicts) {
+        compliance = "close";
+    }
 
     // ─── Tier 1: Compliant ───
     if (compliance === "compliant") {
