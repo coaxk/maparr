@@ -490,6 +490,14 @@ function makeParseField(label, value) {
     return row;
 }
 
+// ─── Service Name Constants ───
+// Shared across live preview, stack classification, and category detection.
+// Must be declared before any code that references them.
+
+const _ARR_APPS = ["sonarr", "radarr", "lidarr", "readarr", "whisparr", "prowlarr", "bazarr"];
+const _DL_CLIENTS = ["qbittorrent", "sabnzbd", "nzbget", "transmission", "deluge", "rtorrent", "jdownloader"];
+const _MEDIA_SERVERS = ["plex", "jellyfin", "emby"];
+
 // ─── Live Error Preview ───
 
 /**
@@ -630,6 +638,7 @@ async function showStackSelection() {
         // Populate detected directories for quick-select
         populateDetectedDirs(state.stacks);
     } catch (err) {
+        console.error("showStackSelection error:", err);
         if (state.mode !== "browse") return;
         loading.classList.add("hidden");
         empty.classList.remove("hidden");
@@ -682,11 +691,6 @@ function filterStacks(query) {
 }
 
 // ─── Render Stacks ───
-
-// Known service names for classification (must match backend)
-const _ARR_APPS = ["sonarr", "radarr", "lidarr", "readarr", "whisparr", "prowlarr", "bazarr"];
-const _DL_CLIENTS = ["qbittorrent", "sabnzbd", "nzbget", "transmission", "deluge", "rtorrent", "jdownloader"];
-const _MEDIA_SERVERS = ["plex", "jellyfin", "emby"];
 
 function classifyStack(stack) {
     const names = (stack.services || []).map((s) => s.toLowerCase());
