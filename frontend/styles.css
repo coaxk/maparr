@@ -175,6 +175,25 @@ body {
     opacity: 1;
 }
 
+/* One-shot nudge glow — draws attention to the header scan path */
+.header-nudge .header-scan-path {
+    animation: headerNudgeGlow 1.5s ease-out;
+}
+.header-nudge .header-count-badge {
+    animation: headerNudgeGlow 1.5s ease-out 0.2s;
+}
+@keyframes headerNudgeGlow {
+    0%   { color: var(--accent); text-shadow: 0 0 8px rgba(88, 166, 255, 0.6); }
+    100% { color: inherit; text-shadow: none; }
+}
+
+/* Hint pointing users to the header scanner */
+.boot-hint-nudge {
+    margin-top: 0.75rem;
+    opacity: 0.55;
+    font-style: italic;
+}
+
 /* ─── Header Path Dropdown ─── */
 
 .header-path-dropdown {

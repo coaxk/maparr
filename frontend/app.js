@@ -200,6 +200,8 @@ function transitionBootToFork(stackCount) {
         modeSelector.addEventListener("animationend", () => {
             modeSelector.classList.remove("boot-reveal");
         }, { once: true });
+        // Subtle nudge — draw attention to header scanner so users know it's there
+        nudgeHeaderScanner();
     }, { once: true });
 
     state.bootComplete = true;
@@ -248,6 +250,22 @@ function enrichModeSelector(stackCount) {
         }
         if (dirs.length > 0) contextLine.classList.remove("hidden");
     }
+}
+
+/**
+ * Subtle one-shot glow on the header scan path area.
+ * Draws attention so users register "that's where I change directories."
+ * Fires once after boot transition, then never again.
+ */
+function nudgeHeaderScanner() {
+    const header = document.getElementById("health-status");
+    if (!header) return;
+    header.classList.add("header-nudge");
+    header.addEventListener("animationend", () => {
+        header.classList.remove("header-nudge");
+    }, { once: true });
+    // Fallback removal in case animationend doesn't fire (no scan path visible)
+    setTimeout(() => header.classList.remove("header-nudge"), 2000);
 }
 
 /**
