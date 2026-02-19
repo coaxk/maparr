@@ -330,9 +330,9 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 /* ─── Fix Mode: Compact Pill Picker ─── */
 
 .fix-match-pills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 0.4rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+    gap: 0.45rem;
     margin-top: 0.15rem;
 }
 
@@ -349,8 +349,10 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     color: var(--text-primary);
     font-size: 0.82rem;
     white-space: nowrap;
+    overflow: hidden;
     line-height: 1.2;
 }
+
 
 .fix-match-pill:hover {
     border-color: var(--accent);
@@ -371,6 +373,8 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .fix-pill-name {
     font-weight: 600;
     line-height: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .fix-pill-count {
