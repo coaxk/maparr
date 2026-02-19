@@ -729,6 +729,17 @@ function renderStacks(stacks) {
     total.textContent = stacks.length + " stack" + (stacks.length !== 1 ? "s" : "") + " detected";
     list.appendChild(total);
 
+    // Single-service guidance callout — reassure users with many single-service stacks
+    const singleServiceCount = stacks.filter((s) => s.service_count === 1).length;
+    if (stacks.length >= 6 && singleServiceCount / stacks.length > 0.5) {
+        const guidance = document.createElement("div");
+        guidance.className = "cross-stack-guidance";
+        guidance.textContent =
+            "Most of your stacks contain a single service. MapArr will automatically check " +
+            "sibling stacks for complementary services during analysis.";
+        list.appendChild(guidance);
+    }
+
     // Count health statuses for legend — show all categories as a full summary
     const healthCounts = { ok: 0, warning: 0, problem: 0, unknown: 0 };
     stacks.forEach((s) => {
@@ -967,6 +978,12 @@ async function selectStack(stack, clickEvent) {
         } else if (data.status === "healthy") {
             setTerminalDots("done");
             showHealthyResult(data);
+        } else if (data.status === "healthy_cross_stack") {
+            setTerminalDots("done");
+            showCrossStackHealthy(data);
+        } else if (data.status === "cross_stack_conflict") {
+            setTerminalDots("error");
+            showCrossStackConflict(data);
         } else if (data.status === "incomplete") {
             setTerminalDots("warning");
             showIncompleteResult(data);
@@ -1789,6 +1806,18 @@ function showIncompleteResult(data) {
     showCurrentSetup(data);
     renderMountWarningsInto(details, data);
 
+    // Show cross-stack scan results if available
+    const cs = data.cross_stack;
+    if (cs && cs.sibling_count_scanned > 0) {
+        const csCallout = document.createElement("div");
+        csCallout.className = "callout callout-info";
+        csCallout.textContent = cs.summary || (
+            "Scanned " + cs.sibling_count_scanned + " sibling stacks but couldn't find " +
+            "the missing services nearby."
+        );
+        details.appendChild(csCallout);
+    }
+
     const callout = document.createElement("div");
     callout.className = "callout callout-warning";
     callout.textContent =
@@ -1805,6 +1834,348 @@ function showIncompleteResult(data) {
         details.appendChild(summary);
     }
 
+    section.classList.remove("hidden");
+    showAgainButton();
+    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ─── Cross-Stack Healthy (green — siblings found, mounts aligned) ───
+
+function showCrossStackHealthy(data) {
+    const section = document.getElementById("step-healthy");
+    const details = document.getElementById("healthy-details");
+    details.replaceChildren();
+
+    // Green card heading
+    const stepNum = section.querySelector(".step-number");
+    const heading = section.querySelector("h2");
+    if (stepNum) {
+        stepNum.className = "step-number ok";
+        stepNum.textContent = "\u2713";
+    }
+    if (heading) heading.textContent = "Your Setup Looks Good (Cross-Stack)";
+
+    const cs = data.cross_stack || {};
+    const siblings = cs.siblings || [];
+
+    // Summary message
+    const msg = document.createElement("p");
+    msg.className = "healthy-message";
+    msg.textContent = "No path conflicts detected — complementary services found in sibling stacks.";
+    details.appendChild(msg);
+
+    // Cross-stack banner showing which siblings were found
+    if (siblings.length > 0) {
+        const banner = document.createElement("div");
+        banner.className = "cross-stack-banner";
+        const bannerIcon = document.createElement("span");
+        bannerIcon.textContent = "\uD83D\uDD17 ";
+        banner.appendChild(bannerIcon);
+        const bannerText = document.createElement("span");
+        bannerText.textContent = "Cross-stack analysis: ";
+        banner.appendChild(bannerText);
+
+        // Current stack services
+        const currentServices = (data.services || [])
+            .filter((s) => s.role !== "other")
+            .map((s) => s.name);
+        const currentPill = document.createElement("span");
+        currentPill.className = "sibling-pill current";
+        currentPill.textContent = currentServices.join(", ") || data.stack_name || "current";
+        banner.appendChild(currentPill);
+
+        siblings.forEach((sib) => {
+            const plus = document.createTextNode(" + ");
+            banner.appendChild(plus);
+            const pill = document.createElement("span");
+            pill.className = "sibling-pill";
+            pill.textContent = sib.service_name + " (" + sib.stack_name + "/)";
+            pill.title = "Found in " + sib.stack_path;
+            banner.appendChild(pill);
+        });
+
+        details.appendChild(banner);
+    }
+
+    // Shared mount confirmation
+    if (cs.shared_mount && cs.mount_root) {
+        const mountInfo = document.createElement("div");
+        mountInfo.className = "cross-stack-path-compare ok";
+        mountInfo.textContent = "\u2713 Shared host path: " + cs.mount_root + " — hardlinks will work across all services.";
+        details.appendChild(mountInfo);
+    }
+
+    // Mount warnings
+    renderMountWarningsInto(details, data);
+
+    // TRaSH compliance badge
+    const compliance = detectTrashCompliance(data);
+    const trashBadge = document.createElement("div");
+    trashBadge.className = "healthy-trash-badge " + compliance;
+    const trashLabels = {
+        compliant: "\u2713 TRaSH Guides compliant — gold standard setup",
+        close: "\u2192 Almost TRaSH compliant — some paths don't use /data root",
+        "non-compliant": "\u2605 Consider the TRaSH Guides folder structure for best results",
+    };
+    trashBadge.textContent = trashLabels[compliance] || trashLabels["non-compliant"];
+    details.appendChild(trashBadge);
+
+    // Collapsible setup table (includes current + sibling services)
+    const setupToggle = document.createElement("button");
+    setupToggle.className = "why-toggle";
+    setupToggle.style.marginTop = "1rem";
+    const setupArrow = document.createElement("span");
+    setupArrow.className = "why-toggle-arrow";
+    setupArrow.textContent = "\u25B8";
+    setupToggle.appendChild(setupArrow);
+    setupToggle.appendChild(document.createTextNode(" View full setup (including siblings)"));
+    details.appendChild(setupToggle);
+
+    const setupContent = document.createElement("div");
+    setupContent.className = "healthy-setup-content";
+
+    // Build setup table
+    const table = document.createElement("table");
+    table.className = "service-volume-table";
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    ["Service", "Role", "Stack", "Volume Mapping"].forEach((text) => {
+        const th = document.createElement("th");
+        th.textContent = text;
+        headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+
+    // Current stack services
+    (data.services || []).forEach((svc) => {
+        const allVols = svc.volumes || [];
+        if (allVols.length === 0 && svc.role === "other") return;
+        const row = document.createElement("tr");
+        const nameCell = document.createElement("td");
+        nameCell.className = "svc-name";
+        nameCell.textContent = svc.name;
+        row.appendChild(nameCell);
+        const roleCell = document.createElement("td");
+        roleCell.className = "svc-role";
+        roleCell.textContent = formatRole(svc.role);
+        row.appendChild(roleCell);
+        const stackCell = document.createElement("td");
+        stackCell.className = "svc-role";
+        stackCell.textContent = data.stack_name || "current";
+        row.appendChild(stackCell);
+        const volCell = document.createElement("td");
+        volCell.className = "vol-path";
+        if (allVols.length > 0) {
+            allVols.forEach((v, i) => {
+                if (i > 0) volCell.appendChild(document.createElement("br"));
+                const span = document.createElement("span");
+                span.textContent = v.source + " : " + v.target;
+                span.className = isConfigVolume(v.target) ? "vol-config" : "vol-data";
+                volCell.appendChild(span);
+            });
+        } else {
+            volCell.textContent = "(no volumes)";
+        }
+        row.appendChild(volCell);
+        tbody.appendChild(row);
+    });
+
+    // Sibling services
+    siblings.forEach((sib) => {
+        const row = document.createElement("tr");
+        row.className = "sibling-row";
+        const nameCell = document.createElement("td");
+        nameCell.className = "svc-name";
+        nameCell.textContent = sib.service_name;
+        row.appendChild(nameCell);
+        const roleCell = document.createElement("td");
+        roleCell.className = "svc-role";
+        roleCell.textContent = formatRole(sib.role);
+        row.appendChild(roleCell);
+        const stackCell = document.createElement("td");
+        stackCell.className = "svc-role sibling-stack-name";
+        stackCell.textContent = sib.stack_name + "/";
+        row.appendChild(stackCell);
+        const volCell = document.createElement("td");
+        volCell.className = "vol-path";
+        if (sib.host_sources && sib.host_sources.length > 0) {
+            sib.host_sources.forEach((src, i) => {
+                if (i > 0) volCell.appendChild(document.createElement("br"));
+                const span = document.createElement("span");
+                span.textContent = src + " (host)";
+                span.className = "vol-data";
+                volCell.appendChild(span);
+            });
+        } else {
+            volCell.textContent = "(no data volumes)";
+        }
+        row.appendChild(volCell);
+        tbody.appendChild(row);
+    });
+
+    table.appendChild(tbody);
+    setupContent.appendChild(table);
+
+    // Category advisory
+    renderCategoryAdvisoryInto(setupContent, data);
+
+    details.appendChild(setupContent);
+
+    // Toggle handler
+    setupToggle.addEventListener("click", () => {
+        const isExpanded = setupContent.classList.toggle("expanded");
+        setupToggle.classList.toggle("expanded", isExpanded);
+        Array.from(setupToggle.childNodes).forEach((n) => {
+            if (n.nodeType === Node.TEXT_NODE) setupToggle.removeChild(n);
+        });
+        setupToggle.appendChild(document.createTextNode(isExpanded ? " Hide setup" : " View full setup (including siblings)"));
+    });
+
+    // Inline actions
+    const actions = document.createElement("div");
+    actions.className = "healthy-inline-actions";
+
+    const analyzeBtn = document.createElement("button");
+    analyzeBtn.className = "btn btn-primary";
+    analyzeBtn.textContent = "Analyze Another Stack";
+    analyzeBtn.addEventListener("click", () => analyzeAnother());
+    actions.appendChild(analyzeBtn);
+
+    const diagBtn = document.createElement("button");
+    diagBtn.className = "btn btn-subtle";
+    const diagIcon = document.createElement("span");
+    diagIcon.className = "btn-icon";
+    diagIcon.textContent = "\uD83D\uDCCB";
+    diagBtn.appendChild(diagIcon);
+    diagBtn.appendChild(document.createTextNode(" Copy Diagnostic"));
+    diagBtn.addEventListener("click", () => copyDiagnosticSummary());
+    actions.appendChild(diagBtn);
+
+    const startOverBtn = document.createElement("button");
+    startOverBtn.className = "btn btn-subtle";
+    const soIcon = document.createElement("span");
+    soIcon.className = "btn-icon";
+    soIcon.textContent = "\u21BA";
+    startOverBtn.appendChild(soIcon);
+    startOverBtn.appendChild(document.createTextNode(" Start Over"));
+    startOverBtn.addEventListener("click", () => startOver());
+    actions.appendChild(startOverBtn);
+
+    details.appendChild(actions);
+
+    section.classList.remove("hidden");
+    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ─── Cross-Stack Conflict (red — siblings found but mounts differ) ───
+
+function showCrossStackConflict(data) {
+    const section = document.getElementById("step-healthy");
+    const details = document.getElementById("healthy-details");
+    details.replaceChildren();
+
+    // Red/warning card heading
+    const stepNum = section.querySelector(".step-number");
+    const heading = section.querySelector("h2");
+    if (stepNum) {
+        stepNum.className = "step-number error-icon";
+        stepNum.textContent = "\u2717";
+    }
+    if (heading) heading.textContent = "Cross-Stack Path Conflict";
+
+    const cs = data.cross_stack || {};
+    const siblings = cs.siblings || [];
+    const conflicts = cs.conflicts || [];
+
+    // Summary message
+    const msg = document.createElement("p");
+    msg.className = "healthy-message";
+    msg.style.color = "var(--error)";
+    msg.textContent = "Complementary services found in sibling stacks, but their host mount paths differ.";
+    details.appendChild(msg);
+
+    // Cross-stack banner showing siblings
+    if (siblings.length > 0) {
+        const banner = document.createElement("div");
+        banner.className = "cross-stack-banner conflict";
+        const bannerIcon = document.createElement("span");
+        bannerIcon.textContent = "\u26A0\uFE0F ";
+        banner.appendChild(bannerIcon);
+
+        const currentServices = (data.services || [])
+            .filter((s) => s.role !== "other")
+            .map((s) => s.name);
+        const currentPill = document.createElement("span");
+        currentPill.className = "sibling-pill current";
+        currentPill.textContent = currentServices.join(", ") || data.stack_name || "current";
+        banner.appendChild(currentPill);
+
+        siblings.forEach((sib) => {
+            const plus = document.createTextNode(" \u2260 ");
+            banner.appendChild(plus);
+            const pill = document.createElement("span");
+            pill.className = "sibling-pill conflict";
+            pill.textContent = sib.service_name + " (" + sib.stack_name + "/)";
+            banner.appendChild(pill);
+        });
+
+        details.appendChild(banner);
+    }
+
+    // Show each conflict
+    conflicts.forEach((conflict) => {
+        const conflictDiv = document.createElement("div");
+        conflictDiv.className = "cross-stack-path-compare conflict";
+
+        const desc = document.createElement("p");
+        desc.style.fontWeight = "600";
+        desc.textContent = conflict.description || "Mount path mismatch";
+        conflictDiv.appendChild(desc);
+
+        // Show the paths side by side
+        if (conflict.current_sources && conflict.sibling_sources) {
+            const pathCompare = document.createElement("div");
+            pathCompare.className = "path-compare-grid";
+
+            const currentLabel = document.createElement("span");
+            currentLabel.className = "path-label";
+            currentLabel.textContent = "Current stack:";
+            pathCompare.appendChild(currentLabel);
+            const currentPaths = document.createElement("code");
+            currentPaths.textContent = conflict.current_sources.join(", ");
+            pathCompare.appendChild(currentPaths);
+
+            const sibLabel = document.createElement("span");
+            sibLabel.className = "path-label";
+            sibLabel.textContent = conflict.sibling_name + " (" + conflict.sibling_stack + "/):";
+            pathCompare.appendChild(sibLabel);
+            const sibPaths = document.createElement("code");
+            sibPaths.textContent = conflict.sibling_sources.join(", ");
+            pathCompare.appendChild(sibPaths);
+
+            conflictDiv.appendChild(pathCompare);
+        }
+
+        details.appendChild(conflictDiv);
+    });
+
+    // Fix recommendation
+    const fixCallout = document.createElement("div");
+    fixCallout.className = "callout callout-warning";
+    fixCallout.textContent =
+        "All media services need to share the same host directory for hardlinks to work. " +
+        "Update the volume mounts in each stack's compose file to use one unified host path " +
+        "(e.g. /mnt/nas:/data or /host/data:/data) following the TRaSH Guides pattern.";
+    details.appendChild(fixCallout);
+
+    // Show what IS in the current stack
+    showCurrentSetup(data);
+    renderMountWarningsInto(details, data);
+
+    // Actions
     section.classList.remove("hidden");
     showAgainButton();
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });

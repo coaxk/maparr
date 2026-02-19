@@ -147,11 +147,23 @@ class AnalysisResult:
     steps: List[dict] = field(default_factory=list)  # Analysis step log for terminal UI
 
     incomplete_stack: bool = False  # True if missing arr or download client
+    cross_stack: Optional[dict] = None  # Cross-stack analysis result (when incomplete + siblings found)
 
     def to_dict(self) -> dict:
-        # Determine status: conflicts > incomplete > healthy
+        # Determine status: conflicts > cross-stack > incomplete > healthy
         if self.conflicts:
             status = "conflicts_found"
+        elif self.incomplete_stack and self.cross_stack:
+            cs = self.cross_stack
+            if cs.get("missing_roles_filled") and cs.get("shared_mount"):
+                status = "healthy_cross_stack"
+            elif cs.get("conflicts"):
+                status = "cross_stack_conflict"
+            elif cs.get("missing_roles_filled"):
+                # Siblings found but can't confirm shared mount (no data volumes)
+                status = "healthy_cross_stack"
+            else:
+                status = "incomplete"
         elif self.incomplete_stack:
             status = "incomplete"
         else:
@@ -178,6 +190,7 @@ class AnalysisResult:
             "steps": self.steps,
             "status": status,
             "incomplete_stack": self.incomplete_stack,
+            "cross_stack": self.cross_stack,
         }
 
 
@@ -191,6 +204,7 @@ def analyze_stack(
     error_service: Optional[str] = None,
     error_path: Optional[str] = None,
     raw_compose_content: Optional[str] = None,
+    scan_dir: Optional[str] = None,
 ) -> AnalysisResult:
     """
     Analyze a resolved compose file for path mapping issues.
@@ -282,6 +296,31 @@ def analyze_stack(
             missing.append("download client")
         steps.append({"icon": "warn", "text": f"Incomplete media stack — no {' or '.join(missing)} detected"})
 
+    # Cross-stack analysis: scan sibling directories when stack is incomplete
+    cross_stack_result = None
+    if incomplete_stack and scan_dir:
+        steps.append({"icon": "run", "text": "Scanning sibling stacks for complementary services..."})
+        try:
+            # Lazy import to avoid circular dependency (cross_stack imports from analyzer)
+            from backend.cross_stack import check_cross_stack
+            cs = check_cross_stack(stack_path, scan_dir, services)
+            if cs and (cs.siblings_found or cs.sibling_count_scanned > 0):
+                cross_stack_result = cs.to_dict()
+                if cs.siblings_found:
+                    sib_names = [f"{s.service_name} (../{s.stack_name})" for s in cs.siblings_found]
+                    steps.append({"icon": "ok", "text": f"Found {', '.join(sib_names)}"})
+                    if cs.shared_mount:
+                        steps.append({"icon": "ok", "text": f"Cross-stack check: shared mount {cs.mount_root} detected"})
+                    elif cs.conflicts:
+                        steps.append({"icon": "warn", "text": "Cross-stack conflict: different host mount roots"})
+                    else:
+                        steps.append({"icon": "ok", "text": "Cross-stack: complementary services found"})
+                else:
+                    steps.append({"icon": "info", "text": f"Scanned {cs.sibling_count_scanned} siblings — none fill missing roles"})
+        except Exception as e:
+            logger.debug("Cross-stack check failed: %s", e)
+            steps.append({"icon": "info", "text": "Cross-stack scan skipped"})
+
     steps.append({"icon": "done", "text": "Analysis complete"})
 
     return AnalysisResult(
@@ -300,6 +339,7 @@ def analyze_stack(
         warnings=warnings,
         steps=steps,
         incomplete_stack=incomplete_stack,
+        cross_stack=cross_stack_result,
     )
 
 

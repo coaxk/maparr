@@ -316,6 +316,11 @@ async def api_analyze(request: Request):
         except Exception:
             pass
 
+    # Determine scan directory for cross-stack analysis.
+    # If user set a custom stacks path, use that. Otherwise, the parent of
+    # the selected stack is the scan root (sibling stacks live next to it).
+    scan_dir = _session.get("custom_stacks_path") or os.path.dirname(stack_path)
+
     # Step 2: Analyze
     try:
         result = analyze_stack(
@@ -326,6 +331,7 @@ async def api_analyze(request: Request):
             error_service=error_service,
             error_path=error_path,
             raw_compose_content=raw_compose_content,
+            scan_dir=scan_dir,
         )
     except Exception as e:
         logger.exception("Analysis failed for %s", os.path.basename(stack_path))

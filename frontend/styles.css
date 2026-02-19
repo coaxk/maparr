@@ -1856,3 +1856,109 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
         overflow-x: auto;
     }
 }
+
+/* ─── Cross-Stack Analysis ─── */
+
+.cross-stack-guidance {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    margin-bottom: 0.75rem;
+    line-height: 1.4;
+}
+
+.cross-stack-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 0.5rem;
+    background: rgba(74, 222, 128, 0.08);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    margin: 0.75rem 0;
+    font-size: 0.85rem;
+}
+
+.cross-stack-banner.conflict {
+    background: rgba(248, 113, 113, 0.08);
+    border-color: rgba(248, 113, 113, 0.2);
+}
+
+.sibling-pill {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    background: rgba(96, 165, 250, 0.15);
+    color: var(--accent);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+}
+
+.sibling-pill.current {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--success);
+    border-color: rgba(74, 222, 128, 0.3);
+}
+
+.sibling-pill.conflict {
+    background: rgba(248, 113, 113, 0.15);
+    color: var(--error);
+    border-color: rgba(248, 113, 113, 0.3);
+}
+
+.cross-stack-path-compare {
+    padding: 0.6rem 0.8rem;
+    border-radius: 0.5rem;
+    margin: 0.5rem 0;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+.cross-stack-path-compare.ok {
+    background: rgba(74, 222, 128, 0.08);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    color: var(--success);
+}
+
+.cross-stack-path-compare.conflict {
+    background: rgba(248, 113, 113, 0.06);
+    border: 1px solid rgba(248, 113, 113, 0.2);
+}
+
+.path-compare-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 0.75rem;
+    margin-top: 0.4rem;
+    font-size: 0.82rem;
+}
+
+.path-compare-grid .path-label {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.path-compare-grid code {
+    font-family: var(--font-mono);
+    color: var(--text);
+}
+
+.sibling-row {
+    opacity: 0.85;
+    border-left: 2px solid var(--accent);
+}
+
+.sibling-stack-name {
+    color: var(--accent);
+    font-size: 0.82rem;
+}
+
+.error-icon {
+    background: var(--error) !important;
+    color: white !important;
+}

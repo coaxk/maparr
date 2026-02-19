@@ -117,6 +117,10 @@ def discover_stacks(custom_path: Optional[str] = None) -> List[Stack]:
             if os.path.isdir(search_path):
                 _scan_directory(search_path, stacks, seen_paths, source="common")
 
+    # Cross-stack health pass: upgrade single-service media stacks
+    # when complementary services exist in sibling stacks with compatible mounts
+    _cross_stack_health_pass(stacks)
+
     # Sort: largest stacks first (most useful for analysis)
     stacks.sort(key=lambda s: s.service_count, reverse=True)
 
@@ -502,6 +506,100 @@ def _extract_volume_targets(services_raw: dict) -> List[str]:
                 targets.add(target_clean)
 
     return sorted(targets)
+
+
+def _cross_stack_health_pass(stacks: List[Stack]) -> None:
+    """
+    Post-processing pass to upgrade/downgrade health dots for single-service
+    media stacks based on whether complementary services exist in siblings.
+
+    Without this, every single-service sonarr/qbittorrent/plex stack shows
+    a yellow "warning" dot. With this, we check siblings and show green if
+    mounts align, red if they conflict.
+
+    Mutates stacks in-place.
+    """
+    if not stacks:
+        return
+
+    # Build a quick lookup: which stacks have which media roles and their sources
+    stack_roles: dict = {}  # stack.path -> {"roles": set, "sources": set}
+    for stack in stacks:
+        roles = set()
+        sources = set()
+        for svc_name in stack.services:
+            name_lower = svc_name.lower()
+            if any(app in name_lower for app in _HL_ARR):
+                roles.add("arr")
+            elif any(app in name_lower for app in _HL_DL):
+                roles.add("download_client")
+            elif any(app in name_lower for app in _HL_MEDIA):
+                roles.add("media_server")
+        if roles:
+            # Re-parse the compose file to get host sources
+            # (we already have this data from the parse, but it's not stored on Stack)
+            try:
+                with open(stack.compose_file, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                if isinstance(data, dict) and "services" in data:
+                    for name, config in data.get("services", {}).items():
+                        if isinstance(config, dict):
+                            vols = config.get("volumes", [])
+                            svc_sources, _ = _extract_host_sources(vols)
+                            sources.update(svc_sources)
+            except Exception:
+                pass
+            stack_roles[stack.path] = {"roles": roles, "sources": sources}
+
+    # Find single-role media stacks that are currently "warning"
+    for stack in stacks:
+        if stack.health != "warning":
+            continue
+        info = stack_roles.get(stack.path)
+        if not info or len(info["roles"]) != 1:
+            continue
+
+        my_role = next(iter(info["roles"]))
+        my_sources = info["sources"]
+
+        # Look for complementary roles in sibling stacks
+        complementary_found = False
+        all_compatible = True
+
+        for other_path, other_info in stack_roles.items():
+            if other_path == stack.path:
+                continue
+            # Does this sibling have a role we're missing?
+            if other_info["roles"] & info["roles"]:
+                continue  # Same role, not complementary
+            if not (other_info["roles"] - info["roles"]):
+                continue
+
+            # Found a complementary sibling
+            complementary_found = True
+
+            # Check mount compatibility
+            if my_sources and other_info["sources"]:
+                # Both have data volumes — check if they share a root
+                all_combined = sorted(my_sources | other_info["sources"])
+                if len(all_combined) < 2:
+                    continue
+                try:
+                    common = os.path.commonpath([p.replace("\\", "/") for p in all_combined])
+                    common = common.replace("\\", "/")
+                    # Too shallow = not shared
+                    if common in ("", "/") or (len(common) <= 3 and common[1:2] == ":"):
+                        all_compatible = False
+                except ValueError:
+                    all_compatible = False
+
+        if complementary_found:
+            if all_compatible:
+                stack.health = "ok"
+                stack.health_hint = "Shared mount detected (cross-stack)"
+            else:
+                stack.health = "problem"
+                stack.health_hint = "Different mount roots (cross-stack)"
 
 
 def _get_quick_root(path: str) -> Optional[str]:
