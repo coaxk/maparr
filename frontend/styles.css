@@ -541,11 +541,13 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    padding: 0.2rem 0.55rem;
+    padding: 0.25rem 0.55rem;
     border-radius: 12px;
     font-size: 0.75rem;
     font-weight: 500;
-    line-height: 1.4;
+    line-height: 1;
+    height: 1.65rem;
+    box-sizing: border-box;
     vertical-align: middle;
     background: rgba(74, 144, 217, 0.08);
     border: 1px solid rgba(74, 144, 217, 0.15);
@@ -555,7 +557,11 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 .preview-pill-icon {
     font-size: 0.7rem;
+    line-height: 1;
     opacity: 0.7;
+    flex-shrink: 0;
+    width: 0.85rem;
+    text-align: center;
 }
 
 .preview-pill.pill-service {
@@ -566,7 +572,11 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 .preview-pill.pill-path {
     font-family: var(--font-mono);
-    font-size: 0.72rem;
+    font-size: 0.7rem;
+    max-width: 22rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .preview-pill.pill-error {
