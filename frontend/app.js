@@ -99,32 +99,32 @@ async function runBootSequence(backendOnline, discData) {
 
     state.bootPhase = "scanning";
 
-    // Safety valve — auto-complete if boot takes >2s
+    // Safety valve — auto-complete if boot takes too long
     const bootTimeout = setTimeout(() => {
         if (state.bootPhase === "scanning") {
             state.bootPhase = "done";
             transitionBootToFork(state.stacks.length);
         }
-    }, 2500);
+    }, 5000);
 
     if (!backendOnline) {
         await bootAddLine("fail", "Backend unreachable", 0);
-        await bootAddLine("info", "Starting in offline mode...", 300);
+        await bootAddLine("info", "Starting in offline mode...", 500);
         state.bootPhase = "failed";
         clearTimeout(bootTimeout);
-        setTimeout(() => transitionBootToFork(0), 600);
+        setTimeout(() => transitionBootToFork(0), 1000);
         return;
     }
 
-    // Backend online
+    // Backend online — let each line land before the next
     await bootAddLine("ok", "Backend connected", 0);
-    await bootAddLine("run", "Scanning for Docker stacks...", 200);
+    await bootAddLine("run", "Scanning for Docker stacks...", 400);
 
     if (!discData || !discData.stacks || discData.stacks.length === 0) {
-        await bootAddLine("warn", "No compose stacks found in common locations", 400);
+        await bootAddLine("warn", "No compose stacks found in common locations", 600);
         state.bootPhase = "done";
         clearTimeout(bootTimeout);
-        setTimeout(() => transitionBootToNoStacks(), 500);
+        setTimeout(() => transitionBootToNoStacks(), 800);
         return;
     }
 
@@ -132,7 +132,7 @@ async function runBootSequence(backendOnline, discData) {
     const stacks = discData.stacks;
     const dirs = state.allDetectedDirs;
 
-    let lineDelay = 350;
+    let lineDelay = 500;
     for (const dir of dirs.slice(0, 5)) {
         const mediaCount = countMediaServicesInDir(stacks, dir.path);
         let detail = dir.count + " stack" + (dir.count !== 1 ? "s" : "");
@@ -143,21 +143,25 @@ async function runBootSequence(backendOnline, discData) {
             ? "..." + dir.path.slice(-42)
             : dir.path;
         await bootAddLine("ok", displayPath + " \u2192 " + detail, lineDelay);
-        lineDelay += 100;
+        lineDelay += 150;
     }
 
-    // Final summary
+    // Summary line
     const totalCount = stacks.length;
     await bootAddLine("done",
         totalCount + " stack" + (totalCount !== 1 ? "s" : "") + " ready for analysis",
         lineDelay
     );
 
+    // Final "launching" line — signals the page is about to transition
+    await bootAddLine("run", "Launching MapArr\u2026", lineDelay + 200);
+
     if (discData.scan_path) setPreferredPath(discData.scan_path);
 
+    // Pause — let users read the last line before the crossfade
     state.bootPhase = "done";
     clearTimeout(bootTimeout);
-    setTimeout(() => transitionBootToFork(totalCount), 500);
+    setTimeout(() => transitionBootToFork(totalCount), 1000);
 }
 
 /**
