@@ -21,6 +21,8 @@ const state = {
     allDetectedDirs: [], // Original detected dirs [{path, count}] — persists across rescans
     customDirs: [],      // User-added dirs via manual entry — persisted to localStorage
     activeScanPath: "",  // Currently active scan path
+    bootComplete: false, // Has boot sequence finished?
+    bootPhase: "idle",   // "idle" | "scanning" | "done" | "failed"
 };
 
 // Load persisted custom dirs from localStorage
@@ -52,10 +54,253 @@ function removeCustomDir(path) {
     saveCustomDirs();
 }
 
+// ─── Boot Sequence ───
+
+// Preferred scan path — remembered across sessions via localStorage
+function getPreferredPath() {
+    try { return localStorage.getItem("maparr_default_scan_path") || ""; } catch { return ""; }
+}
+function setPreferredPath(path) {
+    try { if (path) localStorage.setItem("maparr_default_scan_path", path); } catch {}
+}
+
+/**
+ * Write a terminal line into the boot screen with a staggered delay.
+ * Reuses existing .terminal-line / .terminal-icon classes.
+ */
+function bootAddLine(iconClass, text, delay) {
+    return new Promise((resolve) => {
+        setTimeout(() => {
+            const body = document.getElementById("boot-terminal-body");
+            if (!body) { resolve(); return; }
+            const line = document.createElement("div");
+            line.className = "terminal-line";
+            const icon = document.createElement("span");
+            icon.className = "terminal-icon " + iconClass;
+            const span = document.createElement("span");
+            span.textContent = text;
+            line.appendChild(icon);
+            line.appendChild(span);
+            body.appendChild(line);
+            body.scrollTop = body.scrollHeight;
+            resolve();
+        }, delay);
+    });
+}
+
+/**
+ * Run the boot discovery sequence. Called from checkHealth() after
+ * health + discovery complete. Animates terminal lines showing what
+ * was found, then crossfades to the enriched mode selector.
+ */
+async function runBootSequence(backendOnline, discData) {
+    const bootScreen = document.getElementById("boot-screen");
+    if (!bootScreen) return;
+
+    state.bootPhase = "scanning";
+
+    // Safety valve — auto-complete if boot takes >2s
+    const bootTimeout = setTimeout(() => {
+        if (state.bootPhase === "scanning") {
+            state.bootPhase = "done";
+            transitionBootToFork(state.stacks.length);
+        }
+    }, 2500);
+
+    if (!backendOnline) {
+        await bootAddLine("fail", "Backend unreachable", 0);
+        await bootAddLine("info", "Starting in offline mode...", 300);
+        state.bootPhase = "failed";
+        clearTimeout(bootTimeout);
+        setTimeout(() => transitionBootToFork(0), 600);
+        return;
+    }
+
+    // Backend online
+    await bootAddLine("ok", "Backend connected", 0);
+    await bootAddLine("run", "Scanning for Docker stacks...", 200);
+
+    if (!discData || !discData.stacks || discData.stacks.length === 0) {
+        await bootAddLine("warn", "No compose stacks found in common locations", 400);
+        state.bootPhase = "done";
+        clearTimeout(bootTimeout);
+        setTimeout(() => transitionBootToNoStacks(), 500);
+        return;
+    }
+
+    // Stacks found — show directory summary lines
+    const stacks = discData.stacks;
+    const dirs = state.allDetectedDirs;
+
+    let lineDelay = 350;
+    for (const dir of dirs.slice(0, 5)) {
+        const mediaCount = countMediaServicesInDir(stacks, dir.path);
+        let detail = dir.count + " stack" + (dir.count !== 1 ? "s" : "");
+        if (mediaCount > 0) {
+            detail += " (" + mediaCount + " media)";
+        }
+        const displayPath = dir.path.length > 45
+            ? "..." + dir.path.slice(-42)
+            : dir.path;
+        await bootAddLine("ok", displayPath + " \u2192 " + detail, lineDelay);
+        lineDelay += 100;
+    }
+
+    // Final summary
+    const totalCount = stacks.length;
+    await bootAddLine("done",
+        totalCount + " stack" + (totalCount !== 1 ? "s" : "") + " ready for analysis",
+        lineDelay
+    );
+
+    if (discData.scan_path) setPreferredPath(discData.scan_path);
+
+    state.bootPhase = "done";
+    clearTimeout(bootTimeout);
+    setTimeout(() => transitionBootToFork(totalCount), 500);
+}
+
+/**
+ * Count media-related services in stacks under a given directory.
+ */
+function countMediaServicesInDir(stacks, dirPath) {
+    const norm = dirPath.replace(/\\/g, "/");
+    let count = 0;
+    stacks.forEach((s) => {
+        const stackParent = s.path.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+        if (stackParent === norm || stackParent.startsWith(norm + "/")) {
+            (s.services || []).forEach((svc) => {
+                const lower = svc.toLowerCase();
+                if (_ALL_SERVICES.some((known) => lower.includes(known))) count++;
+            });
+        }
+    });
+    return count;
+}
+
+/**
+ * Crossfade from boot screen to the enriched mode selector.
+ */
+function transitionBootToFork(stackCount) {
+    const bootScreen = document.getElementById("boot-screen");
+    const modeSelector = document.getElementById("step-mode");
+    if (!bootScreen || !modeSelector) return;
+
+    // Don't transition twice
+    if (state.bootComplete) return;
+
+    if (stackCount > 0) enrichModeSelector(stackCount);
+
+    bootScreen.classList.add("boot-done");
+    bootScreen.addEventListener("animationend", () => {
+        bootScreen.classList.add("hidden");
+        bootScreen.classList.remove("boot-done");
+        modeSelector.classList.remove("hidden");
+        modeSelector.classList.add("boot-reveal");
+        modeSelector.addEventListener("animationend", () => {
+            modeSelector.classList.remove("boot-reveal");
+        }, { once: true });
+    }, { once: true });
+
+    state.bootComplete = true;
+}
+
+/**
+ * Transition from boot to the zero-stacks path input.
+ */
+function transitionBootToNoStacks() {
+    const bootScreen = document.getElementById("boot-screen");
+    const noStacks = document.getElementById("boot-no-stacks");
+    if (!bootScreen || !noStacks) return;
+
+    bootScreen.classList.add("boot-done");
+    bootScreen.addEventListener("animationend", () => {
+        bootScreen.classList.add("hidden");
+        bootScreen.classList.remove("boot-done");
+        noStacks.classList.remove("hidden");
+        noStacks.classList.add("boot-reveal");
+        noStacks.addEventListener("animationend", () => {
+            noStacks.classList.remove("boot-reveal");
+        }, { once: true });
+        const input = document.getElementById("boot-path-input");
+        if (input) input.focus();
+    }, { once: true });
+
+    state.bootComplete = true;
+}
+
+/**
+ * Enrich mode selector buttons with discovered stack count.
+ */
+function enrichModeSelector(stackCount) {
+    const browseTitle = document.getElementById("mode-browse-title");
+    const contextLine = document.getElementById("mode-context");
+
+    if (browseTitle && stackCount > 0) {
+        browseTitle.textContent = "Analyze a Stack (" + stackCount + " found)";
+    }
+    if (contextLine) {
+        const dirs = state.allDetectedDirs;
+        if (dirs.length === 1) {
+            contextLine.textContent = "Scanning " + dirs[0].path;
+        } else if (dirs.length > 1) {
+            contextLine.textContent = dirs.length + " source directories, " + stackCount + " stacks total";
+        }
+        if (dirs.length > 0) contextLine.classList.remove("hidden");
+    }
+}
+
+/**
+ * Zero-stacks: user typed a custom path and hit Scan.
+ */
+async function bootScanCustomPath() {
+    const input = document.getElementById("boot-path-input");
+    if (!input) return;
+    const path = input.value.trim();
+    if (!path) { input.focus(); return; }
+
+    try {
+        await fetch("/api/change-stacks-path", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path }),
+        });
+        const resp = await fetch("/api/discover-stacks");
+        if (resp.ok) {
+            const data = await resp.json();
+            state.stacks = data.stacks || [];
+            state.activeScanPath = (data.scan_path || "").replace(/\\/g, "/");
+            updateConnectionStatus(data);
+            if (state.stacks.length > 0) {
+                const dirCounts = {};
+                state.stacks.forEach((s) => {
+                    const parent = s.path.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+                    dirCounts[parent] = (dirCounts[parent] || 0) + 1;
+                });
+                state.allDetectedDirs = Object.entries(dirCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([p, c]) => ({ path: p, count: c }));
+                addCustomDir(path, state.stacks.length);
+                setPreferredPath(path);
+                document.getElementById("boot-no-stacks").classList.add("hidden");
+                state.bootComplete = false; // Allow transition
+                transitionBootToFork(state.stacks.length);
+            } else {
+                input.style.borderColor = "var(--error)";
+                setTimeout(() => { input.style.borderColor = ""; }, 2000);
+            }
+        }
+    } catch {
+        input.style.borderColor = "var(--error)";
+        setTimeout(() => { input.style.borderColor = ""; }, 2000);
+    }
+}
+
 // ─── Init ───
 
 document.addEventListener("DOMContentLoaded", () => {
     checkHealth();
+    initLogSystem(); // Connect SSE immediately so logs flow during boot
 
     // Ctrl+Enter in textarea triggers parse
     const textarea = document.getElementById("error-input");
@@ -74,6 +319,14 @@ document.addEventListener("DOMContentLoaded", () => {
             previewTimer = setTimeout(() => {
                 updateLivePreview(textarea.value.trim());
             }, 300);
+        });
+    }
+
+    // Enter in boot path input triggers scan (zero-stacks fallback)
+    const bootPathInput = document.getElementById("boot-path-input");
+    if (bootPathInput) {
+        bootPathInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); bootScanCustomPath(); }
         });
     }
 
@@ -138,6 +391,11 @@ function startOver() {
     ["step-error", "step-parse-result", "step-fix-match", "step-stacks"].forEach((id) => {
         document.getElementById(id).classList.add("hidden");
     });
+    // Hide boot screens — don't re-run boot on return
+    const bootScreen = document.getElementById("boot-screen");
+    if (bootScreen) bootScreen.classList.add("hidden");
+    const noStacks = document.getElementById("boot-no-stacks");
+    if (noStacks) noStacks.classList.add("hidden");
     // Restore full stack list if collapsed
     const stackList = document.getElementById("stacks-list");
     if (stackList) stackList.classList.remove("hidden");
@@ -150,7 +408,8 @@ function startOver() {
     if (filterInput) filterInput.value = "";
     const filterDiv = document.getElementById("stack-filter");
     if (filterDiv) filterDiv.classList.add("hidden");
-    // Show mode selector
+    // Show mode selector with current stack counts
+    enrichModeSelector(state.stacks.length);
     document.getElementById("step-mode").classList.remove("hidden");
     document.getElementById("step-mode").scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -159,9 +418,13 @@ function startOver() {
 
 async function checkHealth() {
     const el = document.getElementById("health-status");
+    let backendOnline = false;
+    let discData = null;
+
     try {
         const resp = await fetch("/api/health");
         if (resp.ok) {
+            backendOnline = true;
             const healthData = await resp.json();
             const runningVersion = healthData.version || "1.0.0";
 
@@ -184,7 +447,7 @@ async function checkHealth() {
             try {
                 const discResp = await fetch("/api/discover-stacks");
                 if (discResp.ok) {
-                    const discData = await discResp.json();
+                    discData = await discResp.json();
                     state.stacks = discData.stacks || [];
                     // Store original detected dirs on first load
                     if (state.allDetectedDirs.length === 0) {
@@ -213,6 +476,9 @@ async function checkHealth() {
         el.textContent = "Offline";
         el.className = "header-status disconnected";
     }
+
+    // Run boot sequence — surfaces discovery results before the mode fork
+    runBootSequence(backendOnline, discData);
 }
 
 // ─── Parse Error ───
@@ -3129,11 +3395,8 @@ function initLogSystem() {
     connectLogStream();
 }
 
-// Start log system after DOM is ready
-document.addEventListener("DOMContentLoaded", () => {
-    // Small delay to let the main UI render first
-    setTimeout(initLogSystem, 1000);
-});
+// (initLogSystem is now called immediately in the main DOMContentLoaded handler
+// so SSE connects during boot and logs flow from the start.)
 
 // ─── Log Panel Toggle ───
 

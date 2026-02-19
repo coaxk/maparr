@@ -444,6 +444,52 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     margin-bottom: 1rem;
 }
 
+/* ─── Boot Screen ─── */
+
+#boot-screen .terminal-body {
+    min-height: 60px;
+    max-height: 180px;
+}
+
+.boot-context-line {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-top: 0.2rem;
+    font-weight: 400;
+}
+
+.boot-path-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.75rem;
+}
+
+.boot-hint {
+    margin-top: 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+/* Boot → Mode crossfade transitions */
+#boot-screen.boot-done {
+    animation: bootFadeOut 0.3s ease-in forwards;
+}
+
+.boot-reveal {
+    animation: bootFadeIn 0.3s ease-out forwards;
+}
+
+@keyframes bootFadeOut {
+    from { opacity: 1; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(-10px); }
+}
+
+@keyframes bootFadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ─── Mode Selector ─── */
 
 .mode-selector {

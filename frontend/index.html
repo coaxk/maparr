@@ -20,20 +20,55 @@
 <!-- ─── Main Content ─── -->
 <main class="main">
 
-    <!-- Mode Selector — the fork in the road -->
-    <section class="card" id="step-mode">
+    <!-- Boot Screen — discovery-first entry -->
+    <section class="card" id="boot-screen">
+        <div class="boot-terminal">
+            <div class="terminal-header">
+                <span class="terminal-dot"></span>
+                <span class="terminal-dot"></span>
+                <span class="terminal-dot"></span>
+                <span class="terminal-title">maparr &mdash; discovery</span>
+            </div>
+            <div class="terminal-body" id="boot-terminal-body"></div>
+        </div>
+    </section>
+
+    <!-- Zero Stacks — shown when discovery finds nothing -->
+    <section class="card hidden" id="boot-no-stacks">
+        <div class="step-header">
+            <h2>No Docker Stacks Found</h2>
+        </div>
+        <p class="step-desc">
+            MapArr scanned common locations but couldn't find any compose stacks.
+            Point it at your stacks directory to get started.
+        </p>
+        <div class="boot-path-row">
+            <input type="text" id="boot-path-input" class="path-input"
+                   placeholder="/path/to/your/stacks (e.g. /opt/docker)"
+                   spellcheck="false" />
+            <button class="btn btn-primary btn-sm" onclick="bootScanCustomPath()">Scan</button>
+        </div>
+        <p class="hint boot-hint">
+            Running in Docker? Mount your stacks:
+            <code class="inline-code">-v /path/to/stacks:/stacks:ro</code>
+        </p>
+    </section>
+
+    <!-- Mode Selector — the fork in the road (hidden until boot completes) -->
+    <section class="card hidden" id="step-mode">
         <div class="step-header">
             <h2>What would you like to do?</h2>
+            <p class="boot-context-line hidden" id="mode-context"></p>
         </div>
         <div class="mode-selector">
             <button class="mode-btn" id="mode-fix" onclick="enterFixMode()">
                 <span class="mode-icon">&#128295;</span>
-                <span class="mode-title">Fix an Error</span>
+                <span class="mode-title" id="mode-fix-title">Fix an Error</span>
                 <span class="mode-desc">Paste an error from your *arr app and get a targeted fix</span>
             </button>
             <button class="mode-btn" id="mode-browse" onclick="enterBrowseMode()">
                 <span class="mode-icon">&#128269;</span>
-                <span class="mode-title">Analyze a Stack</span>
+                <span class="mode-title" id="mode-browse-title">Analyze a Stack</span>
                 <span class="mode-desc">Browse your Docker stacks and check for path issues</span>
             </button>
         </div>
