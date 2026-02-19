@@ -104,12 +104,14 @@ def discover_stacks(custom_path: Optional[str] = None) -> List[Stack]:
 
     if custom_path:
         # User specified a custom path — scan only that
+        logger.info("Discovery: scanning custom path %s", custom_path)
         if os.path.isdir(custom_path):
             _scan_directory(custom_path, stacks, seen_paths, source="custom")
     else:
         # 1. Check MAPARR_STACKS_PATH (Docker container mount point)
         stacks_env = os.environ.get("MAPARR_STACKS_PATH", "")
         if stacks_env and os.path.isdir(stacks_env):
+            logger.info("Discovery: scanning MAPARR_STACKS_PATH=%s", stacks_env)
             _scan_directory(stacks_env, stacks, seen_paths, source="env")
 
         # 2. Check common host locations (when running outside Docker)
@@ -117,9 +119,15 @@ def discover_stacks(custom_path: Optional[str] = None) -> List[Stack]:
             if os.path.isdir(search_path):
                 _scan_directory(search_path, stacks, seen_paths, source="common")
 
+    logger.info("Discovery: found %d stacks (%d with media services)",
+                len(stacks),
+                sum(1 for s in stacks if s.health != "unknown"))
+
     # Cross-stack health pass: upgrade single-service media stacks
     # when complementary services exist in sibling stacks with compatible mounts
-    _cross_stack_health_pass(stacks)
+    upgraded = _cross_stack_health_pass(stacks)
+    if upgraded > 0:
+        logger.info("Health pass: %d stacks upgraded via cross-stack mount check", upgraded)
 
     # Sort: largest stacks first (most useful for analysis)
     stacks.sort(key=lambda s: s.service_count, reverse=True)
@@ -508,7 +516,7 @@ def _extract_volume_targets(services_raw: dict) -> List[str]:
     return sorted(targets)
 
 
-def _cross_stack_health_pass(stacks: List[Stack]) -> None:
+def _cross_stack_health_pass(stacks: List[Stack]) -> int:
     """
     Post-processing pass to upgrade/downgrade health dots for single-service
     media stacks based on whether complementary services exist in siblings.
@@ -517,10 +525,12 @@ def _cross_stack_health_pass(stacks: List[Stack]) -> None:
     a yellow "warning" dot. With this, we check siblings and show green if
     mounts align, red if they conflict.
 
-    Mutates stacks in-place.
+    Mutates stacks in-place. Returns number of stacks whose health changed.
     """
     if not stacks:
-        return
+        return 0
+
+    upgraded = 0
 
     # Build a quick lookup: which stacks have which media roles and their sources
     stack_roles: dict = {}  # stack.path -> {"roles": set, "sources": set}
@@ -594,12 +604,15 @@ def _cross_stack_health_pass(stacks: List[Stack]) -> None:
                     all_compatible = False
 
         if complementary_found:
+            upgraded += 1
             if all_compatible:
                 stack.health = "ok"
                 stack.health_hint = "Shared mount detected (cross-stack)"
             else:
                 stack.health = "problem"
                 stack.health_hint = "Different mount roots (cross-stack)"
+
+    return upgraded
 
 
 def _get_quick_root(path: str) -> Optional[str]:

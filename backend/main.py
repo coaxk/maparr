@@ -53,6 +53,8 @@ app = FastAPI(
     version=VERSION,
 )
 
+logger.info("MapArr v%s starting up", VERSION)
+
 # ─── State ───
 # Minimal in-memory state for the current session.
 # No persistence — MapArr is a single-use problem solver.
@@ -115,6 +117,10 @@ async def api_parse_error(request: Request):
     result = parse_error(error_text)
     _session["parsed_error"] = result.to_dict()
 
+    logger.info("Parse error: service=%s path=%s type=%s confidence=%s",
+                result.service or "?", result.path or "?",
+                result.error_type or "?", result.confidence)
+
     return result.to_dict()
 
 
@@ -132,6 +138,7 @@ async def api_discover_stacks():
     Deep resolution via `docker compose config` happens in WO2.
     """
     custom = _session.get("custom_stacks_path")
+    logger.info("Discover stacks: scanning %s", custom or "default locations")
     if custom:
         stacks = discover_stacks(custom_path=custom)
     else:
@@ -245,6 +252,7 @@ async def api_select_stack(request: Request):
         "stack_path": stack_path,
         "parsed_error": _session.get("parsed_error"),
     }
+    logger.info("Stack selected: %s", os.path.basename(stack_path))
 
     return {
         "status": "ready",
@@ -297,13 +305,17 @@ async def api_analyze(request: Request):
         error_service = error_info.get("service")
         error_path = error_info.get("path")
 
+    stack_name = os.path.basename(stack_path)
+    logger.info("Analyze: starting analysis of %s", stack_name)
+
     # Step 1: Resolve compose file
     steps = [
-        {"icon": "run", "text": f"Resolving compose for {os.path.basename(stack_path)}..."},
+        {"icon": "run", "text": f"Resolving compose for {stack_name}..."},
     ]
     try:
         resolved = resolve_compose(stack_path)
     except ResolveError as e:
+        logger.error("Analyze: resolution failed for %s: %s", stack_name, e)
         steps.append({"icon": "fail", "text": f"Resolution failed: {e}"})
         return JSONResponse({
             "status": "error",
@@ -350,7 +362,19 @@ async def api_analyze(request: Request):
             "steps": steps,
         }, status_code=200)
 
-    return result.to_dict()
+    rd = result.to_dict()
+    svc_count = len(rd.get("services", []))
+    conflict_count = rd.get("conflict_count", 0)
+    status = rd.get("status", "?")
+    cs = rd.get("cross_stack")
+    cs_summary = ""
+    if cs and cs.get("siblings"):
+        cs_summary = " | cross-stack: %d siblings, shared=%s" % (
+            len(cs["siblings"]), cs.get("shared_mount", False))
+    logger.info("Analyze: %s → %s (%d services, %d conflicts%s)",
+                stack_name, status, svc_count, conflict_count, cs_summary)
+
+    return rd
 
 
 # ─── API: Smart Match ───
@@ -403,7 +427,12 @@ async def api_smart_match(request: Request):
         if s:
             candidates.append(s)
 
+    logger.info("Smart match: %d candidates for service=%s",
+                 len(candidates), parsed_error.get("service", "?"))
     result = smart_match(parsed_error, candidates)
+    logger.info("Smart match result: confidence=%s best=%s",
+                 result["confidence"],
+                 os.path.basename(result["best"].get("path", "?")) if result["best"] else "none")
 
     return {
         "best": result["best"],

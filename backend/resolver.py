@@ -58,6 +58,7 @@ def resolve_compose(
         cf_path = stack / compose_file
         if not cf_path.is_file():
             raise ResolveError(f"Compose file not found: {compose_file}")
+        logger.info("Resolving specified compose file: %s", compose_file)
     else:
         cf_path = _find_compose_file(stack)
         if not cf_path:
@@ -65,15 +66,20 @@ def resolve_compose(
                 f"No compose file found in {stack.name}. "
                 f"Looked for: {', '.join(COMPOSE_FILENAMES)}"
             )
+        logger.info("Found compose file: %s in %s/", cf_path.name, stack.name)
 
     # Strategy 1: docker compose config
+    logger.info("Attempting resolution via docker compose config...")
     result = _try_docker_compose_config(stack, cf_path)
     if result is not None:
+        svc_count = len(result.get("services", {}))
+        logger.info("Docker compose config succeeded: %d services resolved", svc_count)
         result["_resolution"] = "docker"
         result["_compose_file"] = str(cf_path)
         result["_warnings"] = warnings
         return result
 
+    logger.info("Docker compose config unavailable, falling back to manual resolution")
     warnings.append(
         "docker compose config unavailable — using manual resolution. "
         "extends/include directives won't be resolved."
@@ -81,6 +87,8 @@ def resolve_compose(
 
     # Strategy 2: Raw YAML + .env
     result = _resolve_manual(stack, cf_path)
+    svc_count = len(result.get("services", {}))
+    logger.info("Manual resolution succeeded: %d services parsed", svc_count)
     result["_resolution"] = "manual"
     result["_compose_file"] = str(cf_path)
     result["_warnings"] = warnings
@@ -166,6 +174,8 @@ def _resolve_manual(stack: Path, compose_file: Path) -> Dict[str, Any]:
     """
     # Load .env
     env_vars = _load_env_file(stack)
+    if env_vars:
+        logger.info("Loaded %d variables from .env file", len(env_vars))
 
     # Read and parse YAML
     try:

@@ -15,9 +15,12 @@ The parser NEVER blocks the user flow. Even "none" confidence returns
 a result that lets the UI proceed to stack selection.
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+logger = logging.getLogger("maparr.parser")
 
 
 # Known *arr apps and download clients, ordered by frequency in support requests.
@@ -74,11 +77,20 @@ def parse_error(text: str) -> ParsedError:
         return result
 
     text = text.strip()
+    logger.info("Parsing error text (%d chars): %.80s%s",
+                 len(text), text, "..." if len(text) > 80 else "")
 
     # Extract components
     result.service = _extract_service(text)
     result.path = _extract_path(text)
     result.error_type = _extract_error_type(text)
+
+    if result.service:
+        logger.info("Detected service: %s", result.service)
+    if result.path:
+        logger.info("Extracted path: %s", result.path)
+    if result.error_type:
+        logger.info("Classified error type: %s", result.error_type)
 
     # Calculate confidence
     if result.service and result.path:
@@ -108,6 +120,7 @@ def parse_error(text: str) -> ParsedError:
                 "No worries — select your stack below and we'll scan everything."
             )
 
+    logger.info("Parse result: confidence=%s", result.confidence)
     return result
 
 

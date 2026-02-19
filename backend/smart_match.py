@@ -64,6 +64,10 @@ def smart_match(
     error_path = (parsed_error.get("path") or "").replace("\\", "/").lower()
     error_type = (parsed_error.get("error_type") or "").lower()
 
+    logger.info("Smart match: service=%s path=%s type=%s (%d candidates)",
+                 service or "?", error_path or "?", error_type or "?",
+                 len(candidate_stacks))
+
     if not candidate_stacks:
         return {"best": None, "confidence": "low", "reason": "No candidate stacks", "ranked": []}
 
@@ -188,6 +192,8 @@ def smart_match(
             score += 4
             reasons.append("Focused stack")
 
+        logger.info("Smart match: %s → score=%d (%s)",
+                     dir_name, score, "; ".join(reasons) if reasons else "no signals")
         scored.append({"stack": stack, "score": score, "reasons": reasons})
 
     # Sort by score descending

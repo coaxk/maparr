@@ -111,6 +111,9 @@ def check_cross_stack(
     if not scan_dir or not os.path.isdir(scan_dir):
         return None
 
+    stack_name = os.path.basename(stack_path)
+    logger.info("Cross-stack scan: %s (scan_dir=%s)", stack_name, scan_dir)
+
     # Determine what roles we have and what's missing
     has_roles = set()
     for svc in current_services:
@@ -125,7 +128,10 @@ def check_cross_stack(
                 missing_roles.add(role)
 
     if not missing_roles:
+        logger.debug("Cross-stack: stack is complete, no scan needed")
         return None  # Stack is complete — no cross-stack needed
+
+    logger.info("Cross-stack: looking for %s in sibling directories", _role_names(missing_roles))
 
     # Extract host sources from the current stack if not provided
     if current_host_sources is None:
@@ -168,6 +174,8 @@ def check_cross_stack(
         for svc_name, svc_info in sibling_services.items():
             role = svc_info["role"]
             if role in missing_roles:
+                logger.info("Cross-stack: found %s (%s) in sibling %s/",
+                            svc_name, role, entry.name)
                 siblings.append(SiblingService(
                     stack_path=str(entry),
                     stack_name=entry.name,
@@ -176,6 +184,9 @@ def check_cross_stack(
                     host_sources=svc_info["host_sources"],
                     compose_file=compose_file,
                 ))
+
+    logger.info("Cross-stack: scanned %d siblings, found %d complementary services",
+                 sibling_count, len(siblings))
 
     if not siblings:
         # Scanned siblings but none filled missing roles
@@ -199,6 +210,11 @@ def check_cross_stack(
         sibling_source_map[sib.service_name] = sib.host_sources
 
     shared_mount, mount_root = _check_shared_root(current_host_sources, siblings)
+    if shared_mount:
+        logger.info("Cross-stack: shared mount root detected → %s", mount_root)
+    elif current_host_sources:
+        logger.warning("Cross-stack: mount paths differ — current=%s",
+                       sorted(current_host_sources))
 
     # Build conflicts if mounts don't align
     conflicts = []

@@ -223,11 +223,21 @@ def analyze_stack(
     warnings = resolved_compose.get("_warnings", [])
     steps: List[dict] = []
 
+    stack_name = os.path.basename(stack_path)
+    logger.info("Starting analysis of %s (via %s)", stack_name, resolution_method)
+    if error_service:
+        logger.info("Error context: service=%s path=%s", error_service, error_path or "none")
+
     # Step 1: Resolve compose file (already done by caller, log it)
     steps.append({"icon": "ok", "text": f"Resolved {os.path.basename(compose_file)} via {resolution_method}"})
 
     # Step 2: Extract and classify services
     services = _extract_services(resolved_compose)
+    for svc in services:
+        vol_summary = ", ".join(f"{v.source}→{v.target}" for v in svc.volumes if v.is_bind_mount and not _is_config_mount(v.target))
+        logger.info("Service: %s → role=%s, %d volumes%s",
+                     svc.name, svc.role, len(svc.volumes),
+                     f" [{vol_summary}]" if vol_summary else "")
     participants = [s for s in services if s.role in ("arr", "download_client", "media_server")]
     arr_names = [s.name for s in services if s.role == "arr"]
     dl_names = [s.name for s in services if s.role == "download_client"]
@@ -247,6 +257,9 @@ def analyze_stack(
 
     # Step 4: Detect conflicts
     conflicts = _detect_conflicts(services, error_service, error_path)
+    for c in conflicts:
+        logger.warning("Conflict [%s/%s]: %s — %s",
+                       c.conflict_type, c.severity, ", ".join(c.services), c.description)
     if conflicts:
         steps.append({"icon": "warn", "text": f"Detected {len(conflicts)} path conflict{'s' if len(conflicts) != 1 else ''}"})
     else:
@@ -255,6 +268,12 @@ def analyze_stack(
     # Step 5: Mount intelligence
     mount_classifications, mount_warnings = _analyze_mounts(services)
     mount_info = [mc.to_dict() for mc in mount_classifications]
+    for mc in mount_classifications:
+        logger.info("Mount: %s → %s%s",
+                     mc.path, mc.mount_type or "local",
+                     " (REMOTE)" if mc.is_remote else "")
+    for mw in mount_warnings:
+        logger.warning("Mount warning: %s", mw)
     if mount_classifications:
         steps.append({"icon": "ok", "text": f"Classified {len(mount_classifications)} host mount{'s' if len(mount_classifications) != 1 else ''}"})
     if mount_warnings:
@@ -268,6 +287,8 @@ def analyze_stack(
     fix_summary = _build_fix_summary(conflicts, services, error_service)
     solution_yaml, solution_changed_lines = _generate_solution_yaml(conflicts, services)
     if solution_yaml:
+        logger.info("Generated solution YAML (%d lines, %d changed)",
+                     solution_yaml.count("\n") + 1, len(solution_changed_lines))
         steps.append({"icon": "ok", "text": "Generated fix recommendation"})
 
     # Step 7: Generate corrected version of user's original compose
@@ -294,6 +315,8 @@ def analyze_stack(
             missing.append("*arr app")
         if not has_dl:
             missing.append("download client")
+        logger.info("Incomplete stack: missing %s (has arr=%s dl=%s media=%s)",
+                     " + ".join(missing), has_arr, has_dl, has_media)
         steps.append({"icon": "warn", "text": f"Incomplete media stack — no {' or '.join(missing)} detected"})
 
     # Cross-stack analysis: scan sibling directories when stack is incomplete
@@ -320,6 +343,12 @@ def analyze_stack(
         except Exception as e:
             logger.debug("Cross-stack check failed: %s", e)
             steps.append({"icon": "info", "text": "Cross-stack scan skipped"})
+
+    status_preview = "conflicts" if conflicts else ("incomplete" if incomplete_stack else "healthy")
+    if cross_stack_result:
+        status_preview = "cross-stack (%s)" % ("shared" if cross_stack_result.get("shared_mount") else "conflict")
+    logger.info("Analysis complete: %s → %s (%d services, %d conflicts)",
+                 stack_name, status_preview, len(services), len(conflicts))
 
     steps.append({"icon": "done", "text": "Analysis complete"})
 
