@@ -71,6 +71,9 @@ body {
     padding: 1rem 2rem;
     border-bottom: 1px solid var(--border);
     background: var(--bg-card);
+    position: sticky;
+    top: 0;
+    z-index: 50;
 }
 
 .header-brand {
@@ -94,6 +97,10 @@ body {
 .header-status {
     font-size: 0.8rem;
     color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.15rem;
 }
 
 .header-status.connected {
@@ -102,6 +109,140 @@ body {
 
 .header-status.disconnected {
     color: var(--error);
+}
+
+.header-scan-path {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.header-scan-path:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+/* ─── Header Path Dropdown ─── */
+
+.header-path-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 100;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem;
+    min-width: 320px;
+    max-width: min(500px, 90vw);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.dropdown-label {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 0.25rem;
+}
+
+.dropdown-dir-btn {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0.5rem 0.6rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    text-align: left;
+    color: var(--text-primary);
+}
+
+.dropdown-dir-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-focus);
+}
+
+.dropdown-dir-path {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.dropdown-dir-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+    margin-left: 0.75rem;
+}
+
+.dropdown-dir-count {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+.dropdown-dir-current {
+    font-size: 0.68rem;
+    color: var(--success);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.dropdown-dir-active {
+    border-color: var(--success);
+}
+
+.dropdown-dir-row {
+    display: flex;
+    gap: 0.3rem;
+    align-items: stretch;
+}
+
+.dropdown-dir-row .dropdown-dir-btn {
+    flex: 1;
+}
+
+.dropdown-dir-remove {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0 0.5rem;
+    font-size: 1rem;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.dropdown-dir-remove:hover {
+    color: var(--error);
+    border-color: var(--error);
+}
+
+.dropdown-manual-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.dropdown-path-input {
+    font-size: 0.8rem;
 }
 
 /* ─── Main ─── */
@@ -372,6 +513,7 @@ body {
     flex-direction: column;
     gap: 0.2rem;
     min-width: 0;
+    flex: 1;
 }
 
 .stack-name {
@@ -561,6 +703,32 @@ body {
     word-break: break-all;
 }
 
+.hint-examples {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.3rem;
+    margin-top: 0.5rem;
+}
+
+.hint-label {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-top: 0.3rem;
+}
+
+.hint-muted {
+    font-size: 0.72rem;
+    opacity: 0.7;
+}
+
+.inline-code {
+    display: inline;
+    margin: 0;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.75rem;
+}
+
 .search-note {
     margin-top: 0.75rem;
     padding: 0.5rem 0.75rem;
@@ -580,9 +748,38 @@ body {
 
 .path-input-row {
     display: flex;
+    flex-direction: column;
     gap: 0.5rem;
     margin-top: 0.5rem;
+}
+
+.manual-entry-row {
+    display: flex;
+    gap: 0.5rem;
     align-items: center;
+}
+
+.detected-dirs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.25rem;
+}
+
+.detected-dirs-label {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.detected-dirs-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.detected-dir-btn {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
 }
 
 .path-input {

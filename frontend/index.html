@@ -45,7 +45,7 @@
             <button id="btn-parse" class="btn btn-primary" onclick="parseError()">
                 Analyze Error
             </button>
-            <button id="btn-skip" class="btn btn-ghost" onclick="skipToStacks()">
+            <button id="btn-skip" class="btn btn-ghost" onclick="this.classList.add('hidden'); document.querySelector('.skip-hint').classList.add('hidden'); skipToStacks();">
                 Skip — browse stacks directly
             </button>
             <p class="skip-hint">
@@ -67,10 +67,10 @@
     <section class="card hidden" id="step-stacks">
         <div class="step-header">
             <span class="step-number">2</span>
-            <h2>Select Your Stack</h2>
+            <h2>Select a Stack to Analyze</h2>
         </div>
         <p class="step-desc" id="stacks-desc">
-            Choose the Docker Compose stack to analyze.
+            Choose a Docker Compose stack from your stacks directory. Need a different directory? Use <em>Change scan path</em> below.
         </p>
         <div id="stacks-loading" class="loading">
             <div class="spinner"></div>
@@ -80,8 +80,16 @@
         <div id="stacks-empty" class="empty-state hidden">
             <p>No compose stacks found.</p>
             <p class="hint">
-                If running in Docker, mount your stacks directory:<br>
+                If running MapArr in Docker, mount your stacks directory:
+            </p>
+            <div class="hint-examples">
                 <code>docker run -v /path/to/stacks:/stacks:ro -p 9494:9494 maparr</code>
+                <span class="hint-label">Or in your compose file:</span>
+                <code>volumes:<br>&nbsp;&nbsp;- /path/to/stacks:/stacks:ro</code>
+                <span class="hint-label hint-muted">Windows? Use your actual path: <code class="inline-code">C:/DockerContainers:/stacks:ro</code></span>
+            </div>
+            <p class="hint">
+                Not running in Docker? Use <em>Change scan path</em> below to point MapArr at your stacks directory.
             </p>
         </div>
         <div id="stacks-search-note" class="search-note"></div>
@@ -90,15 +98,21 @@
                 Change scan path
             </button>
             <div class="path-input-row hidden" id="path-input-row">
-                <input
-                    type="text"
-                    id="custom-path-input"
-                    class="path-input"
-                    placeholder="/path/to/your/stacks"
-                    spellcheck="false"
-                />
-                <button class="btn btn-primary btn-sm" onclick="changeStacksPath()">Scan</button>
-                <button class="btn btn-ghost btn-sm" onclick="resetStacksPath()">Reset</button>
+                <div class="detected-dirs hidden" id="detected-dirs">
+                    <span class="detected-dirs-label">Detected locations:</span>
+                    <div class="detected-dirs-list" id="detected-dirs-list"></div>
+                </div>
+                <div class="manual-entry-row">
+                    <input
+                        type="text"
+                        id="custom-path-input"
+                        class="path-input"
+                        placeholder="/path/to/your/stacks"
+                        spellcheck="false"
+                    />
+                    <button class="btn btn-primary btn-sm" onclick="changeStacksPath()">Scan</button>
+                    <button class="btn btn-ghost btn-sm" onclick="resetStacksPath()">Reset</button>
+                </div>
             </div>
         </div>
     </section>
@@ -237,7 +251,7 @@
             <button class="btn btn-primary" onclick="analyzeAnother()">
                 Analyze Another Stack
             </button>
-            <a class="btn btn-ghost" href="https://trash-guides.info/Hardlinks/Docker/" target="_blank" rel="noopener">
+            <a class="btn btn-ghost" href="https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/" target="_blank" rel="noopener">
                 TRaSH Guides
             </a>
         </div>
@@ -251,7 +265,7 @@
     <span class="separator">·</span>
     <a href="https://github.com/coaxk/maparr" target="_blank" rel="noopener">GitHub</a>
     <span class="separator">·</span>
-    <a href="https://trash-guides.info/Hardlinks/Docker/" target="_blank" rel="noopener">TRaSH Guides</a>
+    <a href="https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/" target="_blank" rel="noopener">TRaSH Guides</a>
     <span class="separator">·</span>
     <span>MIT Licensed</span>
 </footer>

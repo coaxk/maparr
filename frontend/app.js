@@ -16,7 +16,40 @@ const state = {
     parsedError: null,   // Result from /api/parse-error
     stacks: [],          // Result from /api/discover-stacks
     selectedStack: null, // User's chosen stack path
+    allDetectedDirs: [], // Original detected dirs [{path, count}] — persists across rescans
+    customDirs: [],      // User-added dirs via manual entry — persisted to localStorage
+    activeScanPath: "",  // Currently active scan path
+    sleepWarnings: 0,    // Incremented every time Judd should be in bed
 };
+
+// Load persisted custom dirs from localStorage
+try {
+    const saved = localStorage.getItem("maparr_custom_dirs");
+    if (saved) state.customDirs = JSON.parse(saved);
+} catch {}
+
+function saveCustomDirs() {
+    try { localStorage.setItem("maparr_custom_dirs", JSON.stringify(state.customDirs)); } catch {}
+}
+
+function addCustomDir(path, count) {
+    const norm = path.replace(/\\/g, "/");
+    if (!state.customDirs.some((d) => d.path.replace(/\\/g, "/") === norm)) {
+        state.customDirs.push({ path, count });
+        saveCustomDirs();
+    } else {
+        // Update count
+        const existing = state.customDirs.find((d) => d.path.replace(/\\/g, "/") === norm);
+        if (existing) existing.count = count;
+        saveCustomDirs();
+    }
+}
+
+function removeCustomDir(path) {
+    const norm = path.replace(/\\/g, "/");
+    state.customDirs = state.customDirs.filter((d) => d.path.replace(/\\/g, "/") !== norm);
+    saveCustomDirs();
+}
 
 // ─── Init ───
 
@@ -51,9 +84,38 @@ async function checkHealth() {
     try {
         const resp = await fetch("/api/health");
         if (resp.ok) {
-            const data = await resp.json();
-            el.textContent = "Connected · v" + (data.version || "1.0.0");
             el.className = "header-status connected";
+            // Reset custom path so initial scan finds everything
+            try { await fetch("/api/change-stacks-path", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path: "" }),
+            }); } catch {}
+            // Fetch full stack summary for the header display
+            try {
+                const discResp = await fetch("/api/discover-stacks");
+                if (discResp.ok) {
+                    const discData = await discResp.json();
+                    state.stacks = discData.stacks || [];
+                    // Store original detected dirs on first load
+                    if (state.allDetectedDirs.length === 0) {
+                        const dirCounts = {};
+                        state.stacks.forEach((s) => {
+                            const parent = s.path.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+                            dirCounts[parent] = (dirCounts[parent] || 0) + 1;
+                        });
+                        state.allDetectedDirs = Object.entries(dirCounts)
+                            .sort((a, b) => b[1] - a[1])
+                            .map(([path, count]) => ({ path, count }));
+                    }
+                    state.activeScanPath = (discData.scan_path || "").replace(/\\/g, "/");
+                    updateConnectionStatus(discData);
+                } else {
+                    el.textContent = "Connected";
+                }
+            } catch {
+                el.textContent = "Connected";
+            }
         } else {
             el.textContent = "Backend error";
             el.className = "header-status disconnected";
@@ -105,9 +167,17 @@ async function parseError() {
 
 // ─── Skip to Stacks ───
 
+function hideSkipButton() {
+    const btn = document.getElementById("btn-skip");
+    const hint = document.querySelector(".skip-hint");
+    if (btn) btn.classList.add("hidden");
+    if (hint) hint.classList.add("hidden");
+}
+
 function skipToStacks() {
     state.parsedError = null;
     document.getElementById("step-parse-result").classList.add("hidden");
+    hideSkipButton();
     showStackSelection();
 }
 
@@ -193,6 +263,8 @@ async function showStackSelection() {
     section.classList.remove("hidden");
     loading.classList.remove("hidden");
     list.classList.add("hidden");
+
+    hideSkipButton();
     empty.classList.add("hidden");
 
     try {
@@ -219,6 +291,9 @@ async function showStackSelection() {
 
         // Update connection status with scan path and stack count
         updateConnectionStatus(data);
+
+        // Populate detected directories for quick-select
+        populateDetectedDirs(state.stacks);
     } catch (err) {
         loading.classList.add("hidden");
         empty.classList.remove("hidden");
@@ -272,25 +347,21 @@ function renderStacks(stacks) {
     total.textContent = stacks.length + " stack" + (stacks.length !== 1 ? "s" : "") + " detected";
     list.appendChild(total);
 
-    // Count health statuses for legend
-    const healthCounts = { ok: 0, warning: 0, problem: 0 };
-    stacks.forEach((s) => { if (s.health in healthCounts) healthCounts[s.health]++; });
-    const hasHealth = healthCounts.ok + healthCounts.warning + healthCounts.problem > 0;
+    // Count health statuses for legend — show all categories as a full summary
+    const healthCounts = { ok: 0, warning: 0, problem: 0, unknown: 0 };
+    stacks.forEach((s) => {
+        const h = s.health || "unknown";
+        if (h in healthCounts) healthCounts[h]++;
+        else healthCounts.unknown++;
+    });
 
-    if (hasHealth) {
-        const legend = document.createElement("div");
-        legend.className = "health-legend";
-        if (healthCounts.problem > 0) {
-            legend.appendChild(_legendDot("problem", healthCounts.problem + " with issues"));
-        }
-        if (healthCounts.warning > 0) {
-            legend.appendChild(_legendDot("warning", healthCounts.warning + " need review"));
-        }
-        if (healthCounts.ok > 0) {
-            legend.appendChild(_legendDot("ok", healthCounts.ok + " healthy"));
-        }
-        list.appendChild(legend);
-    }
+    const legend = document.createElement("div");
+    legend.className = "health-legend";
+    legend.appendChild(_legendDot("ok", healthCounts.ok + " healthy"));
+    legend.appendChild(_legendDot("warning", healthCounts.warning + " need review"));
+    legend.appendChild(_legendDot("problem", healthCounts.problem + " with issues"));
+    legend.appendChild(_legendDot("unknown", healthCounts.unknown + " not applicable"));
+    list.appendChild(legend);
 
     // Render each group
     const groupMeta = [
@@ -900,7 +971,7 @@ function showTrashAdvisory() {
     const callout = document.createElement("div");
     callout.className = "callout callout-success";
     const link = document.createElement("a");
-    link.href = "https://trash-guides.info/Hardlinks/Docker/";
+    link.href = "https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/";
     link.target = "_blank";
     link.rel = "noopener";
     link.textContent = "TRaSH Guides: Docker Hardlinks & Atomic Moves";
@@ -1024,7 +1095,7 @@ function showHealthyResult(data) {
     const trashLink = document.createElement("div");
     trashLink.className = "callout";
     const link = document.createElement("a");
-    link.href = "https://trash-guides.info/Hardlinks/Docker/";
+    link.href = "https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/";
     link.target = "_blank";
     link.rel = "noopener";
     link.textContent = "TRaSH Guides: Docker Hardlinks & Atomic Moves — the full walkthrough";
@@ -1183,18 +1254,219 @@ function updateConnectionStatus(data) {
     if (!el.classList.contains("connected")) return;
 
     const count = (data && data.total) || state.stacks.length;
-    const scanPath = (data && data.scan_path) || "";
+    const scanPath = (data && data.scan_path) || (data && data.path) || "";
 
-    let text = "Connected";
-    if (scanPath) {
-        // Show just the last directory name for brevity, full path in stacks section
-        const shortPath = scanPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || scanPath;
-        text += " · " + shortPath;
+    // Track active scan path
+    if (scanPath) state.activeScanPath = scanPath.replace(/\\/g, "/");
+
+    el.innerHTML = "";
+
+    const line1 = document.createElement("span");
+    line1.textContent = "Connected" + (count > 0 ? " · " + count + " stacks" : "");
+    el.appendChild(line1);
+
+    // Always show clickable path
+    const displayPath = state.activeScanPath || scanPath;
+    if (displayPath) {
+        const line2 = document.createElement("span");
+        line2.className = "header-scan-path";
+        line2.textContent = displayPath;
+        line2.title = "Click to change scan location";
+        line2.style.cursor = "pointer";
+        line2.addEventListener("click", (e) => {
+            e.stopPropagation();
+            toggleHeaderPathDropdown();
+        });
+        el.appendChild(line2);
     }
-    if (count > 0) {
-        text += " · " + count + " stacks";
+}
+
+// ─── Header Path Dropdown ───
+
+function toggleHeaderPathDropdown() {
+    let dropdown = document.getElementById("header-path-dropdown");
+
+    // Toggle off if already open
+    if (dropdown && !dropdown.classList.contains("hidden")) {
+        dropdown.classList.add("hidden");
+        return;
     }
-    el.textContent = text;
+
+    // Create dropdown if it doesn't exist
+    if (!dropdown) {
+        dropdown = document.createElement("div");
+        dropdown.id = "header-path-dropdown";
+        dropdown.className = "header-path-dropdown";
+        document.querySelector(".header").appendChild(dropdown);
+
+        // Close on outside click
+        document.addEventListener("click", (e) => {
+            if (!dropdown.contains(e.target) && !e.target.classList.contains("header-scan-path")) {
+                dropdown.classList.add("hidden");
+            }
+        });
+    }
+
+    dropdown.replaceChildren();
+
+    const normActive = (state.activeScanPath || "").replace(/\\/g, "/");
+
+    function makeDirButton(dir, count, removable) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "dropdown-dir-row";
+
+        const btn = document.createElement("button");
+        const normDir = dir.replace(/\\/g, "/");
+        const isActive = normActive === normDir;
+        btn.className = "dropdown-dir-btn" + (isActive ? " dropdown-dir-active" : "");
+        btn.innerHTML = '<span class="dropdown-dir-path">' + dir + '</span>' +
+            '<span class="dropdown-dir-meta">' +
+                (isActive ? '<span class="dropdown-dir-current">current</span>' : '') +
+                '<span class="dropdown-dir-count">' + count + ' stacks</span>' +
+            '</span>';
+        btn.addEventListener("click", () => {
+            document.getElementById("custom-path-input").value = dir;
+            dropdown.classList.add("hidden");
+            state.activeScanPath = normDir;
+            const list = document.getElementById("stacks-list");
+            const loading = document.getElementById("stacks-loading");
+            list.classList.add("hidden");
+            loading.classList.remove("hidden");
+            document.getElementById("step-stacks").classList.remove("hidden");
+            setTimeout(() => {
+                document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 100);
+            changeStacksPath();
+        });
+        wrapper.appendChild(btn);
+
+        if (removable) {
+            const removeBtn = document.createElement("button");
+            removeBtn.className = "dropdown-dir-remove";
+            removeBtn.title = "Remove from saved locations";
+            removeBtn.textContent = "\u00d7";
+            removeBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                removeCustomDir(dir);
+                wrapper.remove();
+            });
+            wrapper.appendChild(removeBtn);
+        }
+
+        return wrapper;
+    }
+
+    // Detected directories — auto-discovered
+    const dirs = state.allDetectedDirs;
+    if (dirs.length > 0) {
+        const label = document.createElement("div");
+        label.className = "dropdown-label";
+        label.textContent = "Detected locations (" + dirs.length + ")";
+        dropdown.appendChild(label);
+
+        dirs.forEach(({ path: dir, count }) => {
+            dropdown.appendChild(makeDirButton(dir, count, false));
+        });
+    }
+
+    // Custom directories — user-added, persisted to localStorage
+    const customDirs = state.customDirs.filter((c) => {
+        const normC = c.path.replace(/\\/g, "/");
+        return !state.allDetectedDirs.some((d) => d.path.replace(/\\/g, "/") === normC);
+    });
+    if (customDirs.length > 0) {
+        const label = document.createElement("div");
+        label.className = "dropdown-label";
+        label.textContent = "Saved locations (" + customDirs.length + ")";
+        dropdown.appendChild(label);
+
+        customDirs.forEach(({ path: dir, count }) => {
+            dropdown.appendChild(makeDirButton(dir, count, true));
+        });
+    }
+
+    // Manual entry
+    const manualLabel = document.createElement("div");
+    manualLabel.className = "dropdown-label";
+    manualLabel.textContent = "Manual entry";
+    dropdown.appendChild(manualLabel);
+
+    const manualRow = document.createElement("div");
+    manualRow.className = "dropdown-manual-row";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "path-input dropdown-path-input";
+    input.placeholder = "/path/to/your/stacks";
+    input.spellcheck = false;
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            document.getElementById("custom-path-input").value = input.value;
+            dropdown.classList.add("hidden");
+            changeStacksPath();
+            document.getElementById("step-stacks").classList.remove("hidden");
+            setTimeout(() => {
+                document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 100);
+        }
+    });
+    manualRow.appendChild(input);
+
+    const scanBtn = document.createElement("button");
+    scanBtn.className = "btn btn-primary btn-sm";
+    scanBtn.textContent = "Scan";
+    scanBtn.addEventListener("click", () => {
+        document.getElementById("custom-path-input").value = input.value;
+        dropdown.classList.add("hidden");
+        changeStacksPath();
+        document.getElementById("step-stacks").classList.remove("hidden");
+        setTimeout(() => {
+            document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 100);
+    });
+    manualRow.appendChild(scanBtn);
+
+    dropdown.appendChild(manualRow);
+    dropdown.classList.remove("hidden");
+
+    // Focus manual input
+    setTimeout(() => input.focus(), 50);
+}
+
+// ─── Detected Directories ───
+
+function populateDetectedDirs(stacks) {
+    const container = document.getElementById("detected-dirs");
+    const list = document.getElementById("detected-dirs-list");
+    if (!container || !list) return;
+
+    // Get distinct parent directories with stack counts
+    const dirCounts = {};
+    stacks.forEach((s) => {
+        const parent = s.path.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+        dirCounts[parent] = (dirCounts[parent] || 0) + 1;
+    });
+
+    const dirs = Object.entries(dirCounts).sort((a, b) => b[1] - a[1]);
+    if (dirs.length === 0) {
+        container.classList.add("hidden");
+        return;
+    }
+
+    list.replaceChildren();
+    dirs.forEach(([dir, count]) => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost btn-sm detected-dir-btn";
+        btn.textContent = dir + " (" + count + ")";
+        btn.title = "Scan only " + dir;
+        btn.addEventListener("click", () => {
+            document.getElementById("custom-path-input").value = dir;
+            changeStacksPath();
+        });
+        list.appendChild(btn);
+    });
+
+    container.classList.remove("hidden");
 }
 
 // ─── Path Change ───
@@ -1251,6 +1523,15 @@ async function changeStacksPath() {
         } else {
             renderStacks(state.stacks);
             list.classList.remove("hidden");
+            hideSkipButton();
+            // Persist manual entry if it found stacks and isn't already a detected dir
+            const normNew = newPath.replace(/\\/g, "/");
+            const isDetected = state.allDetectedDirs.some(
+                (d) => d.path.replace(/\\/g, "/") === normNew
+            );
+            if (!isDetected) {
+                addCustomDir(newPath, state.stacks.length);
+            }
         }
 
         updateConnectionStatus(data);

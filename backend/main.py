@@ -125,10 +125,19 @@ async def api_discover_stacks():
     else:
         stacks = discover_stacks()
 
+    # Determine the effective scan path to display
+    scan_path = custom or os.environ.get("MAPARR_STACKS_PATH", "")
+    if not scan_path and stacks:
+        # Show the directory containing the most stacks
+        from collections import Counter
+        counts = Counter(os.path.dirname(s.path) for s in stacks)
+        top_path, top_count = counts.most_common(1)[0]
+        scan_path = top_path
+
     return {
         "stacks": [s.to_dict() for s in stacks],
         "total": len(stacks),
-        "scan_path": custom or os.environ.get("MAPARR_STACKS_PATH", ""),
+        "scan_path": scan_path,
         "search_note": _get_search_note(custom),
     }
 
