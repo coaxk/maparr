@@ -1,8 +1,9 @@
 /**
  * MapArr v1.0 — Frontend Application
  *
- * Plain JavaScript. No framework, no build step.
- * Three flows: parse error → discover stacks → select stack.
+ * Two-mode UI:
+ *   FIX MODE  — paste error → auto-match stack → focused analysis
+ *   BROWSE MODE — browse all stacks → pick one → analyze
  *
  * XSS safety: All user-derived content uses textContent, never innerHTML.
  * Container clearing uses replaceChildren() instead of innerHTML.
@@ -13,13 +14,13 @@
 // ─── State ───
 
 const state = {
+    mode: null,          // "fix" or "browse"
     parsedError: null,   // Result from /api/parse-error
     stacks: [],          // Result from /api/discover-stacks
     selectedStack: null, // User's chosen stack path
     allDetectedDirs: [], // Original detected dirs [{path, count}] — persists across rescans
     customDirs: [],      // User-added dirs via manual entry — persisted to localStorage
     activeScanPath: "",  // Currently active scan path
-    sleepWarnings: 0,    // Incremented every time Judd should be in bed
 };
 
 // Load persisted custom dirs from localStorage
@@ -58,12 +59,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Ctrl+Enter in textarea triggers parse
     const textarea = document.getElementById("error-input");
-    textarea.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            parseError();
-        }
-    });
+    if (textarea) {
+        textarea.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                parseError();
+            }
+        });
+
+        // Live preview — debounced client-side pattern detection
+        let previewTimer = null;
+        textarea.addEventListener("input", () => {
+            clearTimeout(previewTimer);
+            previewTimer = setTimeout(() => {
+                updateLivePreview(textarea.value.trim());
+            }, 300);
+        });
+    }
 
     // Enter in path input triggers scan
     const pathInput = document.getElementById("custom-path-input");
@@ -77,6 +89,68 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 });
 
+// ─── Mode Management ───
+
+function enterFixMode() {
+    state.mode = "fix";
+    document.body.setAttribute("data-mode", "fix");
+    document.getElementById("step-mode").classList.add("hidden");
+    document.getElementById("step-error").classList.remove("hidden");
+    // Force-hide all browse mode elements (kills any in-flight showStackSelection)
+    document.getElementById("step-stacks").classList.add("hidden");
+    document.getElementById("stacks-loading").classList.add("hidden");
+    document.getElementById("stacks-list").classList.add("hidden");
+    document.getElementById("error-input").focus();
+}
+
+function enterBrowseMode() {
+    state.mode = "browse";
+    document.body.setAttribute("data-mode", "browse");
+    document.getElementById("step-mode").classList.add("hidden");
+    document.getElementById("step-error").classList.add("hidden");
+    document.getElementById("step-parse-result").classList.add("hidden");
+    document.getElementById("step-fix-match").classList.add("hidden");
+    document.getElementById("step-stacks").classList.remove("hidden");
+    showStackSelection();
+}
+
+function switchToFixMode() {
+    clearAnalysisResults();
+    document.getElementById("step-stacks").classList.add("hidden");
+    enterFixMode();
+}
+
+function switchToBrowseMode() {
+    clearAnalysisResults();
+    document.getElementById("step-error").classList.add("hidden");
+    document.getElementById("step-parse-result").classList.add("hidden");
+    document.getElementById("step-fix-match").classList.add("hidden");
+    enterBrowseMode();
+}
+
+function startOver() {
+    clearAnalysisResults();
+    state.mode = null;
+    document.body.removeAttribute("data-mode");
+    state.parsedError = null;
+    state.selectedStack = null;
+    // Hide everything, show mode selector
+    ["step-error", "step-parse-result", "step-fix-match", "step-stacks"].forEach((id) => {
+        document.getElementById(id).classList.add("hidden");
+    });
+    // Restore full stack list if collapsed
+    const stackList = document.getElementById("stacks-list");
+    if (stackList) stackList.classList.remove("hidden");
+    const summary = document.getElementById("selected-stack-summary");
+    if (summary) summary.remove();
+    // Clear textarea
+    const textarea = document.getElementById("error-input");
+    if (textarea) textarea.value = "";
+    // Show mode selector
+    document.getElementById("step-mode").classList.remove("hidden");
+    document.getElementById("step-mode").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 // ─── Health Check ───
 
 async function checkHealth() {
@@ -84,7 +158,18 @@ async function checkHealth() {
     try {
         const resp = await fetch("/api/health");
         if (resp.ok) {
+            const healthData = await resp.json();
+            const runningVersion = healthData.version || "1.0.0";
+
             el.className = "header-status connected";
+
+            // Populate footer version from backend
+            updateFooterVersion(runningVersion);
+
+            // Check GitHub for newer release and star count (non-blocking)
+            checkForUpdates(runningVersion);
+            fetchStarCount();
+
             // Reset custom path so initial scan finds everything
             try { await fetch("/api/change-stacks-path", {
                 method: "POST",
@@ -137,6 +222,10 @@ async function parseError() {
         return;
     }
 
+    // Clear any previous analysis results
+    clearAnalysisResults();
+    document.getElementById("step-fix-match").classList.add("hidden");
+
     const btn = document.getElementById("btn-parse");
     btn.disabled = true;
     btn.textContent = "Analyzing...";
@@ -156,7 +245,9 @@ async function parseError() {
 
         state.parsedError = await resp.json();
         showParseResult(state.parsedError);
-        showStackSelection();
+
+        // Auto-match: find stacks containing the detected service
+        await autoMatchStacks(state.parsedError);
     } catch (err) {
         alert("Could not reach the backend. Is MapArr running?");
     } finally {
@@ -165,20 +256,164 @@ async function parseError() {
     }
 }
 
-// ─── Skip to Stacks ───
+// ─── Auto-Match Stacks (Fix Mode) ───
 
-function hideSkipButton() {
-    const btn = document.getElementById("btn-skip");
-    const hint = document.querySelector(".skip-hint");
-    if (btn) btn.classList.add("hidden");
-    if (hint) hint.classList.add("hidden");
+async function autoMatchStacks(parsed) {
+    // Ensure we have stacks loaded
+    if (state.stacks.length === 0) {
+        try {
+            const resp = await fetch("/api/discover-stacks");
+            if (resp.ok) {
+                const data = await resp.json();
+                state.stacks = data.stacks || [];
+            }
+        } catch {}
+    }
+
+    const detectedService = (parsed.service || "").toLowerCase();
+    const section = document.getElementById("step-fix-match");
+    const heading = document.getElementById("fix-match-heading");
+    const desc = document.getElementById("fix-match-desc");
+    const list = document.getElementById("fix-match-list");
+    const empty = document.getElementById("fix-match-empty");
+
+    list.replaceChildren();
+    empty.classList.add("hidden");
+
+    // Filter stacks that contain the detected service
+    let matches = [];
+    if (detectedService) {
+        matches = state.stacks.filter((s) =>
+            (s.services || []).some((svc) => svc.toLowerCase().includes(detectedService))
+        );
+    }
+
+    if (matches.length === 1) {
+        // Single match — go straight to analysis, no ambiguity
+        selectStack(matches[0], {});
+    } else if (matches.length > 1) {
+        // Multiple matches — ask the backend to figure out which one
+        // most likely produced this error (volume layout analysis, path
+        // reachability, conflict correlation — the full smart-match).
+        try {
+            const resp = await fetch("/api/smart-match", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    parsed_error: parsed,
+                    candidate_paths: matches.map((s) => s.path),
+                }),
+            });
+
+            if (resp.ok) {
+                const result = await resp.json();
+
+                if (result.confidence === "high" && result.best) {
+                    // High confidence — auto-select, go straight to analysis
+                    const bestStack = matches.find(
+                        (s) => s.path.replace(/\\/g, "/") === result.best.path.replace(/\\/g, "/")
+                    ) || matches[0];
+                    selectStack(bestStack, {});
+                    return;
+                }
+
+                if (result.confidence === "medium" && result.best) {
+                    // Medium confidence — auto-select but show "wrong stack?" fallback
+                    const bestStack = matches.find(
+                        (s) => s.path.replace(/\\/g, "/") === result.best.path.replace(/\\/g, "/")
+                    ) || matches[0];
+                    // Store alternatives for the "wrong stack?" link
+                    state.fixAlternatives = matches.filter(
+                        (s) => s.path.replace(/\\/g, "/") !== bestStack.path.replace(/\\/g, "/")
+                    );
+                    state.fixDetectedService = detectedService;
+                    selectStack(bestStack, {});
+                    return;
+                }
+            }
+        } catch {
+            // Smart-match failed — fall through to pill picker
+        }
+
+        // Low confidence or smart-match unavailable — compact pill picker
+        heading.textContent = "Which Stack Has the Problem?";
+        desc.textContent = "We found " + detectedService + " in " +
+            matches.length + " stacks. Pick the one throwing the error:";
+        renderFixMatchPills(list, matches, detectedService);
+        section.classList.remove("hidden");
+        section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } else {
+        // No match — prompt user instead
+        heading.textContent = "Stack Not Found";
+        if (detectedService && state.stacks.length > 0) {
+            desc.textContent = "Couldn't find a stack containing " + detectedService + ". Load the right directory or switch to Analyze mode.";
+        } else if (state.stacks.length === 0) {
+            desc.textContent = "No stacks loaded yet. Use the scan path in the header to add your stacks directory.";
+        } else {
+            desc.textContent = "Couldn't identify the service from this error. Try Analyze mode to pick a stack manually.";
+        }
+        empty.classList.remove("hidden");
+        section.classList.remove("hidden");
+        section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
 }
 
-function skipToStacks() {
-    state.parsedError = null;
-    document.getElementById("step-parse-result").classList.add("hidden");
-    hideSkipButton();
-    showStackSelection();
+/**
+ * Render fix-mode matches as compact clickable pills.
+ * Tight, focused — no full card layout. Health dot + name + service count.
+ * Sorted: problem stacks first (most likely the culprit), then alphabetical.
+ */
+function renderFixMatchPills(container, matches, detectedService) {
+    container.replaceChildren();
+
+    // Sort: problem stacks first, then alphabetical
+    const sorted = [...matches].sort((a, b) => {
+        const healthOrder = { problem: 0, warning: 1, ok: 2, unknown: 3 };
+        const ha = healthOrder[a.health] ?? 3;
+        const hb = healthOrder[b.health] ?? 3;
+        if (ha !== hb) return ha - hb;
+        return extractDirName(a.path).toLowerCase().localeCompare(
+            extractDirName(b.path).toLowerCase()
+        );
+    });
+
+    const pillWrap = document.createElement("div");
+    pillWrap.className = "fix-match-pills";
+
+    sorted.forEach((stack) => {
+        const pill = document.createElement("button");
+        pill.className = "fix-match-pill";
+        pill.title = stack.path.replace(/\\/g, "/");
+
+        // Health dot
+        const dot = document.createElement("span");
+        dot.className = "health-dot health-" + (stack.health || "unknown");
+        pill.appendChild(dot);
+
+        // Stack name
+        const name = document.createElement("span");
+        name.className = "fix-pill-name";
+        name.textContent = extractDirName(stack.path);
+        pill.appendChild(name);
+
+        // Service count hint
+        const count = document.createElement("span");
+        count.className = "fix-pill-count";
+        count.textContent = stack.service_count + " svc";
+        pill.appendChild(count);
+
+        pill.addEventListener("click", () => selectStack(stack, {}));
+        pillWrap.appendChild(pill);
+    });
+
+    container.appendChild(pillWrap);
+
+    // Guidance hint below pills
+    const hint = document.createElement("p");
+    hint.className = "fix-match-hint";
+    hint.textContent = "Not sure? Pick the stack where " + detectedService +
+        " runs. Red dots indicate stacks with known volume issues.";
+    container.appendChild(hint);
 }
 
 // ─── Show Parse Result ───
@@ -251,6 +486,82 @@ function makeParseField(label, value) {
     return row;
 }
 
+// ─── Live Error Preview ───
+
+/**
+ * Client-side pattern detection for the error textarea.
+ * Mirrors the backend parser's known service lists and path patterns.
+ * This is a "sneak peek" — the real parse happens server-side on submit.
+ */
+const _ALL_SERVICES = [
+    ..._ARR_APPS, "overseerr", "jellyseerr",
+    ..._DL_CLIENTS,
+    ..._MEDIA_SERVERS,
+];
+
+const _ERROR_KEYWORDS = {
+    "import failure": /\b(import\s+(failed|failure|error)|failed.*import)\b/i,
+    "path not found": /\b(path\s+(does\s+)?not\s+exist|no\s+such\s+file|not\s+found|not\s+accessible)\b/i,
+    "permission denied": /\b(permission\s+denied|access\s+denied|EACCES)\b/i,
+    "cross-device link": /\b(cross[- ]device\s+link|EXDEV|rename\s+.*across)\b/i,
+    "remote path mapping": /\b(remote\s+path\s+mapp?ing)\b/i,
+    "disk space": /\b(no\s+space|disk\s+full|ENOSPC)\b/i,
+};
+
+function updateLivePreview(text) {
+    const preview = document.getElementById("error-live-preview");
+    if (!preview) return;
+
+    preview.replaceChildren();
+    if (!text) return;
+
+    const lower = text.toLowerCase();
+    const pills = [];
+
+    // Detect service
+    for (const svc of _ALL_SERVICES) {
+        if (lower.includes(svc)) {
+            pills.push({ type: "service", icon: "\uD83D\uDD0D", text: svc });
+            break;
+        }
+    }
+
+    // Detect path (Unix or Windows style)
+    const pathMatch = text.match(/(?:\/[\w.-]+){2,}[\w./-]*/);
+    const winPathMatch = text.match(/[A-Z]:\\[\w.\\-]+/);
+    const detectedPath = pathMatch ? pathMatch[0] : (winPathMatch ? winPathMatch[0] : null);
+    if (detectedPath) {
+        // Truncate long paths
+        const display = detectedPath.length > 50
+            ? detectedPath.slice(0, 47) + "..."
+            : detectedPath;
+        pills.push({ type: "path", icon: "\uD83D\uDCC1", text: display });
+    }
+
+    // Detect error type
+    for (const [label, regex] of Object.entries(_ERROR_KEYWORDS)) {
+        if (regex.test(text)) {
+            pills.push({ type: "error", icon: "\u26A0", text: label });
+            break;
+        }
+    }
+
+    if (pills.length === 0) return;
+
+    pills.forEach((p) => {
+        const pill = document.createElement("span");
+        pill.className = "preview-pill pill-" + p.type;
+        const icon = document.createElement("span");
+        icon.className = "preview-pill-icon";
+        icon.textContent = p.icon;
+        pill.appendChild(icon);
+        const txt = document.createElement("span");
+        txt.textContent = p.text;
+        pill.appendChild(txt);
+        preview.appendChild(pill);
+    });
+}
+
 // ─── Stack Selection ───
 
 async function showStackSelection() {
@@ -263,12 +574,12 @@ async function showStackSelection() {
     section.classList.remove("hidden");
     loading.classList.remove("hidden");
     list.classList.add("hidden");
-
-    hideSkipButton();
     empty.classList.add("hidden");
 
     try {
         const resp = await fetch("/api/discover-stacks");
+        // Bail out if user navigated away during fetch
+        if (state.mode !== "browse") { loading.classList.add("hidden"); return; }
         if (!resp.ok) {
             throw new Error("Discovery failed");
         }
@@ -277,6 +588,9 @@ async function showStackSelection() {
         state.stacks = data.stacks || [];
 
         loading.classList.add("hidden");
+
+        // Double-check mode — user may have switched during await
+        if (state.mode !== "browse") return;
 
         if (state.stacks.length === 0) {
             empty.classList.remove("hidden");
@@ -295,6 +609,7 @@ async function showStackSelection() {
         // Populate detected directories for quick-select
         populateDetectedDirs(state.stacks);
     } catch (err) {
+        if (state.mode !== "browse") return;
         loading.classList.add("hidden");
         empty.classList.remove("hidden");
         const emptyP = empty.querySelector("p");
@@ -473,23 +788,85 @@ function renderStackItem(stack, detectedService) {
 // ─── Select Stack → Analyze ───
 
 async function selectStack(stack, clickEvent) {
+    // Clear previous results before new analysis
+    clearAnalysisResults();
+
     // Visual selection
     document.querySelectorAll(".stack-item").forEach((el) =>
         el.classList.remove("selected")
     );
-    const target = clickEvent.currentTarget;
+    const target = clickEvent && clickEvent.currentTarget;
     if (target) {
         target.classList.add("selected");
     }
 
     state.selectedStack = stack.path;
 
-    // Show terminal with initial message
+    // In browse mode, collapse the stack list to show selected summary
+    if (state.mode === "browse") {
+        const stackSection = document.getElementById("step-stacks");
+        const stackList = document.getElementById("stacks-list");
+        if (stackList) {
+            stackList.classList.add("hidden");
+            let selectedSummary = document.getElementById("selected-stack-summary");
+            if (!selectedSummary) {
+                selectedSummary = document.createElement("div");
+                selectedSummary.id = "selected-stack-summary";
+                selectedSummary.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0;";
+                stackSection.appendChild(selectedSummary);
+            }
+            selectedSummary.replaceChildren();
+
+            const summaryLeft = document.createElement("div");
+            summaryLeft.style.cssText = "display: flex; align-items: center; gap: 0.5rem;";
+            const dot = document.createElement("span");
+            dot.className = "health-dot health-" + (stack.health || "unknown");
+            summaryLeft.appendChild(dot);
+            const nameSpan = document.createElement("span");
+            nameSpan.style.cssText = "font-weight: 600; font-size: 0.9rem;";
+            nameSpan.textContent = extractDirName(stack.path);
+            summaryLeft.appendChild(nameSpan);
+            const countSpan = document.createElement("span");
+            countSpan.style.cssText = "font-size: 0.82rem; color: var(--text-muted);";
+            countSpan.textContent = " — " + stack.service_count + " services";
+            summaryLeft.appendChild(countSpan);
+            selectedSummary.appendChild(summaryLeft);
+
+            const changeBtn = document.createElement("button");
+            changeBtn.className = "btn btn-subtle btn-sm";
+            const changeIcon = document.createElement("span");
+            changeIcon.className = "btn-icon";
+            changeIcon.textContent = "\u21C4";
+            changeBtn.appendChild(changeIcon);
+            const changeText = document.createTextNode(" Change Stack");
+            changeBtn.appendChild(changeText);
+            changeBtn.addEventListener("click", () => {
+                selectedSummary.remove();
+                stackList.classList.remove("hidden");
+                clearAnalysisResults();
+            });
+            selectedSummary.appendChild(changeBtn);
+        }
+    }
+
+    // Show terminal with initial message including compose file
     const termSection = document.getElementById("step-analyzing");
     const termOutput = document.getElementById("terminal-output");
     termOutput.replaceChildren();
     setTerminalDots("running");
-    addTerminalLine("run", "Resolving compose for " + extractDirName(stack.path) + "...");
+    const composeFile = stack.compose_file || "docker-compose.yml";
+    const composeFileName = composeFile.split(/[/\\]/).pop();
+    const stackDirName = extractDirName(stack.path);
+
+    // Update terminal title to show compose file location
+    const termTitle = document.querySelector(".terminal-title");
+    if (termTitle) termTitle.textContent = stack.path.replace(/\\/g, "/") + "/" + composeFileName;
+
+    // Update card heading to include stack name
+    const cardHeading = termSection.querySelector("h2");
+    if (cardHeading) cardHeading.textContent = "Analyzing: " + stackDirName;
+
+    addTerminalLine("run", "Resolving " + stackDirName + "/" + composeFileName + "...");
     termSection.classList.remove("hidden");
     termSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
@@ -520,13 +897,17 @@ async function selectStack(stack, clickEvent) {
         if (data.status === "error") {
             setTerminalDots("error");
             showAnalysisError(data.error, data.stage);
-        } else {
+        } else if (data.status === "healthy") {
             setTerminalDots("done");
-            if (data.status === "healthy") {
-                showHealthyResult(data);
-            } else {
-                showAnalysisResult(data);
-            }
+            showHealthyResult(data);
+        } else if (data.status === "incomplete") {
+            setTerminalDots("warning");
+            showIncompleteResult(data);
+        } else {
+            // Conflicts found — show warning dots, not green
+            const hasCritical = (data.conflicts || []).some((c) => c.severity === "critical");
+            setTerminalDots(hasCritical ? "error" : "warning");
+            showAnalysisResult(data);
         }
     } catch {
         setTerminalDots("error");
@@ -550,6 +931,9 @@ function setTerminalDots(state) {
         yellow.classList.add("active-yellow");
     } else if (state === "done") {
         green.classList.add("active-green");
+    } else if (state === "warning") {
+        yellow.classList.add("active-yellow");
+        red.classList.add("active-red");
     } else if (state === "error") {
         red.classList.add("active-red");
     }
@@ -587,14 +971,15 @@ async function renderTerminalSteps(steps) {
 // ─── Show Analysis Result (conflicts found) ───
 
 function showAnalysisResult(data) {
-    showCurrentSetup(data);
+    // Problem first — users want the punchline before the evidence table
     showProblem(data);
+    showCurrentSetup(data);
     showMountWarnings(data);
     showSolution(data);
-    showWhyItWorks(data);
-    showNextSteps();
     showCategoryAdvisory(data);
-    showTrashAdvisory();
+    showWhyItWorks(data);
+    showNextSteps(data);
+    showTrashAdvisory(data);
     showAgainButton();
 }
 
@@ -733,18 +1118,33 @@ function showSolution(data) {
     const section = document.getElementById("step-solution");
     const summaryEl = document.getElementById("solution-summary");
     const yamlEl = document.getElementById("solution-yaml");
+    const originalYamlEl = document.getElementById("solution-yaml-original");
+    const originalTab = document.querySelector('.solution-tab[data-tab="original"]');
+    const originalBlock = document.getElementById("solution-block-original");
+    const recommendedBlock = document.getElementById("solution-block-recommended");
 
     summaryEl.textContent =
-        "Update your docker-compose.yml with the volume configuration below. " +
-        "Replace /host/data with your actual host data directory.";
+        "Replace the services section in your docker-compose.yml with the corrected configuration below. " +
+        "This includes all services with corrected volume mounts.";
 
     if (data.solution_yaml) {
-        yamlEl.textContent = data.solution_yaml;
+        renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
     } else {
         // Fallback: show the fix text from the first conflict
         const firstFix = data.conflicts?.find((c) => c.fix);
         yamlEl.textContent = firstFix?.fix || "No specific YAML changes generated.";
     }
+
+    // Populate "Your Config (Corrected)" tab if backend generated it
+    if (data.original_corrected_yaml && originalTab && originalYamlEl) {
+        renderYamlWithHighlights(originalYamlEl, data.original_corrected_yaml, data.original_changed_lines || []);
+        originalTab.classList.remove("hidden");
+    } else if (originalTab) {
+        originalTab.classList.add("hidden");
+    }
+
+    // Ensure recommended tab is active by default
+    switchSolutionTab("recommended");
 
     section.classList.remove("hidden");
 }
@@ -799,62 +1199,94 @@ function showWhyItWorks(data) {
         );
     }
 
+    // Toggle button — collapsed by default
+    const toggle = document.createElement("button");
+    toggle.className = "why-toggle";
+    toggle.id = "why-toggle";
+    const arrow = document.createElement("span");
+    arrow.className = "why-toggle-arrow";
+    arrow.textContent = "\u25B8";
+    toggle.appendChild(arrow);
+    const toggleText = document.createTextNode(" Learn why");
+    toggle.appendChild(toggleText);
+    toggle.addEventListener("click", () => toggleWhyCard());
+    details.appendChild(toggle);
+
+    // Collapsible content wrapper
+    const content = document.createElement("div");
+    content.className = "why-card-content";
+    content.id = "why-card-content";
+
     points.forEach((text) => {
         const p = document.createElement("p");
         p.textContent = text;
-        p.style.marginBottom = "0.75rem";
-        details.appendChild(p);
+        p.style.cssText = "margin-bottom: 0.75rem; font-size: 0.88rem; color: var(--text-secondary);";
+        content.appendChild(p);
     });
 
+    details.appendChild(content);
     section.classList.remove("hidden");
+}
+
+function toggleWhyCard() {
+    const content = document.getElementById("why-card-content");
+    const toggle = document.getElementById("why-toggle");
+    if (!content || !toggle) return;
+
+    const isExpanded = content.classList.toggle("expanded");
+    toggle.classList.toggle("expanded", isExpanded);
+
+    // Update button text
+    const arrow = toggle.querySelector(".why-toggle-arrow");
+    // Clear text nodes (keep arrow span)
+    Array.from(toggle.childNodes).forEach((n) => {
+        if (n.nodeType === Node.TEXT_NODE) toggle.removeChild(n);
+    });
+    toggle.appendChild(document.createTextNode(isExpanded ? " Hide" : " Learn why"));
 }
 
 // ─── Next Steps ───
 
-function showNextSteps() {
+function showNextSteps(data) {
     const section = document.getElementById("step-next");
-    const checklist = document.getElementById("next-steps-checklist");
-    checklist.replaceChildren();
+    const container = document.getElementById("next-steps-checklist");
+    container.replaceChildren();
 
     const steps = [
-        "Edit your docker-compose.yml with the changes above",
+        "Copy the corrected YAML above into your docker-compose.yml",
         "Create the host directory structure if it doesn't exist",
-        "Run: docker compose down && docker compose up -d",
+        "Restart your stack with one of the commands below",
         "Check your *arr app — the error should be gone",
-        "If issues persist, paste your new error and analyze again",
     ];
 
-    steps.forEach((text, i) => {
-        const item = document.createElement("div");
-        item.className = "checklist-item";
-
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.id = "step-check-" + i;
-        item.appendChild(checkbox);
-
-        const label = document.createElement("label");
-        label.htmlFor = "step-check-" + i;
-
-        // Make code-like text stand out
-        if (text.includes("docker compose")) {
-            const parts = text.split("docker compose down && docker compose up -d");
-            if (parts.length === 2) {
-                label.appendChild(document.createTextNode(parts[0]));
-                const code = document.createElement("code");
-                code.textContent = "docker compose down && docker compose up -d";
-                label.appendChild(code);
-                label.appendChild(document.createTextNode(parts[1]));
-            } else {
-                label.textContent = text;
-            }
-        } else {
-            label.textContent = text;
-        }
-
-        item.appendChild(label);
-        checklist.appendChild(item);
+    const ol = document.createElement("ol");
+    ol.style.cssText = "margin: 0; padding-left: 1.5rem; font-size: 0.88rem; color: var(--text-secondary); display: flex; flex-direction: column; gap: 0.4rem;";
+    steps.forEach((text) => {
+        const li = document.createElement("li");
+        li.textContent = text;
+        ol.appendChild(li);
     });
+    container.appendChild(ol);
+
+    // Docker restart command block with variants
+    const cmdBlock = document.createElement("div");
+    cmdBlock.className = "code-block code-block-small";
+    cmdBlock.style.marginTop = "0.75rem";
+    const cmdPre = document.createElement("pre");
+    cmdPre.textContent =
+        "# Docker Compose v2 (recommended)\n" +
+        "docker compose down && docker compose up -d\n\n" +
+        "# Docker Compose v1 (legacy)\n" +
+        "docker-compose down && docker-compose up -d\n\n" +
+        "# Portainer / Komodo / Dockge users:\n" +
+        "# Use the \"Recreate\" or \"Redeploy\" button in your dashboard";
+    cmdBlock.appendChild(cmdPre);
+    container.appendChild(cmdBlock);
+
+    const retryNote = document.createElement("p");
+    retryNote.style.cssText = "margin-top: 0.75rem; font-size: 0.82rem; color: var(--text-muted);";
+    retryNote.textContent = "If the error persists after restarting, paste your new error message and analyze again.";
+    container.appendChild(retryNote);
 
     section.classList.remove("hidden");
 }
@@ -889,7 +1321,7 @@ function showCategoryAdvisory(data) {
     callout.className = "callout callout-category";
 
     const title = document.createElement("strong");
-    title.style.cssText = "display: block; margin-bottom: 0.4rem; font-size: 0.95rem;";
+    title.style.cssText = "display: block; margin-bottom: 0.4rem; font-size: 0.9rem;";
     title.textContent = "Your download client's category save path must match your volume mounts.";
     callout.appendChild(title);
 
@@ -898,7 +1330,7 @@ function showCategoryAdvisory(data) {
     const dlNames = services.filter((s) => s.role === "download_client").map((s) => s.name);
 
     const example = document.createElement("p");
-    example.style.cssText = "margin: 0.5rem 0; font-size: 0.85rem; color: var(--text-secondary);";
+    example.style.cssText = "margin: 0.5rem 0; font-size: 0.88rem; color: var(--text-secondary);";
 
     const dlName = dlNames[0] || "your download client";
     const arrName = arrNames[0] || "your *arr app";
@@ -926,7 +1358,7 @@ function showCategoryAdvisory(data) {
     callout.appendChild(example);
 
     const why = document.createElement("p");
-    why.style.cssText = "margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--text-muted);";
+    why.style.cssText = "margin: 0.5rem 0 0; font-size: 0.82rem; color: var(--text-muted);";
     why.textContent =
         "Why this matters: when " + arrName + " tries to import a completed download, " +
         "it looks at the path " + dlName + " reports. If that path isn't under a " +
@@ -937,19 +1369,118 @@ function showCategoryAdvisory(data) {
     section.classList.remove("hidden");
 }
 
-// ─── TRaSH Advisory ───
+// ─── TRaSH Advisory (Contextual) ───
 
-function showTrashAdvisory() {
+/**
+ * Detect TRaSH compliance level from volume data.
+ * Returns "compliant", "close", or "non-compliant".
+ */
+function detectTrashCompliance(data) {
+    const services = data.services || [];
+    const participants = services.filter(
+        (s) => s.role === "arr" || s.role === "download_client" || s.role === "media_server"
+    );
+    if (participants.length === 0) return "non-compliant";
+
+    // Check if data volumes use a unified /data/ root
+    let unifiedCount = 0;
+    let separateCount = 0;
+    let totalDataVols = 0;
+
+    participants.forEach((svc) => {
+        (svc.volumes || []).forEach((v) => {
+            const target = v.target || "";
+            // Skip config mounts
+            if (isConfigVolume(target)) return;
+            totalDataVols++;
+            if (target === "/data" || target.startsWith("/data/")) {
+                unifiedCount++;
+            } else {
+                separateCount++;
+            }
+        });
+    });
+
+    if (totalDataVols === 0) return "non-compliant";
+    if (separateCount === 0 && unifiedCount > 0) return "compliant";
+    if (unifiedCount > 0 && separateCount > 0) return "close";
+    return "non-compliant";
+}
+
+function showTrashAdvisory(data) {
     const section = document.getElementById("step-trash");
     const details = document.getElementById("trash-details");
     details.replaceChildren();
 
-    const intro = document.createElement("p");
-    intro.textContent =
-        "The solution above fixes your immediate problem. " +
-        "For the cleanest long-term setup, consider the TRaSH Guides structure:";
-    details.appendChild(intro);
+    const compliance = data ? detectTrashCompliance(data) : "non-compliant";
 
+    // ─── Tier 1: Compliant ───
+    if (compliance === "compliant") {
+        const heading = section.querySelector("h2");
+        const stepNum = section.querySelector(".step-number");
+        if (heading) heading.textContent = "TRaSH Guides Compliant";
+        if (stepNum) {
+            stepNum.className = "step-number ok";
+            stepNum.textContent = "\u2713";
+        }
+
+        const msg = document.createElement("p");
+        msg.style.cssText = "color: var(--success); font-weight: 600; margin-bottom: 0.5rem;";
+        msg.textContent = "Your setup follows the TRaSH Guides recommendation. Nice work!";
+        details.appendChild(msg);
+
+        const note = document.createElement("p");
+        note.style.cssText = "font-size: 0.88rem; color: var(--text-secondary);";
+        note.textContent =
+            "All your media services mount under /data — the unified structure that makes " +
+            "hardlinks and atomic moves work reliably. You're running the gold standard.";
+        details.appendChild(note);
+
+        section.classList.remove("hidden");
+        return;
+    }
+
+    // ─── Tier 2: Close ───
+    if (compliance === "close") {
+        const heading = section.querySelector("h2");
+        const stepNum = section.querySelector(".step-number");
+        if (heading) heading.textContent = "Almost TRaSH Compliant";
+        if (stepNum) {
+            stepNum.className = "step-number gold-icon";
+            stepNum.textContent = "\u2192";
+        }
+
+        const msg = document.createElement("p");
+        msg.style.cssText = "color: var(--warning); font-weight: 600; margin-bottom: 0.5rem;";
+        msg.textContent = "You're close to the TRaSH Guides structure, but some paths don't use the unified /data root.";
+        details.appendChild(msg);
+
+        const note = document.createElement("p");
+        note.style.cssText = "font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 0.75rem;";
+        note.textContent =
+            "Some of your services already use /data mounts, which is great. " +
+            "Moving the remaining services to the same /data structure will enable " +
+            "hardlinks and atomic moves across your entire stack.";
+        details.appendChild(note);
+    } else {
+        // ─── Tier 3: Non-compliant ───
+        const heading = section.querySelector("h2");
+        const stepNum = section.querySelector(".step-number");
+        if (heading) heading.textContent = "Gold Standard Setup (Optional)";
+        if (stepNum) {
+            stepNum.className = "step-number gold-icon";
+            stepNum.textContent = "\u2605";
+        }
+
+        const intro = document.createElement("p");
+        intro.style.cssText = "font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 0.75rem;";
+        intro.textContent =
+            "The solution above fixes your immediate problem. " +
+            "For the cleanest long-term setup, consider the TRaSH Guides structure:";
+        details.appendChild(intro);
+    }
+
+    // Show the structure diagram for close + non-compliant
     const structure = document.createElement("div");
     structure.className = "trash-structure";
     structure.textContent =
@@ -962,11 +1493,12 @@ function showTrashAdvisory() {
         "  usenet/       Usenet client saves here";
     details.appendChild(structure);
 
-    const note = document.createElement("p");
-    note.textContent =
+    const structNote = document.createElement("p");
+    structNote.style.cssText = "font-size: 0.88rem; color: var(--text-secondary); margin-top: 0.5rem;";
+    structNote.textContent =
         "This eliminates path confusion entirely — everything lives under /data " +
         "and all containers see the same structure.";
-    details.appendChild(note);
+    details.appendChild(structNote);
 
     const callout = document.createElement("div");
     callout.className = "callout callout-success";
@@ -993,6 +1525,15 @@ function showHealthyResult(data) {
     const section = document.getElementById("step-healthy");
     const details = document.getElementById("healthy-details");
     details.replaceChildren();
+
+    // Ensure card heading is green (reset from possible incomplete state)
+    const stepNum = section.querySelector(".step-number");
+    const heading = section.querySelector("h2");
+    if (stepNum) {
+        stepNum.className = "step-number ok";
+        stepNum.textContent = "\u2713";
+    }
+    if (heading) heading.textContent = "Your Setup Looks Good";
 
     const msg = document.createElement("p");
     msg.className = "healthy-message";
@@ -1025,7 +1566,7 @@ function showHealthyResult(data) {
 
     const guidanceTitle = document.createElement("h3");
     guidanceTitle.textContent = "If you still have errors, check:";
-    guidanceTitle.style.cssText = "font-size: 0.9rem; margin: 1rem 0 0.5rem; color: var(--text-primary);";
+    guidanceTitle.style.cssText = "font-size: 0.9rem; margin: 1rem 0 0.5rem; color: var(--text-primary); font-weight: 600;";
     guidance.appendChild(guidanceTitle);
 
     // Secret sauce callout — download client categories
@@ -1034,11 +1575,11 @@ function showHealthyResult(data) {
 
     const catTitle = document.createElement("strong");
     catTitle.textContent = "Most likely cause: Download client category paths";
-    catTitle.style.cssText = "display: block; margin-bottom: 0.4rem; color: var(--text-primary); font-size: 0.9rem;";
+    catTitle.style.cssText = "display: block; margin-bottom: 0.4rem; color: var(--text-primary); font-size: 0.9rem; font-weight: 600;";
     categoryCallout.appendChild(catTitle);
 
     const catDesc = document.createElement("p");
-    catDesc.style.cssText = "margin: 0 0 0.5rem; color: var(--text-secondary); font-size: 0.85rem;";
+    catDesc.style.cssText = "margin: 0 0 0.5rem; color: var(--text-secondary); font-size: 0.88rem;";
     catDesc.textContent =
         "This is the #1 overlooked cause of import failures. Your Docker volumes can be perfect " +
         "and imports will still fail if your download client's category save path doesn't match " +
@@ -1046,7 +1587,7 @@ function showHealthyResult(data) {
     categoryCallout.appendChild(catDesc);
 
     const catHow = document.createElement("p");
-    catHow.style.cssText = "margin: 0; color: var(--text-secondary); font-size: 0.85rem;";
+    catHow.style.cssText = "margin: 0; color: var(--text-secondary); font-size: 0.88rem;";
     catHow.textContent =
         "In qBittorrent: Options > Downloads > Default Save Path (and per-category paths). " +
         "In SABnzbd: Config > Folders > Completed Download Folder. " +
@@ -1073,18 +1614,18 @@ function showHealthyResult(data) {
         item.style.cssText = "margin-bottom: 0.6rem;";
         const strong = document.createElement("strong");
         strong.textContent = check.label;
-        strong.style.cssText = "color: var(--text-primary); font-size: 0.85rem;";
+        strong.style.cssText = "color: var(--text-primary); font-size: 0.88rem;";
         item.appendChild(strong);
         const p = document.createElement("p");
         p.textContent = check.detail;
-        p.style.cssText = "color: var(--text-muted); font-size: 0.8rem; margin: 0.2rem 0 0;";
+        p.style.cssText = "color: var(--text-muted); font-size: 0.82rem; margin: 0.2rem 0 0;";
         item.appendChild(p);
         guidance.appendChild(item);
     });
 
     // RPM note — reframed, not circular
     const rpmNote = document.createElement("div");
-    rpmNote.style.cssText = "margin-top: 0.75rem; padding: 0.6rem 0.75rem; background: rgba(74,144,217,0.06); border-radius: 4px; font-size: 0.8rem; color: var(--text-muted);";
+    rpmNote.style.cssText = "margin-top: 0.75rem; padding: 0.6rem 0.75rem; background: rgba(74,144,217,0.06); border-radius: 4px; font-size: 0.82rem; color: var(--text-muted);";
     rpmNote.textContent =
         "About Remote Path Mappings: MapArr has already analyzed the Docker volume layer that " +
         "RPMs sit on top of. If your volumes are correct (as shown above), you likely don't need " +
@@ -1106,6 +1647,68 @@ function showHealthyResult(data) {
 
     section.classList.remove("hidden");
     showCategoryAdvisory(data);
+    showAgainButton();
+    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ─── Incomplete Stack Result (yellow — missing arr or download client) ───
+
+function showIncompleteResult(data) {
+    const section = document.getElementById("step-healthy");
+    const details = document.getElementById("healthy-details");
+    details.replaceChildren();
+
+    // Override the card heading to reflect yellow/warning state
+    const stepNum = section.querySelector(".step-number");
+    const heading = section.querySelector("h2");
+    if (stepNum) {
+        stepNum.className = "step-number gold-icon";
+        stepNum.textContent = "!";
+    }
+    if (heading) heading.textContent = "Incomplete Stack";
+
+    const msg = document.createElement("p");
+    msg.className = "healthy-message";
+    msg.style.color = "var(--warning)";
+    msg.textContent = "Incomplete media stack";
+    details.appendChild(msg);
+
+    // Determine what's missing
+    const services = data.services || [];
+    const hasArr = services.some((s) => s.role === "arr");
+    const hasDl = services.some((s) => s.role === "download_client");
+    const missing = [];
+    if (!hasArr) missing.push("*arr app (Sonarr, Radarr, etc.)");
+    if (!hasDl) missing.push("download client (qBittorrent, SABnzbd, etc.)");
+
+    const detail = document.createElement("p");
+    detail.className = "healthy-detail";
+    detail.textContent =
+        "This stack has media services but is missing: " + missing.join(" and ") + ". " +
+        "MapArr can't fully analyze hardlink compatibility without both an *arr app and a download client in the same stack.";
+    details.appendChild(detail);
+
+    // Show what IS in the stack
+    showCurrentSetup(data);
+    showMountWarnings(data);
+
+    const callout = document.createElement("div");
+    callout.className = "callout callout-warning";
+    callout.textContent =
+        "This isn't necessarily a problem — many setups split services across separate compose stacks. " +
+        "If your download client is in a different stack, analyze that stack too and ensure both share " +
+        "the same host mount paths.";
+    details.appendChild(callout);
+
+    if (data.fix_summary) {
+        const summary = document.createElement("p");
+        summary.className = "healthy-detail";
+        summary.style.marginTop = "0.5rem";
+        summary.textContent = data.fix_summary;
+        details.appendChild(summary);
+    }
+
+    section.classList.remove("hidden");
     showAgainButton();
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -1138,13 +1741,52 @@ function showAnalysisError(error, stage) {
 // ─── Show "Analyze Another" Button ───
 
 function showAgainButton() {
-    document.getElementById("step-again").classList.remove("hidden");
+    const section = document.getElementById("step-again");
+    section.classList.remove("hidden");
+
+    // If smart-match auto-selected with alternatives, show "wrong stack?" link
+    if (state.mode === "fix" && state.fixAlternatives && state.fixAlternatives.length > 0) {
+        let wrongLink = document.getElementById("fix-wrong-stack");
+        if (!wrongLink) {
+            wrongLink = document.createElement("div");
+            wrongLink.id = "fix-wrong-stack";
+            wrongLink.className = "fix-wrong-stack";
+            section.appendChild(wrongLink);
+        }
+        wrongLink.replaceChildren();
+
+        const text = document.createElement("span");
+        text.textContent = "Not the right stack? ";
+        wrongLink.appendChild(text);
+
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost btn-sm";
+        btn.textContent = "Pick a different one";
+        btn.addEventListener("click", () => {
+            clearAnalysisResults();
+            const fixSection = document.getElementById("step-fix-match");
+            const heading = document.getElementById("fix-match-heading");
+            const desc = document.getElementById("fix-match-desc");
+            const list = document.getElementById("fix-match-list");
+            heading.textContent = "Which Stack Has the Problem?";
+            desc.textContent = "Pick the stack where " + (state.fixDetectedService || "the service") + " is throwing the error:";
+            // Include ALL matches (current + alternatives)
+            const allMatches = [...state.fixAlternatives];
+            // Re-add current if it was removed
+            renderFixMatchPills(list, state.stacks.filter((s) =>
+                (s.services || []).some((svc) => svc.toLowerCase().includes(state.fixDetectedService || ""))
+            ), state.fixDetectedService || "");
+            fixSection.classList.remove("hidden");
+            fixSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+        wrongLink.appendChild(btn);
+    }
 }
 
 // ─── Analyze Another (return to stack list) ───
 
-function analyzeAnother() {
-    // Hide all result sections
+function clearAnalysisResults() {
+    // Hide ALL result sections — called before any new analysis cycle
     const resultSections = [
         "step-analyzing", "step-current-setup", "step-problem",
         "step-mount-warnings", "step-solution", "step-why",
@@ -1152,7 +1794,8 @@ function analyzeAnother() {
         "step-healthy", "step-analysis-error", "step-again",
     ];
     resultSections.forEach((id) => {
-        document.getElementById(id).classList.add("hidden");
+        const el = document.getElementById(id);
+        if (el) el.classList.add("hidden");
     });
 
     // Deselect any selected stack
@@ -1160,16 +1803,99 @@ function analyzeAnother() {
         el.classList.remove("selected")
     );
 
-    // Scroll back to stack list
-    const stackSection = document.getElementById("step-stacks");
-    stackSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Clean up collapsed summary
+    const summary = document.getElementById("selected-stack-summary");
+    if (summary) summary.remove();
+}
+
+function analyzeAnother() {
+    clearAnalysisResults();
+
+    if (state.mode === "browse") {
+        // Restore full stack list
+        const stackList = document.getElementById("stacks-list");
+        if (stackList) stackList.classList.remove("hidden");
+        const summary = document.getElementById("selected-stack-summary");
+        if (summary) summary.remove();
+        const stackSection = document.getElementById("step-stacks");
+        stackSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (state.mode === "fix") {
+        // In fix mode, scroll back to the fix-match section
+        const fixMatch = document.getElementById("step-fix-match");
+        if (!fixMatch.classList.contains("hidden")) {
+            fixMatch.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else {
+            // Go back to error input
+            const errorSection = document.getElementById("step-error");
+            errorSection.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    }
+}
+
+// ─── Visual Diff Highlighting ───
+
+/**
+ * Render YAML into a <pre> element with highlighted changed lines.
+ * Changed lines get a green left-border via the .diff-changed class.
+ *
+ * @param {HTMLElement} preEl — the <pre> element to render into
+ * @param {string} yamlText — the YAML content
+ * @param {number[]} changedLines — 1-indexed line numbers that changed
+ */
+function renderYamlWithHighlights(preEl, yamlText, changedLines) {
+    preEl.replaceChildren();
+
+    if (!changedLines || changedLines.length === 0) {
+        // No diff data — fall back to plain text
+        preEl.textContent = yamlText;
+        return;
+    }
+
+    const changedSet = new Set(changedLines);
+    const lines = yamlText.split("\n");
+
+    lines.forEach((line, idx) => {
+        const lineNum = idx + 1; // 1-indexed
+        const span = document.createElement("span");
+        span.className = "yaml-line" + (changedSet.has(lineNum) ? " diff-changed" : "");
+        span.textContent = line;
+        preEl.appendChild(span);
+        // Don't add newline after last line
+        if (idx < lines.length - 1) {
+            preEl.appendChild(document.createTextNode("\n"));
+        }
+    });
+}
+
+// ─── Solution Tab Switching ───
+
+function switchSolutionTab(tab) {
+    const tabs = document.querySelectorAll(".solution-tab");
+    tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+
+    const recBlock = document.getElementById("solution-block-recommended");
+    const origBlock = document.getElementById("solution-block-original");
+    if (tab === "recommended") {
+        recBlock.classList.remove("hidden");
+        origBlock.classList.add("hidden");
+    } else {
+        recBlock.classList.add("hidden");
+        origBlock.classList.remove("hidden");
+    }
 }
 
 // ─── Copy Solution YAML ───
 
 function copySolutionYaml() {
-    const yamlText = document.getElementById("solution-yaml").textContent;
-    const btn = document.getElementById("btn-copy");
+    // Copy from whichever tab is currently active
+    const activeTab = document.querySelector(".solution-tab.active");
+    const isOriginal = activeTab && activeTab.dataset.tab === "original";
+    const yamlText = isOriginal
+        ? document.getElementById("solution-yaml-original").textContent
+        : document.getElementById("solution-yaml").textContent;
+    const btn = isOriginal
+        ? document.getElementById("btn-copy-original")
+        : document.getElementById("btn-copy");
 
     navigator.clipboard.writeText(yamlText).then(() => {
         btn.textContent = "Copied!";
@@ -1202,6 +1928,26 @@ function copySolutionYaml() {
 }
 
 // ─── Helpers ───
+
+function showToast(message, type) {
+    // type: "success" or "error"
+    let toast = document.getElementById("maparr-toast");
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "maparr-toast";
+        toast.className = "toast";
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.className = "toast toast-" + (type || "success");
+    // Trigger reflow then show
+    void toast.offsetWidth;
+    toast.classList.add("toast-visible");
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => {
+        toast.classList.remove("toast-visible");
+    }, 3000);
+}
 
 function extractDirName(path) {
     const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
@@ -1259,13 +2005,30 @@ function updateConnectionStatus(data) {
     // Track active scan path
     if (scanPath) state.activeScanPath = scanPath.replace(/\\/g, "/");
 
-    el.innerHTML = "";
+    el.replaceChildren();
 
+    // Line 1: green dot + "Connected" + count badge
     const line1 = document.createElement("span");
-    line1.textContent = "Connected" + (count > 0 ? " · " + count + " stacks" : "");
+    line1.className = "header-status-line";
+
+    const dot = document.createElement("span");
+    dot.className = "header-status-dot online";
+    line1.appendChild(dot);
+
+    const text = document.createElement("span");
+    text.textContent = "Connected";
+    line1.appendChild(text);
+
+    if (count > 0) {
+        const badge = document.createElement("span");
+        badge.className = "header-count-badge";
+        badge.textContent = count + " stacks";
+        line1.appendChild(badge);
+    }
+
     el.appendChild(line1);
 
-    // Always show clickable path
+    // Line 2: clickable scan path
     const displayPath = state.activeScanPath || scanPath;
     if (displayPath) {
         const line2 = document.createElement("span");
@@ -1328,15 +2091,14 @@ function toggleHeaderPathDropdown() {
             document.getElementById("custom-path-input").value = dir;
             dropdown.classList.add("hidden");
             state.activeScanPath = normDir;
-            const list = document.getElementById("stacks-list");
-            const loading = document.getElementById("stacks-loading");
-            list.classList.add("hidden");
-            loading.classList.remove("hidden");
-            document.getElementById("step-stacks").classList.remove("hidden");
-            setTimeout(() => {
-                document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
-            }, 100);
+            // Preload stacks silently — only navigate if already in browse mode
             changeStacksPath();
+            if (state.mode === "browse") {
+                document.getElementById("step-stacks").classList.remove("hidden");
+                setTimeout(() => {
+                    document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 100);
+            }
         });
         wrapper.appendChild(btn);
 
@@ -1404,10 +2166,12 @@ function toggleHeaderPathDropdown() {
             document.getElementById("custom-path-input").value = input.value;
             dropdown.classList.add("hidden");
             changeStacksPath();
-            document.getElementById("step-stacks").classList.remove("hidden");
-            setTimeout(() => {
-                document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
-            }, 100);
+            if (state.mode === "browse") {
+                document.getElementById("step-stacks").classList.remove("hidden");
+                setTimeout(() => {
+                    document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 100);
+            }
         }
     });
     manualRow.appendChild(input);
@@ -1419,10 +2183,12 @@ function toggleHeaderPathDropdown() {
         document.getElementById("custom-path-input").value = input.value;
         dropdown.classList.add("hidden");
         changeStacksPath();
-        document.getElementById("step-stacks").classList.remove("hidden");
-        setTimeout(() => {
-            document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 100);
+        if (state.mode === "browse") {
+            document.getElementById("step-stacks").classList.remove("hidden");
+            setTimeout(() => {
+                document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 100);
+        }
     });
     manualRow.appendChild(scanBtn);
 
@@ -1487,13 +2253,16 @@ async function changeStacksPath() {
         return;
     }
 
+    const inBrowseMode = state.mode === "browse";
     const loading = document.getElementById("stacks-loading");
     const list = document.getElementById("stacks-list");
     const empty = document.getElementById("stacks-empty");
 
-    list.classList.add("hidden");
-    empty.classList.add("hidden");
-    loading.classList.remove("hidden");
+    if (inBrowseMode) {
+        list.classList.add("hidden");
+        empty.classList.add("hidden");
+        loading.classList.remove("hidden");
+    }
 
     try {
         const resp = await fetch("/api/change-stacks-path", {
@@ -1503,12 +2272,16 @@ async function changeStacksPath() {
         });
 
         const data = await resp.json();
-        loading.classList.add("hidden");
+        if (inBrowseMode) loading.classList.add("hidden");
 
         if (!resp.ok || data.error) {
-            empty.classList.remove("hidden");
-            const emptyP = empty.querySelector("p");
-            if (emptyP) emptyP.textContent = data.error || "Failed to scan path.";
+            if (inBrowseMode) {
+                empty.classList.remove("hidden");
+                const emptyP = empty.querySelector("p");
+                if (emptyP) emptyP.textContent = data.error || "Failed to scan path.";
+            } else {
+                showToast(data.error || "Failed to scan path.", "error");
+            }
             return;
         }
 
@@ -1516,15 +2289,26 @@ async function changeStacksPath() {
         const note = document.getElementById("stacks-search-note");
         if (data.search_note) note.textContent = data.search_note;
 
-        if (state.stacks.length === 0) {
-            empty.classList.remove("hidden");
-            const emptyP = empty.querySelector("p");
-            if (emptyP) emptyP.textContent = "No compose stacks found in " + newPath;
+        if (inBrowseMode) {
+            if (state.stacks.length === 0) {
+                empty.classList.remove("hidden");
+                const emptyP = empty.querySelector("p");
+                if (emptyP) emptyP.textContent = "No compose stacks found in " + newPath;
+            } else {
+                renderStacks(state.stacks);
+                list.classList.remove("hidden");
+            }
         } else {
-            renderStacks(state.stacks);
-            list.classList.remove("hidden");
-            hideSkipButton();
-            // Persist manual entry if it found stacks and isn't already a detected dir
+            // Not in browse mode — show toast confirmation
+            if (state.stacks.length > 0) {
+                showToast(state.stacks.length + " stacks loaded from " + extractDirName(newPath), "success");
+            } else {
+                showToast("No compose stacks found in " + extractDirName(newPath), "error");
+            }
+        }
+
+        // Persist manual entry if it found stacks and isn't already a detected dir
+        if (state.stacks.length > 0) {
             const normNew = newPath.replace(/\\/g, "/");
             const isDetected = state.allDetectedDirs.some(
                 (d) => d.path.replace(/\\/g, "/") === normNew
@@ -1536,10 +2320,12 @@ async function changeStacksPath() {
 
         updateConnectionStatus(data);
     } catch {
-        loading.classList.add("hidden");
-        empty.classList.remove("hidden");
-        const emptyP = empty.querySelector("p");
-        if (emptyP) emptyP.textContent = "Could not reach the backend.";
+        if (inBrowseMode) {
+            loading.classList.add("hidden");
+            empty.classList.remove("hidden");
+            const emptyP = empty.querySelector("p");
+            if (emptyP) emptyP.textContent = "Could not reach the backend.";
+        }
     }
 }
 
@@ -1556,7 +2342,270 @@ async function resetStacksPath() {
         // Ignore — we'll re-scan with defaults
     }
 
-    // Re-run default discovery
-    showStackSelection();
+    // Re-run default discovery only if still in browse mode
+    if (state.mode === "browse") {
+        showStackSelection();
+    }
     document.getElementById("path-input-row").classList.add("hidden");
+}
+
+// ─── Diagnostic Export ───
+
+/**
+ * Generate a clean markdown summary of the current analysis result.
+ * Works for both conflict and healthy results.
+ */
+function generateDiagnosticMarkdown() {
+    const data = state.analysis;
+    if (!data) return null;
+
+    const stackName = data.stack_name || extractDirName(data.stack_path || "unknown");
+    const serviceCount = data.service_count || (data.services || []).length;
+    const conflicts = data.conflicts || [];
+    const isHealthy = data.status === "healthy";
+    const isIncomplete = data.status === "incomplete";
+
+    const lines = [];
+    lines.push("## MapArr Diagnostic \u2014 " + stackName);
+    lines.push("");
+
+    if (isHealthy) {
+        lines.push("**Status:** \u2705 Healthy | **Services:** " + serviceCount);
+        lines.push("");
+        lines.push("No path mapping issues detected. All volume mounts look correct.");
+    } else if (isIncomplete) {
+        lines.push("**Status:** \u26A0\uFE0F Incomplete Stack | **Services:** " + serviceCount);
+        lines.push("");
+        lines.push(data.fix_summary || "Incomplete media stack \u2014 missing key roles for full analysis.");
+    } else {
+        const criticalCount = conflicts.filter((c) => c.severity === "critical").length;
+        const highCount = conflicts.filter((c) => c.severity === "high").length;
+        lines.push("**Status:** \u274C Issues Found | **Services:** " + serviceCount +
+            " | **Conflicts:** " + conflicts.length +
+            (criticalCount ? " (" + criticalCount + " critical)" : ""));
+        lines.push("");
+
+        if (data.fix_summary) {
+            lines.push(data.fix_summary);
+            lines.push("");
+        }
+
+        lines.push("### Issues");
+        lines.push("");
+        conflicts.forEach((c) => {
+            const icon = c.severity === "critical" ? "\uD83D\uDED1" : "\u26A0\uFE0F";
+            lines.push("- " + icon + " **" + c.severity.toUpperCase() + ":** " + c.description);
+        });
+
+        if (data.solution_yaml) {
+            lines.push("");
+            lines.push("### Recommended Fix");
+            lines.push("");
+            lines.push("```yaml");
+            lines.push(data.solution_yaml);
+            lines.push("```");
+        }
+    }
+
+    // Services table
+    const services = data.services || [];
+    if (services.length > 0) {
+        lines.push("");
+        lines.push("### Services");
+        lines.push("");
+        lines.push("| Service | Role | Volumes |");
+        lines.push("|---------|------|---------|");
+        services.forEach((svc) => {
+            const vols = (svc.volumes || [])
+                .map((v) => "`" + v.source + ":" + v.target + "`")
+                .join(", ") || "(none)";
+            lines.push("| " + svc.name + " | " + formatRole(svc.role) + " | " + vols + " |");
+        });
+    }
+
+    lines.push("");
+    lines.push("---");
+    lines.push("*Generated by [MapArr](https://github.com/coaxk/maparr)*");
+
+    return lines.join("\n");
+}
+
+/**
+ * Copy the diagnostic summary to clipboard. Shows a toast on success.
+ */
+function copyDiagnosticSummary() {
+    const md = generateDiagnosticMarkdown();
+    if (!md) {
+        showToast("No analysis data to export", "error");
+        return;
+    }
+
+    navigator.clipboard.writeText(md).then(() => {
+        showToast("Diagnostic copied to clipboard", "success");
+    }).catch(() => {
+        // Fallback for non-HTTPS
+        const textarea = document.createElement("textarea");
+        textarea.value = md;
+        textarea.style.cssText = "position:fixed;opacity:0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand("copy");
+            showToast("Diagnostic copied to clipboard", "success");
+        } catch {
+            showToast("Copy failed \u2014 try HTTPS", "error");
+        }
+        document.body.removeChild(textarea);
+    });
+}
+
+// ─── Footer Version & Update Check ───
+
+/**
+ * Set the footer version text from the backend health endpoint.
+ */
+function updateFooterVersion(version) {
+    const el = document.getElementById("footer-version");
+    if (el) el.textContent = "MapArr v" + version;
+}
+
+/**
+ * Check GitHub releases for a newer version. Cached in sessionStorage
+ * to avoid repeat API calls on page refresh. Gracefully ignores all errors
+ * (404 = no releases, 403 = rate limited, network errors).
+ */
+async function checkForUpdates(currentVersion) {
+    const CACHE_KEY = "maparr_update_check";
+    const REPO = "coaxk/maparr";
+
+    // Check sessionStorage cache first
+    try {
+        const cached = sessionStorage.getItem(CACHE_KEY);
+        if (cached) {
+            const data = JSON.parse(cached);
+            if (data.checked && Date.now() - data.checked < 3600000) {
+                // Cache valid for 1 hour
+                if (data.latest && isNewerVersion(currentVersion, data.latest)) {
+                    showUpdateBadge(data.latest);
+                }
+                return;
+            }
+        }
+    } catch {}
+
+    try {
+        const resp = await fetch("https://api.github.com/repos/" + REPO + "/releases/latest");
+        if (!resp.ok) {
+            // No releases, rate limited, or repo not public — cache the miss
+            try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ checked: Date.now(), latest: null })); } catch {}
+            return;
+        }
+
+        const data = await resp.json();
+        const latestTag = (data.tag_name || "").replace(/^v/, "");
+
+        // Cache the result
+        try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ checked: Date.now(), latest: latestTag })); } catch {}
+
+        if (latestTag && isNewerVersion(currentVersion, latestTag)) {
+            showUpdateBadge(latestTag);
+        }
+    } catch {
+        // Network error — silently ignore
+    }
+}
+
+/**
+ * Compare two semver strings. Returns true if latest > current.
+ */
+function isNewerVersion(current, latest) {
+    const c = current.split(".").map(Number);
+    const l = latest.split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+        const cv = c[i] || 0;
+        const lv = l[i] || 0;
+        if (lv > cv) return true;
+        if (lv < cv) return false;
+    }
+    return false;
+}
+
+// ─── GitHub Stars Badge ───
+
+/**
+ * Fetch the star count from GitHub API. Cached in sessionStorage (1hr TTL).
+ * Called on page load from checkHealth(). Gracefully ignores all errors.
+ */
+async function fetchStarCount() {
+    const CACHE_KEY = "maparr_star_count";
+    const REPO = "coaxk/maparr";
+
+    // Check cache first
+    try {
+        const cached = sessionStorage.getItem(CACHE_KEY);
+        if (cached) {
+            const data = JSON.parse(cached);
+            if (data.checked && Date.now() - data.checked < 3600000) {
+                if (data.stars !== null) showStarsBadge(data.stars);
+                return;
+            }
+        }
+    } catch {}
+
+    try {
+        const resp = await fetch("https://api.github.com/repos/" + REPO);
+        if (!resp.ok) {
+            try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ checked: Date.now(), stars: null })); } catch {}
+            return;
+        }
+        const data = await resp.json();
+        const stars = data.stargazers_count || 0;
+        try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ checked: Date.now(), stars })); } catch {}
+        showStarsBadge(stars);
+    } catch {
+        // Network error — silently ignore
+    }
+}
+
+/**
+ * Render a small star count badge next to the GitHub footer icon.
+ */
+function showStarsBadge(count) {
+    const githubLink = document.querySelector('.footer-icon[data-tooltip="GitHub"]');
+    if (!githubLink) return;
+
+    // Don't duplicate
+    if (githubLink.parentElement.querySelector(".github-stars")) return;
+
+    const badge = document.createElement("a");
+    badge.className = "github-stars";
+    badge.href = "https://github.com/coaxk/maparr/stargazers";
+    badge.target = "_blank";
+    badge.rel = "noopener";
+    badge.title = count + " stars on GitHub";
+
+    const star = document.createElement("span");
+    star.className = "github-stars-icon";
+    star.textContent = "\u2605";
+    badge.appendChild(star);
+
+    const num = document.createElement("span");
+    num.textContent = count;
+    badge.appendChild(num);
+
+    // Insert right after the GitHub icon
+    githubLink.insertAdjacentElement("afterend", badge);
+}
+
+/**
+ * Show the update-available state on the footer version badge.
+ */
+function showUpdateBadge(latestVersion) {
+    const el = document.getElementById("footer-version");
+    if (!el) return;
+    el.classList.add("update-available");
+    el.setAttribute("data-tooltip", "Update available: v" + latestVersion + " \u2014 pull latest image");
+    el.addEventListener("click", () => {
+        window.open("https://github.com/coaxk/maparr/releases/latest", "_blank");
+    });
 }

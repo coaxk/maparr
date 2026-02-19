@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
+import yaml
+
 from backend.mounts import classify_path, check_hardlink_compatibility, MountClassification
 
 logger = logging.getLogger("maparr.analyzer")
@@ -136,15 +138,30 @@ class AnalysisResult:
     conflicts: List[Conflict]
     fix_summary: Optional[str] = None  # Overall fix recommendation
     solution_yaml: Optional[str] = None  # Copy-pasteable YAML fix
+    original_corrected_yaml: Optional[str] = None  # User's compose with corrected volumes only
+    solution_changed_lines: List[int] = field(default_factory=list)  # 1-indexed changed lines in solution_yaml
+    original_changed_lines: List[int] = field(default_factory=list)  # 1-indexed changed lines in original_corrected_yaml
     mount_warnings: List[str] = field(default_factory=list)  # Remote FS / hardlink warnings
     mount_info: List[dict] = field(default_factory=list)  # Mount classifications
     warnings: List[str] = field(default_factory=list)
     steps: List[dict] = field(default_factory=list)  # Analysis step log for terminal UI
 
+    incomplete_stack: bool = False  # True if missing arr or download client
+
     def to_dict(self) -> dict:
+        # Determine status: conflicts > incomplete > healthy
+        if self.conflicts:
+            status = "conflicts_found"
+        elif self.incomplete_stack:
+            status = "incomplete"
+        else:
+            status = "healthy"
+
         return {
             "stack_path": self.stack_path,
+            "stack_name": os.path.basename(self.stack_path),
             "compose_file": os.path.basename(self.compose_file),
+            "compose_file_path": self.compose_file,
             "resolution_method": self.resolution_method,
             "services": [s.to_dict() for s in self.services],
             "service_count": len(self.services),
@@ -152,11 +169,15 @@ class AnalysisResult:
             "conflict_count": len(self.conflicts),
             "fix_summary": self.fix_summary,
             "solution_yaml": self.solution_yaml,
+            "original_corrected_yaml": self.original_corrected_yaml,
+            "solution_changed_lines": self.solution_changed_lines,
+            "original_changed_lines": self.original_changed_lines,
             "mount_warnings": self.mount_warnings,
             "mount_info": self.mount_info,
             "warnings": self.warnings,
             "steps": self.steps,
-            "status": "healthy" if not self.conflicts else "conflicts_found",
+            "status": status,
+            "incomplete_stack": self.incomplete_stack,
         }
 
 
@@ -169,6 +190,7 @@ def analyze_stack(
     resolution_method: str,
     error_service: Optional[str] = None,
     error_path: Optional[str] = None,
+    raw_compose_content: Optional[str] = None,
 ) -> AnalysisResult:
     """
     Analyze a resolved compose file for path mapping issues.
@@ -230,9 +252,35 @@ def analyze_stack(
     # Step 6: Generate fixes
     _generate_fixes(conflicts, services)
     fix_summary = _build_fix_summary(conflicts, services, error_service)
-    solution_yaml = _generate_solution_yaml(conflicts, services)
+    solution_yaml, solution_changed_lines = _generate_solution_yaml(conflicts, services)
     if solution_yaml:
         steps.append({"icon": "ok", "text": "Generated fix recommendation"})
+
+    # Step 7: Generate corrected version of user's original compose
+    original_corrected_yaml = None
+    original_changed_lines: List[int] = []
+    if solution_yaml and raw_compose_content:
+        original_corrected_yaml, original_changed_lines = _patch_original_yaml(
+            raw_compose_content, conflicts, services
+        )
+        if original_corrected_yaml:
+            steps.append({"icon": "ok", "text": "Generated corrected version of your compose file"})
+
+    # Check for incomplete stack (has some media services but missing key roles)
+    incomplete_stack = False
+    has_arr = any(s.role == "arr" for s in services)
+    has_dl = any(s.role == "download_client" for s in services)
+    has_media = any(s.role == "media_server" for s in services)
+    has_any_media_role = has_arr or has_dl or has_media
+
+    if has_any_media_role and not (has_arr and has_dl):
+        incomplete_stack = True
+        missing = []
+        if not has_arr:
+            missing.append("*arr app")
+        if not has_dl:
+            missing.append("download client")
+        steps.append({"icon": "warn", "text": f"Incomplete media stack — no {' or '.join(missing)} detected"})
 
     steps.append({"icon": "done", "text": "Analysis complete"})
 
@@ -244,10 +292,14 @@ def analyze_stack(
         conflicts=conflicts,
         fix_summary=fix_summary,
         solution_yaml=solution_yaml,
+        original_corrected_yaml=original_corrected_yaml,
+        solution_changed_lines=solution_changed_lines,
+        original_changed_lines=original_changed_lines,
         mount_warnings=mount_warnings,
         mount_info=mount_info,
         warnings=warnings,
         steps=steps,
+        incomplete_stack=incomplete_stack,
     )
 
 
@@ -874,16 +926,21 @@ _ROLE_CONTAINER_PATHS = {
 
 def _generate_solution_yaml(
     conflicts: List[Conflict], services: List[ServiceInfo]
-) -> Optional[str]:
+) -> Tuple[Optional[str], List[int]]:
     """
-    Generate copy-pasteable YAML showing the recommended volume configuration.
+    Generate full copy-pasteable YAML showing the complete services section
+    with corrected volume configuration.
 
-    Only generated when there are conflicts to fix. The YAML shows
-    the volumes section for each affected service, using the TRaSH Guides
-    unified /data mount pattern.
+    Includes ALL services (not just affected ones) so the output can be
+    pasted directly into docker-compose.yml. Affected services get
+    corrected volumes; non-affected services keep their existing mounts.
+
+    Returns:
+        (yaml_string, changed_lines) — the YAML and 1-indexed line numbers
+        of lines that differ from the original configuration.
     """
     if not conflicts:
-        return None
+        return None, []
 
     # Collect affected services
     affected_names = set()
@@ -891,42 +948,91 @@ def _generate_solution_yaml(
         affected_names.update(conflict.services)
 
     if not affected_names:
-        return None
+        return None, []
 
-    # Find affected ServiceInfo objects
-    affected = [s for s in services if s.name in affected_names]
-    if not affected:
-        return None
+    # Try to detect the host data root from existing mounts
+    host_data_root = _detect_host_data_root(services)
 
     lines = [
-        "# Recommended volume configuration (TRaSH Guides pattern)",
-        "# All services share one host directory mounted as /data",
+        "# Full corrected volume configuration (TRaSH Guides pattern)",
+        "# All media services share one host directory mounted as /data",
         "#",
         "# Host setup required:",
-        "#   mkdir -p /host/data/{media/{tv,movies,music},torrents,usenet}",
+        f"#   mkdir -p {host_data_root}/{{media/{{tv,movies,music}},torrents,usenet}}",
         "#",
-        "# Replace /host/data with your actual host path.",
-        "",
-        "services:",
     ]
+    if host_data_root == "/host/data":
+        lines.append("# Replace /host/data with your actual host path.")
+        lines.append("#")
+    lines.append("")
+    lines.append("services:")
 
-    for svc in affected:
+    changed_lines: List[int] = []
+
+    for svc in services:
         lines.append(f"  {svc.name}:")
-        lines.append(f"    volumes:")
 
-        # Keep existing config mounts
-        for vol in svc.volumes:
-            if _is_config_mount(vol.target) or vol.is_named_volume:
-                lines.append(f"      - {vol.raw}")
+        if svc.name in affected_names:
+            # Affected service — rewrite volumes with unified data mount
+            lines.append("    volumes:")
 
-        # Add the unified data mount
-        container_path = _get_recommended_container_path(svc)
-        if container_path:
-            lines.append(f"      - /host/data:{container_path}")
+            # Keep existing config mounts
+            for vol in svc.volumes:
+                if _is_config_mount(vol.target) or vol.is_named_volume:
+                    lines.append(f"      - {vol.raw}")
+
+            # Add the unified data mount — this is a CHANGED line
+            container_path = _get_recommended_container_path(svc)
+            if container_path:
+                lines.append(f"      - {host_data_root}:{container_path}")
+                changed_lines.append(len(lines))  # 1-indexed
+        else:
+            # Non-affected service — keep existing volumes unchanged
+            if svc.volumes:
+                lines.append("    volumes:")
+                for vol in svc.volumes:
+                    lines.append(f"      - {vol.raw}")
+            else:
+                lines.append("    # (no volumes)")
 
         lines.append("")
 
-    return "\n".join(lines)
+    return "\n".join(lines), changed_lines
+
+
+def _detect_host_data_root(services: List[ServiceInfo]) -> str:
+    """
+    Try to detect a reasonable host data root from existing volume mounts.
+
+    Looks for common parent directories among data (non-config) bind mounts.
+    Falls back to /host/data if nothing sensible can be detected.
+    """
+    data_sources = []
+    for svc in services:
+        for vol in svc.volumes:
+            if vol.is_named_volume or _is_config_mount(vol.target):
+                continue
+            if vol.source.startswith("/") or (len(vol.source) >= 2 and vol.source[1] == ":"):
+                data_sources.append(vol.source.replace("\\", "/"))
+
+    if not data_sources:
+        return "/host/data"
+
+    # Find the longest common path prefix
+    if len(data_sources) == 1:
+        # Single source — use its parent
+        parts = data_sources[0].rstrip("/").rsplit("/", 1)
+        return parts[0] if len(parts) > 1 else data_sources[0]
+
+    # Multiple sources — find common prefix
+    common = os.path.commonpath([s.replace("\\", "/") for s in data_sources])
+    common = common.replace("\\", "/")
+
+    # Don't return something too short like "/" or "C:/"
+    if common in ("", "/") or (len(common) <= 3 and common[1:2] == ":"):
+        return "/host/data"
+
+    return common
 
 
 def _get_recommended_container_path(service: ServiceInfo) -> Optional[str]:
@@ -1035,3 +1141,138 @@ def _add_mount_conflicts(
                 "shares and local storage."
             ),
         ))
+
+
+# ─── Step 7: Patch Original YAML ───
+
+def _patch_original_yaml(
+    raw_content: str,
+    conflicts: List[Conflict],
+    services: List[ServiceInfo],
+) -> Tuple[Optional[str], List[int]]:
+    """
+    Patch the user's original compose YAML, replacing ONLY affected
+    volume mounts with corrected ones. Preserves all other content
+    (comments, env vars, ports, networks, labels, etc).
+
+    Strategy: line-based parsing. Find each affected service's
+    volumes: block, replace data volume lines, keep config volume lines.
+
+    Returns:
+        (patched_yaml, changed_lines) — the patched YAML and 1-indexed
+        line numbers of lines that were inserted/replaced.
+        Returns (None, []) if patching fails or produces invalid output.
+    """
+    affected_names = set()
+    for c in conflicts:
+        affected_names.update(c.services)
+
+    if not affected_names:
+        return None, []
+
+    host_data_root = _detect_host_data_root(services)
+    svc_lookup = {s.name: s for s in services}
+
+    lines = raw_content.splitlines()
+    result = []
+    changed_lines: List[int] = []
+    i = 0
+
+    # Find the services: top-level key first
+    services_line_idx = None
+    services_indent = None
+    for idx, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("services:") and not line[0:1].isspace():
+            services_line_idx = idx
+            services_indent = 0
+            break
+
+    if services_line_idx is None:
+        return None, []
+
+    # Process lines
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+
+        # Are we inside the services: block? Service names are at indent 2
+        if (i > services_line_idx and indent == 2
+                and stripped.endswith(":") and not stripped.startswith("#")
+                and not stripped.startswith("-")):
+
+            svc_name = stripped.rstrip(":").strip().strip("'\"")
+
+            if svc_name in affected_names:
+                result.append(line)
+                i += 1
+
+                # Scan this service's block for volumes:
+                while i < len(lines):
+                    inner = lines[i]
+                    inner_stripped = inner.lstrip()
+                    inner_indent = len(inner) - len(inner_stripped)
+
+                    # Left of or at service-level indent = new service or top-level key
+                    if inner_stripped and not inner_stripped.startswith("#") and inner_indent <= 2:
+                        break
+
+                    if inner_stripped.rstrip(":").strip() == "volumes":
+                        result.append(inner)
+                        vol_key_indent = inner_indent
+                        i += 1
+
+                        # Skip existing volume entries
+                        while i < len(lines):
+                            vol_line = lines[i]
+                            vol_stripped = vol_line.lstrip()
+                            vol_line_indent = len(vol_line) - len(vol_stripped)
+
+                            # Not a volume entry — we've left the volumes block
+                            if not vol_stripped.startswith("-") or vol_line_indent <= vol_key_indent:
+                                break
+
+                            # Parse the volume mount to decide keep or replace
+                            mount_str = vol_stripped.lstrip("- ").strip().strip("'\"")
+                            parts = mount_str.split(":")
+                            target = ""
+                            if len(parts) >= 3 and len(parts[0]) == 1 and parts[0].isalpha():
+                                target = parts[2]  # Windows C:\path:container
+                            elif len(parts) >= 2:
+                                target = parts[1]
+                            target = target.rstrip("/").split(":")[0]  # strip :ro
+
+                            if _is_config_mount(target):
+                                result.append(vol_line)  # Keep config mounts
+                            # else: skip data mounts (will be replaced below)
+                            i += 1
+
+                        # Insert corrected data mount
+                        svc_info = svc_lookup.get(svc_name)
+                        if svc_info:
+                            container_path = _get_recommended_container_path(svc_info)
+                            if container_path:
+                                mount_indent = " " * (vol_key_indent + 2)
+                                result.append(f"{mount_indent}- {host_data_root}:{container_path}")
+                                changed_lines.append(len(result))  # 1-indexed
+                        continue
+
+                    result.append(inner)
+                    i += 1
+                continue
+
+        result.append(line)
+        i += 1
+
+    patched = "\n".join(result)
+
+    # Validate: ensure the patched YAML is still parseable
+    try:
+        yaml.safe_load(patched)
+    except Exception:
+        logger.warning("Patched YAML failed validation, discarding")
+        return None, []
+
+    return patched, changed_lines

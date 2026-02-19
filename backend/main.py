@@ -24,6 +24,7 @@ from backend.parser import parse_error
 from backend.discovery import discover_stacks
 from backend.resolver import resolve_compose, ResolveError
 from backend.analyzer import analyze_stack
+from backend.smart_match import smart_match
 
 # ─── Logging ───
 
@@ -33,12 +34,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("maparr")
 
+# ─── Version ───
+# Single source of truth — used in FastAPI metadata and /api/health.
+# Frontend reads this via the health endpoint on page load.
+VERSION = "1.0.0"
+
 # ─── App ───
 
 app = FastAPI(
     title="MapArr",
     description="Path Mapping Problem Solver for *arr apps",
-    version="1.0.0",
+    version=VERSION,
 )
 
 # ─── State ───
@@ -301,6 +307,15 @@ async def api_analyze(request: Request):
             "steps": steps,
         }, status_code=200)
 
+    # Read raw compose content for patching in the "Your Config (Corrected)" tab
+    raw_compose_content = None
+    compose_file_path = resolved.get("_compose_file", "")
+    if compose_file_path:
+        try:
+            raw_compose_content = Path(compose_file_path).read_text(encoding="utf-8")
+        except Exception:
+            pass
+
     # Step 2: Analyze
     try:
         result = analyze_stack(
@@ -310,6 +325,7 @@ async def api_analyze(request: Request):
             resolution_method=resolved.get("_resolution", "unknown"),
             error_service=error_service,
             error_path=error_path,
+            raw_compose_content=raw_compose_content,
         )
     except Exception as e:
         logger.exception("Analysis failed for %s", os.path.basename(stack_path))
@@ -325,11 +341,74 @@ async def api_analyze(request: Request):
     return result.to_dict()
 
 
+# ─── API: Smart Match ───
+
+@app.post("/api/smart-match")
+async def api_smart_match(request: Request):
+    """
+    Intelligently match a parsed error to the best candidate stack.
+
+    Used by Fix mode when multiple stacks contain the detected service.
+    Instead of asking the user to pick, we figure out which stack most
+    likely produced the error based on volume layout, path reachability,
+    and error type correlation.
+
+    Returns the best match with confidence level. Frontend auto-selects
+    on high/medium confidence, shows pill picker fallback on low.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Invalid JSON in request body"},
+            status_code=400,
+        )
+
+    parsed_error = body.get("parsed_error", {})
+    candidate_paths = body.get("candidate_paths", [])
+
+    if not parsed_error or not candidate_paths:
+        return JSONResponse(
+            {"error": "Need parsed_error and candidate_paths"},
+            status_code=400,
+        )
+
+    # Build candidate stack dicts from the current discovery data
+    custom = _session.get("custom_stacks_path")
+    stacks = discover_stacks(custom_path=custom) if custom else discover_stacks()
+    stack_map = {s.path: s.to_dict() for s in stacks}
+
+    candidates = []
+    for p in candidate_paths:
+        # Normalize path separators for matching
+        s = stack_map.get(p)
+        if not s:
+            # Try with backslash normalization
+            for key, val in stack_map.items():
+                if key.replace("\\", "/") == p.replace("\\", "/"):
+                    s = val
+                    break
+        if s:
+            candidates.append(s)
+
+    result = smart_match(parsed_error, candidates)
+
+    return {
+        "best": result["best"],
+        "confidence": result["confidence"],
+        "reason": result["reason"],
+        "ranked": [
+            {"path": r["stack"]["path"], "score": r["score"], "reasons": r["reasons"]}
+            for r in result["ranked"]
+        ],
+    }
+
+
 # ─── API: Health ───
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": VERSION}
 
 
 # ─── Dev Server ───
