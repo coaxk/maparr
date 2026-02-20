@@ -312,17 +312,17 @@ def analyze_stack(
         incomplete_stack = True
         missing = []
         if not has_arr:
-            missing.append("*arr app")
+            missing.append("*arr apps")
         if not has_dl:
-            missing.append("download client")
-        logger.info("Incomplete stack: missing %s (has arr=%s dl=%s media=%s)",
-                     " + ".join(missing), has_arr, has_dl, has_media)
-        steps.append({"icon": "warn", "text": f"Incomplete media stack — no {' or '.join(missing)} detected"})
+            missing.append("download clients")
+        logger.info("Single-service stack: no %s in this compose file (has arr=%s dl=%s media=%s)",
+                     " or ".join(missing), has_arr, has_dl, has_media)
+        steps.append({"icon": "info", "text": f"Single-service stack — no {' or '.join(missing)} in this compose file"})
 
     # Cross-stack analysis: scan sibling directories when stack is incomplete
     cross_stack_result = None
     if incomplete_stack and scan_dir:
-        steps.append({"icon": "run", "text": "Scanning sibling stacks for complementary services..."})
+        steps.append({"icon": "run", "text": "Checking sibling stacks for complementary services..."})
         try:
             # Lazy import to avoid circular dependency (cross_stack imports from analyzer)
             from backend.cross_stack import check_cross_stack
