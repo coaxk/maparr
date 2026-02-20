@@ -326,7 +326,11 @@ def _parse_sibling_services(compose_file: str) -> Dict[str, dict]:
 def _extract_sources_from_services(services: list) -> Set[str]:
     """Extract normalized host sources from ServiceInfo objects (data volumes only)."""
     sources = set()
-    config_targets = {"/config", "/app", "/etc", "/var", "/tmp", "/run", "/dev"}
+    config_targets = {
+        "/config", "/app", "/etc", "/var", "/tmp", "/run", "/dev",
+        "/backup", "/backups", "/restore", "/log", "/logs",
+        "/cache", "/certs", "/ssl", "/scripts",
+    }
 
     for svc in services:
         if not hasattr(svc, "volumes"):

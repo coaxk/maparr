@@ -321,8 +321,14 @@ _HL_DL = {"qbittorrent", "sabnzbd", "nzbget", "transmission", "deluge", "rtorren
 _HL_MEDIA = {"plex", "jellyfin", "emby"}
 _HL_ALL = _HL_ARR | _HL_DL | _HL_MEDIA
 
-# Config/system container paths to skip
-_CONFIG_TARGETS = {"/config", "/app", "/etc", "/var", "/tmp", "/run", "/dev"}
+# Config/system/utility container paths to skip — not part of the media data pipeline.
+# These are ancillary mounts (config, backups, logs, caches) that should not
+# influence data-path analysis or cross-stack mount comparison.
+_CONFIG_TARGETS = {
+    "/config", "/app", "/etc", "/var", "/tmp", "/run", "/dev",
+    "/backup", "/backups", "/restore", "/log", "/logs",
+    "/cache", "/certs", "/ssl", "/scripts",
+}
 
 
 def _quick_health_check(
