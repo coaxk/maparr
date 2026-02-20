@@ -204,8 +204,9 @@ function transitionBootToFork(stackCount) {
         modeSelector.addEventListener("animationend", () => {
             modeSelector.classList.remove("boot-reveal");
         }, { once: true });
-        // Subtle nudge — draw attention to header scanner so users know it's there
-        nudgeHeaderScanner();
+        // Delayed nudge — let users land on the fork page and orient before
+        // the header scanner catches their eye in the periphery
+        setTimeout(nudgeHeaderScanner, 1200);
     }, { once: true });
 
     state.bootComplete = true;
@@ -269,7 +270,7 @@ function nudgeHeaderScanner() {
         header.classList.remove("header-nudge");
     }, { once: true });
     // Fallback removal in case animationend doesn't fire (no scan path visible)
-    setTimeout(() => header.classList.remove("header-nudge"), 2000);
+    setTimeout(() => header.classList.remove("header-nudge"), 3500);
 }
 
 /**

@@ -175,15 +175,17 @@ body {
     opacity: 1;
 }
 
-/* One-shot nudge glow — draws attention to the header scan path */
+/* One-shot nudge glow — draws attention to the header scan path.
+   Slow 2.5s fade gives peripheral vision time to catch it. */
 .header-nudge .header-scan-path {
-    animation: headerNudgeGlow 1.5s ease-out;
+    animation: headerNudgeGlow 2.5s ease-in-out;
 }
 .header-nudge .header-count-badge {
-    animation: headerNudgeGlow 1.5s ease-out 0.2s;
+    animation: headerNudgeGlow 2.5s ease-in-out 0.15s;
 }
 @keyframes headerNudgeGlow {
-    0%   { color: var(--accent); text-shadow: 0 0 8px rgba(88, 166, 255, 0.6); }
+    0%   { color: var(--accent); text-shadow: 0 0 10px rgba(88, 166, 255, 0.7); }
+    40%  { color: var(--accent); text-shadow: 0 0 6px rgba(88, 166, 255, 0.4); }
     100% { color: inherit; text-shadow: none; }
 }
 
