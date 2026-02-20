@@ -1,5 +1,5 @@
 /**
- * MapArr v1.2 — Frontend Application
+ * MapArr v1.3 — Frontend Application
  *
  * Two-mode UI:
  *   FIX MODE  — paste error → auto-match stack → focused analysis
@@ -504,7 +504,7 @@ async function checkHealth() {
         if (resp.ok) {
             backendOnline = true;
             const healthData = await resp.json();
-            const runningVersion = healthData.version || "1.2.0";
+            const runningVersion = healthData.version || "1.3.0";
 
             el.className = "header-status connected";
 
@@ -1579,6 +1579,8 @@ function showAnalysisResult(data) {
     showNextSteps(data);
     showTrashAdvisory(data);
     showAgainButton();
+    // Store analysis data for the auto-apply feature
+    setAnalysisForApply(data);
 }
 
 // ─── Current Setup ───
@@ -3017,6 +3019,94 @@ function copySolutionYaml() {
         }
         document.body.removeChild(textarea);
     });
+}
+
+// ─── Apply Fix ───
+
+// Stores the last analysis result for apply-fix
+let _lastAnalysisForApply = null;
+
+function setAnalysisForApply(data) {
+    _lastAnalysisForApply = data;
+    // Show/hide the apply button based on whether we have a corrected original
+    const applyBtn = document.getElementById("btn-apply-fix");
+    if (applyBtn) {
+        if (data && data.original_corrected_yaml && data.compose_file_path) {
+            applyBtn.classList.remove("hidden");
+        } else {
+            applyBtn.classList.add("hidden");
+        }
+    }
+}
+
+function applyFix() {
+    if (!_lastAnalysisForApply || !_lastAnalysisForApply.original_corrected_yaml) {
+        showToast("No corrected configuration available to apply.", "error");
+        return;
+    }
+
+    const confirm = document.getElementById("apply-confirm");
+    const fileEl = document.getElementById("apply-confirm-file");
+    const yesBtn = document.getElementById("apply-confirm-yes");
+
+    fileEl.textContent = _lastAnalysisForApply.compose_file_path || _lastAnalysisForApply.compose_file || "docker-compose.yml";
+    confirm.classList.remove("hidden");
+
+    // Wire up the confirm button (replace handler to avoid stacking)
+    yesBtn.onclick = () => doApplyFix();
+}
+
+function cancelApplyFix() {
+    document.getElementById("apply-confirm").classList.add("hidden");
+}
+
+async function doApplyFix() {
+    const confirm = document.getElementById("apply-confirm");
+    const resultEl = document.getElementById("apply-result");
+    const yesBtn = document.getElementById("apply-confirm-yes");
+
+    confirm.classList.add("hidden");
+    yesBtn.disabled = true;
+    yesBtn.textContent = "Applying...";
+
+    try {
+        const resp = await fetch("/api/apply-fix", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                compose_file_path: _lastAnalysisForApply.compose_file_path,
+                corrected_yaml: _lastAnalysisForApply.original_corrected_yaml,
+            }),
+        });
+        const data = await resp.json();
+
+        if (resp.ok && data.status === "applied") {
+            resultEl.className = "apply-result apply-result-success";
+            resultEl.textContent = data.message;
+            resultEl.classList.remove("hidden");
+            showToast("Fix applied successfully!", "success");
+
+            // Update the apply button
+            const applyBtn = document.getElementById("btn-apply-fix");
+            if (applyBtn) {
+                applyBtn.textContent = "Applied";
+                applyBtn.disabled = true;
+                applyBtn.classList.add("applied");
+            }
+        } else {
+            resultEl.className = "apply-result apply-result-error";
+            resultEl.textContent = data.error || "Failed to apply fix.";
+            resultEl.classList.remove("hidden");
+            showToast(data.error || "Failed to apply fix.", "error");
+        }
+    } catch (err) {
+        resultEl.className = "apply-result apply-result-error";
+        resultEl.textContent = "Network error — could not reach backend.";
+        resultEl.classList.remove("hidden");
+    } finally {
+        yesBtn.disabled = false;
+        yesBtn.textContent = "Apply Fix";
+    }
 }
 
 // ─── Helpers ───

@@ -128,7 +128,7 @@ class TestSolutionYaml:
             "_warnings": [],
         }
         result = analyze_stack(compose, "/tmp/test", "docker-compose.yml", "manual")
-        assert "/host/data:" in result.solution_yaml
+        assert "/host:/data" in result.solution_yaml
 
     def test_yaml_includes_comments(self):
         """Solution YAML should have helpful comments."""

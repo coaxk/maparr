@@ -1,65 +1,104 @@
 # MapArr
 
-**Path Mapping Problem Solver for Docker *arr apps.**
+**Path Mapping Problem Solver for Docker *arr apps**
 
-You have a path error in Sonarr, Radarr, or your download client. You don't know which volume mount is wrong. MapArr analyzes your Docker Compose setup and tells you exactly what to change.
+MapArr scans your actual Docker Compose setup and tells you exactly what's wrong with your volume mounts. It doesn't just quote TRaSH Guides at you — it reads your real config, understands your full media pipeline, and generates specific fixes for your setup.
+
+## What It Does
+
+Most *arr app problems come down to path mapping. Sonarr mounts `/host/tv:/data/tv`, qBittorrent mounts `/host/downloads:/downloads`, and hardlinks silently fail because Docker sees them as separate filesystems. MapArr detects this automatically.
+
+**Two modes:**
+
+- **Fix Mode** — Paste an error from Sonarr/Radarr, MapArr identifies the service, matches it to the right stack, and shows you exactly what to change
+- **Browse Mode** — Browse all your stacks, pick one, get a full analysis with mount intelligence
+
+**Pipeline Intelligence:**
+
+MapArr scans your entire root directory on boot and builds a unified map of all media services. When you analyze a single stack, it already knows about every other service — their roles, mount paths, and relationships. This isn't per-stack isolation. This is full directory awareness.
+
+## Features
+
+- **Pipeline-first analysis** — Scans 35+ compose files in under 1 second, builds a unified media service map
+- **Role detection** — Automatically classifies services as *arr apps, download clients, or media servers
+- **Mount consistency checking** — Verifies all media services share a common host mount (required for hardlinks)
+- **Smart error matching** — Paste an error, MapArr figures out which stack caused it
+- **Auto-apply fixes** — Apply corrected volume configuration directly to your compose file (with backup)
+- **Mount intelligence** — Detects NFS, CIFS/SMB, WSL2, and local mounts with hardlink compatibility warnings
+- **Category advisory** — Warns about the download client category trap that catches everyone
+- **Quick-switch** — Type-to-search for instant stack switching without navigating back
+- **Real-time logging** — Full log panel with SSE streaming, level filtering, and download
+- **Diagnostic export** — One-click markdown export of your analysis for sharing/debugging
+- **Update checker** — Checks GitHub releases for newer versions
 
 ## Quick Start
 
+### Docker (Recommended)
+
 ```bash
-docker run -d -p 9494:9494 \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+docker run -d \
+  --name maparr \
+  -p 9494:9494 \
   -v /path/to/your/stacks:/stacks:ro \
-  maparr:latest
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  ghcr.io/coaxk/maparr:latest
 ```
 
-Open **http://localhost:9494** and paste your error.
+Then open `http://localhost:9494`.
 
-## What It Solves
+### Docker Compose
 
-These errors:
-- "Import failed, path does not exist: /data/tv/Show Name"
-- "Permission denied" on import
-- "Cross-device link" (hardlink failure)
-- "Atomic move failed"
+```yaml
+services:
+  maparr:
+    image: ghcr.io/coaxk/maparr:latest
+    container_name: maparr
+    restart: unless-stopped
+    ports:
+      - "9494:9494"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /path/to/your/stacks:/stacks:ro
+    environment:
+      MAPARR_STACKS_PATH: /stacks
+```
 
-Are almost always caused by Docker volume mount misconfigurations. MapArr finds the problem and generates the fix.
+### Bare Metal (Python 3.11+)
+
+```bash
+git clone https://github.com/coaxk/maparr.git
+cd maparr
+pip install -r requirements.txt
+uvicorn backend.main:app --host 0.0.0.0 --port 9494
+```
 
 ## How It Works
 
-1. **Paste your error** — MapArr extracts the service name, path, and error type
-2. **Select your stack** — MapArr discovers compose files from your mounted directory
-3. **Get the fix** — MapArr analyzes volumes, detects conflicts, and generates copy-pasteable YAML
+1. **Discovery** — Scans your stacks directory for Docker Compose files (up to 3 levels deep)
+2. **Pipeline Scan** — Identifies all media services, classifies their roles, maps their host mount paths
+3. **Analysis** — Resolves the compose file, extracts volumes, detects conflicts between services
+4. **Fix Generation** — Produces corrected YAML following the TRaSH Guides unified `/data` pattern
+5. **Apply** — Optionally write the fix directly to your compose file (with `.bak` backup)
 
 The analysis covers:
 - **Separate mount trees** — the #1 cause of hardlink failure in *arr setups
 - **Inconsistent host paths** — same container path backed by different host directories
 - **Remote filesystems** — NFS/CIFS mounts where hardlinks can't work
 - **Unreachable paths** — container paths with no backing volume mount
+- **Pipeline mount conflicts** — services across different stacks using incompatible mount roots
 
 ## Volume Mounts
 
-MapArr needs access to two things:
+| Mount | Purpose | Required? |
+|-------|---------|-----------|
+| `/stacks:ro` | Your compose files directory | Yes |
+| `/var/run/docker.sock:ro` | Docker socket for `docker compose config` resolution | Recommended |
 
-### Docker Socket (recommended)
+The `:ro` flag ensures MapArr operates read-only during analysis. The auto-apply feature writes only when you explicitly confirm, and always creates a backup first.
 
-```bash
--v /var/run/docker.sock:/var/run/docker.sock:ro
-```
+**Docker socket security note:** The Docker socket grants full Docker API access. The `:ro` flag does NOT limit this — it's a Docker limitation. Only mount it if you trust MapArr. It runs read-only analysis — no containers are modified.
 
-Lets MapArr run `docker compose config` for full variable resolution. Without it, MapArr falls back to manual YAML parsing with `.env` file substitution — works for most setups but won't resolve `extends` or `include` directives.
-
-**Security note:** The Docker socket grants full Docker API access. The `:ro` flag does NOT limit this. Only mount it if you trust MapArr. It runs read-only analysis — no containers are modified.
-
-### Stacks Directory (required)
-
-```bash
--v /path/to/your/stacks:/stacks:ro
-```
-
-Point this to the parent directory containing your compose stacks. MapArr scans up to 3 levels deep for `docker-compose.yml` / `compose.yml` files.
-
-**Examples:**
+### Stacks Directory Examples
 
 ```bash
 # Linux — stacks in /opt/docker
@@ -71,41 +110,18 @@ Point this to the parent directory containing your compose stacks. MapArr scans 
 # Windows (Docker Desktop / WSL2)
 -v C:\DockerContainers:/stacks:ro
 
-# macOS
--v ~/docker-stacks:/stacks:ro
+# Komodo / Portainer / Dockge style (one stack per directory)
+-v /home/user/stacks:/stacks:ro
 ```
 
-## Docker Compose
+## Environment Variables
 
-```yaml
-services:
-  maparr:
-    image: maparr:latest
-    container_name: maparr
-    ports:
-      - "9494:9494"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /path/to/your/stacks:/stacks:ro
-    environment:
-      MAPARR_STACKS_PATH: /stacks
-    restart: unless-stopped
-```
-
-## Build Locally
-
-```bash
-git clone https://github.com/coaxk/maparr.git
-cd maparr
-docker compose up --build
-```
-
-Or run without Docker (Python 3.11+):
-
-```bash
-pip install -r requirements.txt
-uvicorn backend.main:app --host 0.0.0.0 --port 3000
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAPARR_PORT` | `9494` | Port to run on |
+| `MAPARR_STACKS_PATH` | `/stacks` | Path to scan for compose files |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker socket path |
+| `LOG_LEVEL` | `info` | Logging level (debug, info, warning, error) |
 
 ## The TRaSH Guides Pattern
 
@@ -125,7 +141,7 @@ All services mount the same parent: `/host/data:/data`. Subdirectories handle se
 
 ## Troubleshooting
 
-**"No stacks found"** — Make sure you're mounting the right directory. The stacks directory should contain subdirectories, each with a `docker-compose.yml`.
+**"No stacks found"** — Make sure you're mounting the right directory. The stacks directory should contain subdirectories, each with a `docker-compose.yml` or `compose.yml`.
 
 **"docker compose config failed"** — MapArr falls back to manual YAML parsing automatically. This is fine for most setups. If you need full resolution (extends, includes), ensure the Docker socket is mounted.
 
@@ -133,15 +149,29 @@ All services mount the same parent: `/host/data:/data`. Subdirectories handle se
 
 ## Architecture
 
-- **Backend:** Python 3.11 + FastAPI (5 endpoints, ~900 lines)
-- **Frontend:** Static HTML/CSS/JS (no framework, no build step)
-- **Analysis:** Pattern-based mount classification, conflict detection, fix generation
-- **Tests:** 271 tests covering edge cases, stress conditions, and integration flows
+- **Backend:** Python 3.11 + FastAPI (9 endpoints, ~600 lines)
+- **Frontend:** Vanilla HTML/CSS/JS (no framework, no build step, ~4100 lines)
+- **Analysis Engine:** Volume mount classification, conflict detection, TRaSH Guides pattern matching, fix generation
+- **Pipeline:** Full directory scanning with role detection, mount consistency checking across all stacks
+- **Tests:** 360+ tests covering pipeline, analysis, smart-match, cross-stack, and edge cases
+
+## The *arr Ecosystem
+
+MapArr is part of a planned 4-tool ecosystem for Docker media stack management:
+
+| Tool | Purpose |
+|------|---------|
+| **MapArr** | Path mapping analysis and fixes |
+| **ComposeArr** | Docker Compose hygiene linting (30 rules, health scoring) |
+| **SubBrainArr** | Subtitle intelligence |
+| **Apart** | Service separation analysis |
 
 ## Privacy
 
-MapArr runs entirely locally. No telemetry. No external API calls. Your compose files never leave your machine.
+MapArr runs entirely locally. No telemetry. No external API calls. No data collection. Your compose files never leave your machine.
 
 ## License
 
-MIT
+MIT License. See [LICENSE](LICENSE) for details.
+
+*arr app logos and names are trademarks of their respective projects. MapArr is an independent third-party tool — not affiliated with or endorsed by any *arr project.

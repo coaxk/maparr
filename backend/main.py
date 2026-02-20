@@ -44,7 +44,7 @@ _log_handler = install_log_handler()
 # ─── Version ───
 # Single source of truth — used in FastAPI metadata and /api/health.
 # Frontend reads this via the health endpoint on page load.
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # ─── App ───
 
@@ -504,6 +504,102 @@ async def api_smart_match(request: Request):
             {"path": r["stack"]["path"], "score": r["score"], "reasons": r["reasons"]}
             for r in result["ranked"]
         ],
+    }
+
+
+# ─── API: Apply Fix ───
+
+@app.post("/api/apply-fix")
+async def api_apply_fix(request: Request):
+    """
+    Apply the corrected compose YAML back to the user's file.
+
+    Safety-first: creates a .bak backup before writing. The frontend
+    should confirm with the user before calling this endpoint.
+
+    Accepts the "Your Config (Corrected)" YAML — the patched version of
+    the user's original file with only the affected volumes changed.
+    This preserves comments, formatting, networks, ports, labels, etc.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Invalid JSON in request body"},
+            status_code=400,
+        )
+
+    compose_file_path = body.get("compose_file_path", "").strip()
+    corrected_yaml = body.get("corrected_yaml", "").strip()
+
+    if not compose_file_path:
+        return JSONResponse(
+            {"error": "No compose_file_path provided"},
+            status_code=400,
+        )
+    if not corrected_yaml:
+        return JSONResponse(
+            {"error": "No corrected_yaml provided"},
+            status_code=400,
+        )
+    if not os.path.isfile(compose_file_path):
+        return JSONResponse(
+            {"error": f"File not found: {os.path.basename(compose_file_path)}"},
+            status_code=400,
+        )
+
+    # Validate the corrected YAML is parseable before writing
+    try:
+        import yaml
+        parsed = yaml.safe_load(corrected_yaml)
+        if not isinstance(parsed, dict) or "services" not in parsed:
+            return JSONResponse(
+                {"error": "Corrected YAML doesn't contain a valid services section"},
+                status_code=400,
+            )
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"Corrected YAML is not valid: {e}"},
+            status_code=400,
+        )
+
+    # Create backup
+    backup_path = compose_file_path + ".bak"
+    try:
+        import shutil
+        shutil.copy2(compose_file_path, backup_path)
+        logger.info("Apply fix: backup created at %s", backup_path)
+    except Exception as e:
+        logger.error("Apply fix: backup failed: %s", e)
+        return JSONResponse(
+            {"error": f"Failed to create backup: {e}"},
+            status_code=500,
+        )
+
+    # Write the corrected YAML
+    try:
+        with open(compose_file_path, "w", encoding="utf-8") as f:
+            f.write(corrected_yaml)
+        logger.info("Apply fix: wrote corrected YAML to %s", compose_file_path)
+    except Exception as e:
+        logger.error("Apply fix: write failed: %s", e)
+        # Try to restore from backup
+        try:
+            import shutil
+            shutil.copy2(backup_path, compose_file_path)
+            logger.info("Apply fix: restored from backup after write failure")
+        except Exception:
+            pass
+        return JSONResponse(
+            {"error": f"Failed to write file: {e}. Backup preserved at {os.path.basename(backup_path)}"},
+            status_code=500,
+        )
+
+    return {
+        "status": "applied",
+        "compose_file": os.path.basename(compose_file_path),
+        "backup_file": os.path.basename(backup_path),
+        "message": f"Fix applied to {os.path.basename(compose_file_path)}. Backup saved as {os.path.basename(backup_path)}.",
     }
 
 

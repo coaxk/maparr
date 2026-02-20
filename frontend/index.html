@@ -270,8 +270,25 @@
         </div>
         <div class="code-block hidden" id="solution-block-original">
             <pre id="solution-yaml-original"></pre>
-            <button class="copy-btn" id="btn-copy-original" onclick="copySolutionYaml()">Copy to Clipboard</button>
+            <div class="solution-actions">
+                <button class="copy-btn" id="btn-copy-original" onclick="copySolutionYaml()">Copy to Clipboard</button>
+                <button class="apply-btn" id="btn-apply-fix" onclick="applyFix()">Apply Fix</button>
+            </div>
         </div>
+        <!-- Apply fix confirmation modal -->
+        <div class="apply-confirm hidden" id="apply-confirm">
+            <div class="apply-confirm-content">
+                <p class="apply-confirm-title">Apply fix to your compose file?</p>
+                <p class="apply-confirm-detail" id="apply-confirm-file"></p>
+                <p class="apply-confirm-note">A backup (.bak) will be created before any changes are made.</p>
+                <div class="apply-confirm-buttons">
+                    <button class="apply-confirm-yes" id="apply-confirm-yes">Apply Fix</button>
+                    <button class="apply-confirm-no" onclick="cancelApplyFix()">Cancel</button>
+                </div>
+            </div>
+        </div>
+        <!-- Apply result message -->
+        <div class="apply-result hidden" id="apply-result"></div>
     </section>
 
     <!-- Why This Works -->

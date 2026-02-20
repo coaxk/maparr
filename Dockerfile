@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════
-# MapArr v1.0 — Production Dockerfile
+# MapArr — Production Dockerfile
 # Two-stage build: install deps → lean runtime image
 # No Node build step — frontend is static HTML/CSS/JS
 # ══════════════════════════════════════════════════════════════
@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.title="MapArr" \
-      org.opencontainers.image.version="1.0.0" \
+      org.opencontainers.image.version="1.3.0" \
       org.opencontainers.image.description="Path Mapping Problem Solver for Docker *arr apps"
 
 # Install curl (healthcheck) and Docker CLI + compose plugin.
