@@ -244,7 +244,7 @@ function enrichModeSelector(stackCount) {
     const contextLine = document.getElementById("mode-context");
 
     if (browseTitle && stackCount > 0) {
-        browseTitle.textContent = "Analyze a Stack (" + stackCount + " found)";
+        browseTitle.textContent = "Analyze Your Stacks (" + stackCount + " found)";
     }
     if (contextLine) {
         const dirs = state.allDetectedDirs;
