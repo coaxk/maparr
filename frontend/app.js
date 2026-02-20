@@ -1335,8 +1335,8 @@ async function renderTerminalSteps(steps) {
     for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
         addTerminalLine(step.icon || "info", step.text);
-        // Stagger delay — faster for info lines, slight pause for results
-        const delay = step.icon === "info" ? 60 : 120;
+        // Stagger delay — match boot terminal pacing so both feel consistent
+        const delay = step.icon === "done" ? 500 : step.icon === "info" ? 350 : 400;
         await new Promise((r) => setTimeout(r, delay));
     }
 }
