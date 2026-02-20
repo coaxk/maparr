@@ -1,5 +1,5 @@
 /**
- * MapArr v1.0 — Frontend Application
+ * MapArr v1.2 — Frontend Application
  *
  * Two-mode UI:
  *   FIX MODE  — paste error → auto-match stack → focused analysis
@@ -504,7 +504,7 @@ async function checkHealth() {
         if (resp.ok) {
             backendOnline = true;
             const healthData = await resp.json();
-            const runningVersion = healthData.version || "1.0.0";
+            const runningVersion = healthData.version || "1.2.0";
 
             el.className = "header-status connected";
 

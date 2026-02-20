@@ -1,5 +1,5 @@
 """
-mounts.py — Mount type classification for MapArr v1.0.
+mounts.py — Mount type classification for MapArr.
 
 Classifies host paths from compose volume declarations to detect:
   - Remote filesystems (NFS, CIFS/SMB) where hardlinks don't work

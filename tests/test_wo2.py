@@ -1,5 +1,5 @@
 """
-Tests for MapArr v1.0 Work Order 2 — Analysis Engine.
+Tests for MapArr — Analysis Engine.
 
 Tests cover:
   - Compose resolution (manual .env parsing, variable substitution)
@@ -651,7 +651,7 @@ class TestAnalyzeAPI:
 
 
 # ═══════════════════════════════════════════
-# WO1 tests still pass
+# Discovery & parse tests still pass
 # ═══════════════════════════════════════════
 
 def test_wo1_health_still_works():

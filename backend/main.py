@@ -1,5 +1,5 @@
 """
-MapArr v1.0 — Path Mapping Problem Solver
+MapArr — Path Mapping Problem Solver
 
 Lean FastAPI backend. Five jobs:
   1. Parse error text (extract service + path + error type)
@@ -44,7 +44,7 @@ _log_handler = install_log_handler()
 # ─── Version ───
 # Single source of truth — used in FastAPI metadata and /api/health.
 # Frontend reads this via the health endpoint on page load.
-VERSION = "1.0.0"
+VERSION = "1.2.0"
 
 # ─── App ───
 
@@ -137,7 +137,7 @@ async def api_discover_stacks():
     Returns stacks with service names for the selection UI.
 
     This is shallow discovery — just enough to populate the stack list.
-    Deep resolution via `docker compose config` happens in WO2.
+    Deep resolution via `docker compose config` happens in the analyze endpoint.
     """
     custom = _session.get("custom_stacks_path")
     logger.info("Discover stacks: scanning %s", custom or "default locations")
@@ -274,7 +274,7 @@ async def api_select_stack(request: Request):
     """
     User selected a stack for analysis.
 
-    Stores the selection in session state. WO2 will use this to run
+    Stores the selection in session state. The analyze endpoint uses this to run
     `docker compose config` on the selected stack and perform deep analysis.
     """
     try:
@@ -309,11 +309,11 @@ async def api_select_stack(request: Request):
         "status": "ready",
         "stack_path": stack_path,
         "parsed_error": _session.get("parsed_error"),
-        "next_step": "Analysis engine (Work Order 2)",
+        "next_step": "Ready for analysis",
     }
 
 
-# ─── API: Analyze Stack (WO2) ───
+# ─── API: Analyze Stack ───
 
 @app.post("/api/analyze")
 async def api_analyze(request: Request):
@@ -321,7 +321,7 @@ async def api_analyze(request: Request):
     Full stack analysis: resolve compose, detect conflicts, generate fix.
 
     This is where MapArr delivers its value. Takes the stack path and
-    optional error context from WO1, resolves the compose file, analyzes
+    optional error context from the parse step, resolves the compose file, analyzes
     volume mounts, detects path conflicts, and returns specific fixes.
 
     Always returns 200 with results — errors are reported in the response
@@ -348,7 +348,7 @@ async def api_analyze(request: Request):
             status_code=400,
         )
 
-    # Get error context (optional — from WO1 parse step)
+    # Get error context (optional — from the parse step)
     error_info = body.get("error", _session.get("parsed_error"))
     error_service = None
     error_path = None

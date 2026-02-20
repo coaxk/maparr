@@ -1,5 +1,5 @@
 """
-Tests for MapArr v1.0 Work Order 4 — Mount Intelligence.
+Tests for MapArr — Mount Intelligence.
 
 Tests cover:
   - Path classification (NFS, CIFS, UNC, Windows, WSL2, local, named volume, relative)

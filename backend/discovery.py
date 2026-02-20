@@ -1,12 +1,12 @@
 """
-discovery.py — Compose file discovery for MapArr v1.0.
+discovery.py — Compose file discovery for MapArr.
 
 Finds docker-compose files on the filesystem and extracts minimal metadata
 (service names) for stack selection. This is intentionally shallow parsing —
 just enough to populate the stack selection UI.
 
 Deep parsing with `docker compose config` (variable substitution, .env
-resolution, extends/include merging) happens in Work Order 2. This module
+resolution, extends/include merging) happens in the analyze endpoint. This module
 only needs to answer: "what stacks exist and what services do they contain?"
 
 DOCKER VOLUME STRATEGY:
@@ -19,7 +19,7 @@ DOCKER VOLUME STRATEGY:
   host's compose directory. The :ro flag ensures MapArr never modifies
   compose files — it's read-only analysis.
 
-  For `docker compose config` (WO2), the container also needs:
+  For `docker compose config` (analysis), the container also needs:
     -v /var/run/docker.sock:/var/run/docker.sock
 
   This gives MapArr access to the Docker daemon for resolved config.
@@ -253,7 +253,7 @@ def _parse_compose_minimal(compose_path: str, source: str) -> Optional[Stack]:
     follow includes, don't validate structure. Just: does it have a
     `services` key, and what are the service names?
 
-    Deep resolution happens in WO2 via `docker compose config`.
+    Deep resolution happens in the analyze endpoint via `docker compose config`.
     """
     try:
         file_size = os.path.getsize(compose_path)

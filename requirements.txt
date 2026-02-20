@@ -1,4 +1,4 @@
-# MapArr v1.0 — Runtime dependencies
+# MapArr — Runtime dependencies
 fastapi==0.104.1
 uvicorn==0.24.0
 pyyaml==6.0.1

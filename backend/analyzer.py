@@ -1,5 +1,5 @@
 """
-analyzer.py — The core analysis engine for MapArr v1.0.
+analyzer.py — The core analysis engine for MapArr.
 
 This is where MapArr earns its value. Given a resolved compose file
 and (optionally) the user's error context, it:

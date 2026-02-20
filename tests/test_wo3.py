@@ -1,5 +1,5 @@
 """
-Tests for MapArr v1.0 Work Order 3 — Solution Output.
+Tests for MapArr — Solution Output.
 
 Tests cover:
   - Solution YAML generation (copy-pasteable output)
@@ -181,7 +181,7 @@ class TestRecommendedPaths:
 
 
 # ═══════════════════════════════════════════
-# API Response Shape for WO3
+# API Response Shape — Solution Output
 # ═══════════════════════════════════════════
 
 class TestAPIResponseShape:

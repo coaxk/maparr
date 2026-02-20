@@ -1,5 +1,5 @@
 """
-parser.py — Smart error text parser for MapArr v1.0.
+parser.py — Smart error text parser for MapArr.
 
 Extracts service name, filesystem path, and error type from user-pasted
 error messages. Designed to be forgiving: partial input, typos, and

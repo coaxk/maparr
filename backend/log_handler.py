@@ -1,5 +1,5 @@
 """
-log_handler.py — In-memory log capture for MapArr v1.0.
+log_handler.py — In-memory log capture for MapArr.
 
 Captures Python log records into a ring buffer so the frontend can display
 them in real-time. This gives users visibility into what MapArr is doing

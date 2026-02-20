@@ -1,5 +1,5 @@
 """
-Tests for MapArr v1.0 Work Order 5 — Testing & Edge Cases.
+Tests for MapArr — Testing & Edge Cases.
 
 The final quality gate. Tests cover:
   - Boundary inputs (empty, null, garbage, Unicode, special chars)
@@ -11,7 +11,7 @@ The final quality gate. Tests cover:
   - Analyzer edge cases (mixed mount types, no participants, single service)
   - API error handling (bad JSON, missing fields, nonexistent paths)
   - Integration tests (full end-to-end flows with edge conditions)
-  - Regression guards (WO1-4 features under stress)
+  - Regression guards (core features under stress)
 """
 
 import os

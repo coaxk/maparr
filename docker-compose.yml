@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════
-# MapArr v1.0 — Docker Compose
+# MapArr v1.2 — Docker Compose
 #
 # Usage:
 #   STACKS_DIR=/path/to/your/stacks docker compose up

@@ -1,5 +1,5 @@
 """
-Integration tests for MapArr v1.0 Work Order 1.
+Integration tests for MapArr — Discovery & Parse APIs.
 
 Tests the three API endpoints + the parser and discovery modules.
 """
@@ -22,7 +22,7 @@ def test_health():
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert data["version"] == "1.0.0"
+    assert data["version"] == "1.2.0"
 
 
 # ─── Parse Error API ───

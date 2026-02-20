@@ -1,5 +1,5 @@
 """
-pipeline.py — Pipeline-first analysis for MapArr v1.0.
+pipeline.py — Pipeline-first analysis for MapArr.
 
 Scans the entire root directory once, builds a unified picture of all
 media services and their mount paths. Both Fix mode and Browse mode

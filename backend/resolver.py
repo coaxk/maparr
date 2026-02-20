@@ -1,5 +1,5 @@
 """
-resolver.py — Compose file resolution for MapArr v1.0.
+resolver.py — Compose file resolution for MapArr.
 
 Two strategies, tried in order:
   1. `docker compose config` — fully resolved YAML (env vars, extends, includes)

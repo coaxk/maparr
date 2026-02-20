@@ -1,5 +1,5 @@
 """
-cross_stack.py — Cross-stack analysis for MapArr v1.0.
+cross_stack.py — Cross-stack analysis for MapArr.
 
 Solves the #1 real-world usage gap: single-service stacks.
 

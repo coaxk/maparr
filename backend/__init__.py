@@ -1,1 +1,1 @@
-# MapArr v1.0 backend package
+# MapArr backend package
