@@ -27,6 +27,7 @@ from backend.discovery import discover_stacks
 from backend.resolver import resolve_compose, ResolveError
 from backend.analyzer import analyze_stack
 from backend.smart_match import smart_match
+from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
 from backend.log_handler import install_log_handler, get_log_handler
 
 # ─── Logging ───
@@ -62,6 +63,7 @@ logger.info("MapArr v%s starting up", VERSION)
 _session = {
     "parsed_error": None,
     "selected_stack": None,
+    "pipeline": None,  # Cached PipelineResult from pipeline scan
 }
 
 
@@ -171,6 +173,54 @@ def _get_search_note(custom_path: Optional[str] = None) -> str:
     return "Scanned common locations. Set MAPARR_STACKS_PATH or use Change Path below."
 
 
+# ─── API: Pipeline Scan ───
+
+@app.post("/api/pipeline-scan")
+async def api_pipeline_scan(request: Request):
+    """
+    Scan the entire root directory and build a unified media pipeline view.
+
+    This is the foundation of MapArr's intelligence. Instead of analyzing
+    stacks in isolation, the pipeline scan understands the FULL layout:
+    all media services, all mount paths, all relationships. Both Fix mode
+    and Browse mode draw from this context.
+
+    Triggers on boot, on path change, and on manual rescan.
+    Result is cached in session state.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    scan_dir = (body.get("scan_dir", "") or "").strip()
+    if not scan_dir:
+        # Default to custom path or env var or parent of most stacks
+        scan_dir = _session.get("custom_stacks_path") or os.environ.get("MAPARR_STACKS_PATH", "")
+
+    if not scan_dir:
+        # Fall back to most common stack parent directory
+        custom = _session.get("custom_stacks_path")
+        stacks = discover_stacks(custom_path=custom) if custom else discover_stacks()
+        if stacks:
+            from collections import Counter
+            counts = Counter(os.path.dirname(s.path) for s in stacks)
+            scan_dir = counts.most_common(1)[0][0]
+
+    if not scan_dir or not os.path.isdir(scan_dir):
+        return JSONResponse(
+            {"error": "No valid scan directory available"},
+            status_code=400,
+        )
+
+    result = run_pipeline_scan(scan_dir)
+    _session["pipeline"] = result.to_dict()
+
+    logger.info("Pipeline scan: %s → %s", scan_dir, result.summary)
+
+    return _session["pipeline"]
+
+
 # ─── API: Change Stacks Path ───
 
 @app.post("/api/change-stacks-path")
@@ -202,7 +252,8 @@ async def api_change_stacks_path(request: Request):
         )
 
     _session["custom_stacks_path"] = new_path
-    logger.info("Stacks path changed to: %s", new_path)
+    _session["pipeline"] = None  # Invalidate — pipeline was built from old path
+    logger.info("Stacks path changed to: %s (pipeline cache cleared)", new_path)
 
     # Run discovery on the new path immediately
     stacks = discover_stacks(custom_path=new_path)
@@ -339,6 +390,16 @@ async def api_analyze(request: Request):
     # the selected stack is the scan root (sibling stacks live next to it).
     scan_dir = _session.get("custom_stacks_path") or os.path.dirname(stack_path)
 
+    # Build pipeline context for this stack (if pipeline scan has run)
+    pipeline_context = None
+    if _session.get("pipeline"):
+        pipeline_context = get_pipeline_context_for_stack(
+            _session["pipeline"], stack_path
+        )
+        logger.info("Analyze: pipeline context available (role=%s, %d siblings)",
+                     pipeline_context.get("role", "?"),
+                     len(pipeline_context.get("sibling_services", [])))
+
     # Step 2: Analyze
     try:
         result = analyze_stack(
@@ -350,6 +411,7 @@ async def api_analyze(request: Request):
             error_path=error_path,
             raw_compose_content=raw_compose_content,
             scan_dir=scan_dir,
+            pipeline_context=pipeline_context,
         )
     except Exception as e:
         logger.exception("Analysis failed for %s", os.path.basename(stack_path))

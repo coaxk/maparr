@@ -148,11 +148,23 @@ class AnalysisResult:
 
     incomplete_stack: bool = False  # True if missing arr or download client
     cross_stack: Optional[dict] = None  # Cross-stack analysis result (when incomplete + siblings found)
+    pipeline: Optional[dict] = None  # Pipeline context (role, health, sibling awareness)
 
     def to_dict(self) -> dict:
-        # Determine status: conflicts > cross-stack > incomplete > healthy
+        # Determine status: pipeline-aware > conflicts > cross-stack > incomplete > healthy
         if self.conflicts:
             status = "conflicts_found"
+        elif self.pipeline:
+            # Pipeline-aware status: this stack has full directory context
+            p_health = self.pipeline.get("health", "unknown")
+            if p_health == "problem":
+                status = "pipeline_conflict"
+            elif self.incomplete_stack and self.cross_stack and self.cross_stack.get("shared_mount"):
+                status = "healthy_pipeline"
+            elif self.incomplete_stack and self.cross_stack:
+                status = "healthy_pipeline"
+            else:
+                status = "healthy_pipeline" if p_health == "ok" else "healthy"
         elif self.incomplete_stack and self.cross_stack:
             cs = self.cross_stack
             if cs.get("missing_roles_filled") and cs.get("shared_mount"):
@@ -160,7 +172,6 @@ class AnalysisResult:
             elif cs.get("conflicts"):
                 status = "cross_stack_conflict"
             elif cs.get("missing_roles_filled"):
-                # Siblings found but can't confirm shared mount (no data volumes)
                 status = "healthy_cross_stack"
             else:
                 status = "incomplete"
@@ -191,6 +202,7 @@ class AnalysisResult:
             "status": status,
             "incomplete_stack": self.incomplete_stack,
             "cross_stack": self.cross_stack,
+            "pipeline": self.pipeline,
         }
 
 
@@ -205,6 +217,7 @@ def analyze_stack(
     error_path: Optional[str] = None,
     raw_compose_content: Optional[str] = None,
     scan_dir: Optional[str] = None,
+    pipeline_context: Optional[Dict] = None,
 ) -> AnalysisResult:
     """
     Analyze a resolved compose file for path mapping issues.
@@ -216,6 +229,12 @@ def analyze_stack(
         resolution_method: "docker" or "manual"
         error_service: Service from parsed error (optional, for prioritization)
         error_path: Path from parsed error (optional, for tracing)
+        raw_compose_content: Raw compose file content for patching
+        scan_dir: Parent directory for cross-stack scanning (fallback if no pipeline)
+        pipeline_context: Pre-computed pipeline context from run_pipeline_scan().
+            When present, provides full awareness of all media services in the
+            root directory — their roles, mount paths, and relationships. This
+            replaces the old per-stack cross-stack scan with true pipeline intelligence.
 
     Returns:
         AnalysisResult with services, conflicts, and fix recommendations.
@@ -284,7 +303,7 @@ def analyze_stack(
 
     # Step 6: Generate fixes
     _generate_fixes(conflicts, services)
-    fix_summary = _build_fix_summary(conflicts, services, error_service)
+    fix_summary = _build_fix_summary(conflicts, services, error_service, pipeline_context)
     solution_yaml, solution_changed_lines = _generate_solution_yaml(conflicts, services)
     if solution_yaml:
         logger.info("Generated solution YAML (%d lines, %d changed)",
@@ -317,14 +336,99 @@ def analyze_stack(
             missing.append("download clients")
         logger.info("Single-service stack: no %s in this compose file (has arr=%s dl=%s media=%s)",
                      " or ".join(missing), has_arr, has_dl, has_media)
-        steps.append({"icon": "info", "text": f"Single-service stack — no {' or '.join(missing)} in this compose file"})
 
-    # Cross-stack analysis: scan sibling directories when stack is incomplete
+    # Pipeline-aware analysis: use pre-computed pipeline context when available.
+    # This is the "actually smart" path — we already scanned ALL stacks on boot,
+    # so we know exactly what role this stack plays in the full media pipeline.
     cross_stack_result = None
-    if incomplete_stack and scan_dir:
+    pipeline_data = None
+
+    if pipeline_context and pipeline_context.get("total_media", 0) > 0:
+        # Pipeline mode — full directory awareness
+        pipeline_role = pipeline_context.get("role")
+        total_media = pipeline_context.get("total_media", 0)
+        pipeline_health = pipeline_context.get("health", "unknown")
+        shared_mount = pipeline_context.get("shared_mount", False)
+        mount_root = pipeline_context.get("mount_root", "")
+        pipeline_conflicts = pipeline_context.get("conflicts", [])
+        sibling_services = pipeline_context.get("sibling_services", [])
+        services_by_role = pipeline_context.get("services_by_role", {})
+
+        # Build role summary from pipeline
+        arr_count = len(services_by_role.get("arr", []))
+        dl_count = len(services_by_role.get("download_client", []))
+        ms_count = len(services_by_role.get("media_server", []))
+
+        # Show this stack's role in the pipeline
+        role_label = {"arr": "*arr app", "download_client": "download client", "media_server": "media server"}.get(pipeline_role, "service")
+        if pipeline_role:
+            steps.append({"icon": "info", "text": f"{stack_name} | pipeline role: {role_label}"})
+
+        # Show pipeline scope
+        role_parts = []
+        if arr_count:
+            role_parts.append(f"{arr_count} *arr")
+        if dl_count:
+            role_parts.append(f"{dl_count} download")
+        if ms_count:
+            role_parts.append(f"{ms_count} media")
+        pipeline_summary_text = f"Your pipeline: {', '.join(role_parts)} — {total_media} services total"
+        steps.append({"icon": "info", "text": pipeline_summary_text})
+
+        # Mount consistency from pipeline
+        if shared_mount and mount_root:
+            steps.append({"icon": "ok", "text": f"Mount consistency: all {total_media} services share {mount_root}"})
+        elif pipeline_conflicts:
+            # Show conflicts specific to this stack
+            stack_conflicts = [c for c in pipeline_conflicts if c.get("stack_name") == os.path.basename(stack_path)]
+            if stack_conflicts:
+                for c in stack_conflicts:
+                    steps.append({"icon": "warn", "text": c.get("description", "Mount conflict detected")})
+            else:
+                steps.append({"icon": "ok", "text": f"This stack's mounts align with the pipeline"})
+
+        # Build cross_stack result from pipeline data for backward compat
+        if incomplete_stack and sibling_services:
+            # Stack is single-service but pipeline knows about siblings
+            if not incomplete_stack:
+                pass  # Not incomplete — pipeline covers it
+            else:
+                steps.append({"icon": "info", "text": f"Single-service stack — {len(sibling_services)} media siblings in pipeline"})
+
+            cross_stack_result = {
+                "siblings": sibling_services,
+                "missing_roles_filled": sorted(set(
+                    s.get("role", "") for s in sibling_services
+                    if s.get("role") in {r for r in ("arr", "download_client", "media_server") if r not in {svc.role for svc in services if hasattr(svc, "role")}}
+                )),
+                "shared_mount": shared_mount,
+                "mount_root": mount_root,
+                "conflicts": pipeline_conflicts,
+                "summary": pipeline_context.get("summary", ""),
+                "sibling_count_scanned": len(sibling_services),
+                "source": "pipeline",  # Flag that this came from pipeline, not legacy scan
+            }
+        elif incomplete_stack:
+            steps.append({"icon": "info", "text": f"Single-service stack — no {' or '.join(missing)} in this compose file"})
+
+        # Store pipeline data on the result
+        pipeline_data = {
+            "role": pipeline_role,
+            "total_media": total_media,
+            "health": pipeline_health,
+            "shared_mount": shared_mount,
+            "mount_root": mount_root,
+            "services_by_role": services_by_role,
+        }
+
+        logger.info("Pipeline-aware analysis: role=%s, %d total media, health=%s",
+                     pipeline_role, total_media, pipeline_health)
+
+    elif incomplete_stack and scan_dir:
+        # Legacy fallback: no pipeline data, scan siblings directly
+        steps.append({"icon": "info", "text": f"Single-service stack — no {' or '.join(missing)} in this compose file"})
         steps.append({"icon": "run", "text": "Checking sibling stacks for complementary services..."})
         try:
-            # Lazy import to avoid circular dependency (cross_stack imports from analyzer)
             from backend.cross_stack import check_cross_stack
             cs = check_cross_stack(stack_path, scan_dir, services)
             if cs and (cs.siblings_found or cs.sibling_count_scanned > 0):
@@ -343,9 +447,13 @@ def analyze_stack(
         except Exception as e:
             logger.debug("Cross-stack check failed: %s", e)
             steps.append({"icon": "info", "text": "Cross-stack scan skipped"})
+    elif incomplete_stack:
+        steps.append({"icon": "info", "text": f"Single-service stack — no {' or '.join(missing)} in this compose file"})
 
     status_preview = "conflicts" if conflicts else ("incomplete" if incomplete_stack else "healthy")
-    if cross_stack_result:
+    if pipeline_data:
+        status_preview = f"pipeline ({pipeline_data.get('health', '?')})"
+    elif cross_stack_result:
         status_preview = "cross-stack (%s)" % ("shared" if cross_stack_result.get("shared_mount") else "conflict")
     logger.info("Analysis complete: %s → %s (%d services, %d conflicts)",
                  stack_name, status_preview, len(services), len(conflicts))
@@ -369,6 +477,7 @@ def analyze_stack(
         steps=steps,
         incomplete_stack=incomplete_stack,
         cross_stack=cross_stack_result,
+        pipeline=pipeline_data,
     )
 
 
@@ -918,6 +1027,7 @@ def _build_fix_summary(
     conflicts: List[Conflict],
     services: List[ServiceInfo],
     error_service: Optional[str],
+    pipeline_context: Optional[Dict] = None,
 ) -> Optional[str]:
     """Build an overall human-readable summary."""
     if not conflicts:
@@ -925,6 +1035,25 @@ def _build_fix_summary(
             1 for s in services
             if s.role in ("arr", "download_client", "media_server")
         )
+
+        # Pipeline-aware summary: if we have pipeline context, use it
+        # instead of the limited single-stack perspective
+        if pipeline_context and pipeline_context.get("total_media", 0) > 1:
+            total = pipeline_context["total_media"]
+            shared = pipeline_context.get("shared_mount", False)
+            mount_root = pipeline_context.get("mount_root", "")
+            if shared and mount_root:
+                return (
+                    f"No path conflicts detected. This stack is part of a "
+                    f"{total}-service media pipeline. All services share "
+                    f"{mount_root} — hardlinks and atomic moves will work."
+                )
+            else:
+                return (
+                    f"No path conflicts in this stack. It's part of a "
+                    f"{total}-service media pipeline across your directory."
+                )
+
         if participant_count >= 2:
             return (
                 "No path conflicts detected. Your volume mounts look correctly "

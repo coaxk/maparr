@@ -1866,6 +1866,133 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     margin-bottom: 0.5rem;
 }
 
+/* ─── Quick-Switch Bar (post-analysis stack selector) ─── */
+
+.quick-switch-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+}
+
+.quick-switch-current {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.quick-switch-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.quick-switch-detail {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.quick-switch-search {
+    position: relative;
+}
+
+.quick-switch-input {
+    width: 100%;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.6rem;
+}
+
+.quick-switch-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 0.5rem 0.5rem;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 50;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.quick-switch-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.7rem;
+    cursor: pointer;
+    transition: background 0.1s;
+    font-size: 0.85rem;
+}
+
+.quick-switch-item:hover {
+    background: rgba(88, 166, 255, 0.1);
+}
+
+.quick-switch-item.current {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.quick-switch-item-name {
+    font-weight: 500;
+}
+
+.quick-switch-item-detail {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.quick-switch-no-match {
+    padding: 0.5rem 0.7rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.quick-switch-showall {
+    align-self: flex-start;
+    font-size: 0.8rem;
+}
+
+/* Bottom quick-switch (end-of-card funnel) */
+
+.bottom-quick-switch {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.bottom-switch-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+    color: var(--text-secondary);
+}
+
+.bottom-switch-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    justify-content: center;
+}
+
+/* Upward-opening dropdown for bottom-of-page search */
+.quick-switch-results-up {
+    top: auto;
+    bottom: 100%;
+    border-radius: 0.5rem 0.5rem 0 0;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+}
+
 /* ─── Volume Table: Config Dimming ─── */
 
 .vol-config {
@@ -1957,6 +2084,90 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     padding: 0.6rem 0.8rem;
     margin-bottom: 0.75rem;
     line-height: 1.4;
+}
+
+/* ─── Pipeline Banner (Browse mode) ─── */
+
+.pipeline-banner {
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+}
+
+.pipeline-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+}
+
+.pipeline-health-icon {
+    font-size: 0.95rem;
+}
+
+.pipeline-health-ok .pipeline-health-icon {
+    color: var(--success);
+}
+
+.pipeline-health-warning .pipeline-health-icon {
+    color: var(--warning);
+}
+
+.pipeline-health-problem .pipeline-health-icon {
+    color: var(--error);
+}
+
+.pipeline-roles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 0.4rem;
+}
+
+.pipeline-role-tag {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+    letter-spacing: 0.01em;
+}
+
+.pipeline-role-arr {
+    background: rgba(96, 165, 250, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(96, 165, 250, 0.25);
+}
+
+.pipeline-role-download {
+    background: rgba(251, 191, 36, 0.12);
+    color: var(--warning);
+    border: 1px solid rgba(251, 191, 36, 0.25);
+}
+
+.pipeline-role-media {
+    background: rgba(168, 85, 247, 0.12);
+    color: #a855f7;
+    border: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+.pipeline-mount {
+    font-size: 0.82rem;
+    padding-top: 0.3rem;
+    border-top: 1px solid var(--border);
+    margin-top: 0.3rem;
+}
+
+.pipeline-mount-ok {
+    color: var(--success);
+}
+
+.pipeline-mount-conflict {
+    color: var(--error);
 }
 
 .cross-stack-banner {

@@ -23,6 +23,7 @@ const state = {
     activeScanPath: "",  // Currently active scan path
     bootComplete: false, // Has boot sequence finished?
     bootPhase: "idle",   // "idle" | "scanning" | "done" | "failed"
+    pipeline: null,      // Cached PipelineResult from /api/pipeline-scan
 };
 
 // Load persisted custom dirs from localStorage
@@ -148,13 +149,45 @@ async function runBootSequence(backendOnline, discData) {
 
     // Summary line
     const totalCount = stacks.length;
-    await bootAddLine("done",
-        totalCount + " stack" + (totalCount !== 1 ? "s" : "") + " ready for analysis",
+    await bootAddLine("ok",
+        totalCount + " stack" + (totalCount !== 1 ? "s" : "") + " found",
         lineDelay
     );
 
+    // Pipeline scan — build the unified media service map on boot.
+    // This is what makes MapArr "actually smart" — full directory awareness
+    // before any per-stack analysis happens.
+    lineDelay += 400;
+    await bootAddLine("run", "Analyzing media pipeline\u2026", lineDelay);
+    try {
+        const pipelineResp = await fetch("/api/pipeline-scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scan_dir: discData.scan_path }),
+        });
+        if (pipelineResp.ok) {
+            state.pipeline = await pipelineResp.json();
+            const p = state.pipeline;
+            const mediaCount = p.media_service_count || 0;
+            if (mediaCount > 0) {
+                let pipelineText = mediaCount + " media service" + (mediaCount !== 1 ? "s" : "");
+                if (p.shared_mount && p.mount_root) {
+                    pipelineText += " | shared mount: " + p.mount_root + " | hardlinks OK";
+                } else if ((p.conflicts || []).length > 0) {
+                    pipelineText += " | " + p.conflicts.length + " mount conflict" + (p.conflicts.length !== 1 ? "s" : "");
+                }
+                await bootAddLine("ok", pipelineText, 400);
+            } else {
+                await bootAddLine("info", "No media services detected in pipeline", 400);
+            }
+        }
+    } catch (e) {
+        console.warn("Pipeline scan failed during boot:", e);
+        // Non-fatal — pipeline is optional enhancement
+    }
+
     // Final "launching" line — signals the page is about to transition
-    await bootAddLine("run", "Launching MapArr\u2026", lineDelay + 200);
+    await bootAddLine("run", "Launching MapArr\u2026", 400);
 
     if (discData.scan_path) setPreferredPath(discData.scan_path);
 
@@ -247,13 +280,26 @@ function enrichModeSelector(stackCount) {
         browseTitle.textContent = "Analyze Your Stacks (" + stackCount + " found)";
     }
     if (contextLine) {
-        const dirs = state.allDetectedDirs;
-        if (dirs.length === 1) {
-            contextLine.textContent = "Scanning " + dirs[0].path;
-        } else if (dirs.length > 1) {
-            contextLine.textContent = dirs.length + " source directories, " + stackCount + " stacks total";
+        // Pipeline-aware context line — show media service summary if available
+        const p = state.pipeline;
+        if (p && (p.media_service_count || 0) > 0) {
+            let text = p.media_service_count + " media services";
+            if (p.shared_mount && p.mount_root) {
+                text += " \u2014 all mounts aligned";
+            } else if ((p.conflicts || []).length > 0) {
+                text += " \u2014 " + p.conflicts.length + " mount conflict" + (p.conflicts.length !== 1 ? "s" : "") + " detected";
+            }
+            contextLine.textContent = text;
+            contextLine.classList.remove("hidden");
+        } else {
+            const dirs = state.allDetectedDirs;
+            if (dirs.length === 1) {
+                contextLine.textContent = "Scanning " + dirs[0].path;
+            } else if (dirs.length > 1) {
+                contextLine.textContent = dirs.length + " source directories, " + stackCount + " stacks total";
+            }
+            if (dirs.length > 0) contextLine.classList.remove("hidden");
         }
-        if (dirs.length > 0) contextLine.classList.remove("hidden");
     }
 }
 
@@ -305,6 +351,15 @@ async function bootScanCustomPath() {
                     .map(([p, c]) => ({ path: p, count: c }));
                 addCustomDir(path, state.stacks.length);
                 setPreferredPath(path);
+                // Run pipeline scan for the new path
+                try {
+                    const pResp = await fetch("/api/pipeline-scan", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ scan_dir: path }),
+                    });
+                    if (pResp.ok) state.pipeline = await pResp.json();
+                } catch {}
                 document.getElementById("boot-no-stacks").classList.add("hidden");
                 state.bootComplete = false; // Allow transition
                 transitionBootToFork(state.stacks.length);
@@ -559,8 +614,24 @@ async function autoMatchStacks(parsed) {
             if (resp.ok) {
                 const data = await resp.json();
                 state.stacks = data.stacks || [];
+                state.activeScanPath = (data.scan_path || "").replace(/\\/g, "/");
             }
         } catch {}
+    }
+
+    // Ensure pipeline is available for Fix mode analysis
+    if (!state.pipeline && state.stacks.length > 0) {
+        const scanPath = state.activeScanPath || getPreferredPath();
+        if (scanPath) {
+            try {
+                const pResp = await fetch("/api/pipeline-scan", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ scan_dir: scanPath }),
+                });
+                if (pResp.ok) state.pipeline = await pResp.json();
+            } catch {}
+        }
     }
 
     const detectedService = (parsed.service || "").toLowerCase();
@@ -1012,20 +1083,85 @@ function renderStacks(stacks) {
         )
     );
 
+    // Pipeline banner — shows media pipeline health above the stack list.
+    // This is the first thing users see in Browse mode: their full pipeline
+    // at a glance, before drilling into individual stacks.
+    const p = state.pipeline;
+    if (p && (p.media_service_count || 0) > 0) {
+        const banner = document.createElement("div");
+        banner.className = "pipeline-banner";
+
+        const healthIcon = p.health === "ok" ? "\u2713"
+            : p.health === "warning" ? "\u26A0"
+            : p.health === "problem" ? "\u2717" : "\u2022";
+        const healthClass = "pipeline-health-" + (p.health || "unknown");
+
+        // Header row: health + service count
+        const header = document.createElement("div");
+        header.className = "pipeline-header " + healthClass;
+        const headerIcon = document.createElement("span");
+        headerIcon.className = "pipeline-health-icon";
+        headerIcon.textContent = healthIcon;
+        header.appendChild(headerIcon);
+        const headerText = document.createElement("span");
+        const healthLabel = p.health === "ok" ? "Healthy" : p.health === "warning" ? "Warning" : p.health === "problem" ? "Issue Detected" : "Unknown";
+        headerText.textContent = "Pipeline: " + healthLabel + " \u2014 " + p.media_service_count + " media services across " + (Object.keys(p.services_by_role || {}).reduce((sum, role) => {
+            const svcs = (p.services_by_role[role] || []);
+            const stacks = new Set(svcs.map(s => s.stack_name));
+            return sum + stacks.size;
+        }, 0)) + " stacks";
+        header.appendChild(headerText);
+        banner.appendChild(header);
+
+        // Role breakdown
+        const roles = document.createElement("div");
+        roles.className = "pipeline-roles";
+        const byRole = p.services_by_role || {};
+        ["arr", "download_client", "media_server"].forEach((role) => {
+            const svcs = byRole[role] || [];
+            if (svcs.length === 0) return;
+            const roleLabel = role === "arr" ? "arr" : role === "download_client" ? "download" : "media";
+            const names = svcs.map(s => s.service_name).join(", ");
+            const tag = document.createElement("span");
+            tag.className = "pipeline-role-tag pipeline-role-" + roleLabel;
+            tag.textContent = names + " (" + roleLabel + ")";
+            roles.appendChild(tag);
+        });
+        banner.appendChild(roles);
+
+        // Mount status
+        const mountLine = document.createElement("div");
+        mountLine.className = "pipeline-mount";
+        if (p.shared_mount && p.mount_root) {
+            mountLine.className += " pipeline-mount-ok";
+            mountLine.textContent = "Shared mount: " + p.mount_root + " \u2014 hardlinks will work across all services";
+        } else if ((p.conflicts || []).length > 0) {
+            mountLine.className += " pipeline-mount-conflict";
+            const firstConflict = p.conflicts[0];
+            mountLine.textContent = (firstConflict.description || "Mount conflict detected");
+        }
+        if (mountLine.textContent) banner.appendChild(mountLine);
+
+        list.appendChild(banner);
+    }
+
     // Total count + health legend
     const total = document.createElement("div");
     total.className = "stacks-total";
     total.textContent = stacks.length + " stack" + (stacks.length !== 1 ? "s" : "") + " detected";
     list.appendChild(total);
 
-    // Single-service guidance callout — reassure users with many single-service stacks
+    // Single-service guidance callout — reassure users with many single-service stacks.
+    // Updated to reflect pipeline awareness when available.
     const singleServiceCount = stacks.filter((s) => s.service_count === 1).length;
     if (stacks.length >= 6 && singleServiceCount / stacks.length > 0.5) {
         const guidance = document.createElement("div");
         guidance.className = "cross-stack-guidance";
-        guidance.textContent =
-            "Most of your stacks contain a single service. MapArr will automatically check " +
-            "sibling stacks for complementary services during analysis.";
+        guidance.textContent = p && p.media_service_count > 0
+            ? "MapArr scanned your entire directory and built a unified pipeline map. " +
+              "Each stack below is analyzed with full awareness of all " + p.media_service_count + " media services."
+            : "Most of your stacks contain a single service. MapArr will automatically check " +
+              "sibling stacks for complementary services during analysis.";
         list.appendChild(guidance);
     }
 
@@ -1169,50 +1305,135 @@ async function selectStack(stack, clickEvent) {
 
     state.selectedStack = stack.path;
 
-    // In browse mode, collapse the stack list to show selected summary
+    // In browse mode, collapse the stack list to show quick-switch bar.
+    // Users can type to search and instantly jump to another stack without
+    // looping back through the full list. The bar shows what's currently
+    // analyzed and lets you switch in one action.
     if (state.mode === "browse") {
         const stackSection = document.getElementById("step-stacks");
         const stackList = document.getElementById("stacks-list");
+        const filterDiv = document.getElementById("stack-filter");
+        if (filterDiv) filterDiv.classList.add("hidden");
         if (stackList) {
             stackList.classList.add("hidden");
             let selectedSummary = document.getElementById("selected-stack-summary");
             if (!selectedSummary) {
                 selectedSummary = document.createElement("div");
                 selectedSummary.id = "selected-stack-summary";
-                selectedSummary.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0;";
+                selectedSummary.className = "quick-switch-bar";
                 stackSection.appendChild(selectedSummary);
             }
             selectedSummary.replaceChildren();
 
-            const summaryLeft = document.createElement("div");
-            summaryLeft.style.cssText = "display: flex; align-items: center; gap: 0.5rem;";
+            // Current stack indicator
+            const currentRow = document.createElement("div");
+            currentRow.className = "quick-switch-current";
             const dot = document.createElement("span");
             dot.className = "health-dot health-" + (stack.health || "unknown");
-            summaryLeft.appendChild(dot);
+            currentRow.appendChild(dot);
             const nameSpan = document.createElement("span");
-            nameSpan.style.cssText = "font-weight: 600; font-size: 0.9rem;";
+            nameSpan.className = "quick-switch-name";
             nameSpan.textContent = extractDirName(stack.path);
-            summaryLeft.appendChild(nameSpan);
+            currentRow.appendChild(nameSpan);
             const countSpan = document.createElement("span");
-            countSpan.style.cssText = "font-size: 0.82rem; color: var(--text-muted);";
-            countSpan.textContent = " — " + stack.service_count + " services";
-            summaryLeft.appendChild(countSpan);
-            selectedSummary.appendChild(summaryLeft);
+            countSpan.className = "quick-switch-detail";
+            countSpan.textContent = stack.service_count + " service" + (stack.service_count !== 1 ? "s" : "");
+            currentRow.appendChild(countSpan);
+            selectedSummary.appendChild(currentRow);
 
-            const changeBtn = document.createElement("button");
-            changeBtn.className = "btn btn-subtle btn-sm";
-            const changeIcon = document.createElement("span");
-            changeIcon.className = "btn-icon";
-            changeIcon.textContent = "\u21C4";
-            changeBtn.appendChild(changeIcon);
-            const changeText = document.createTextNode(" Change Stack");
-            changeBtn.appendChild(changeText);
-            changeBtn.addEventListener("click", () => {
+            // Quick-switch search row
+            const switchRow = document.createElement("div");
+            switchRow.className = "quick-switch-search";
+            const searchInput = document.createElement("input");
+            searchInput.type = "text";
+            searchInput.className = "path-input quick-switch-input";
+            searchInput.placeholder = "Switch stack \u2014 start typing...";
+            searchInput.spellcheck = false;
+
+            const resultsDropdown = document.createElement("div");
+            resultsDropdown.className = "quick-switch-results hidden";
+
+            // Debounced search as user types
+            let searchTimer = null;
+            searchInput.addEventListener("input", () => {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => {
+                    const q = searchInput.value.trim().toLowerCase();
+                    resultsDropdown.replaceChildren();
+                    if (!q) {
+                        resultsDropdown.classList.add("hidden");
+                        return;
+                    }
+                    const matches = state.stacks.filter((s) => {
+                        const name = extractDirName(s.path).toLowerCase();
+                        if (name.includes(q)) return true;
+                        return (s.services || []).some((svc) => svc.toLowerCase().includes(q));
+                    }).slice(0, 8);
+
+                    if (matches.length === 0) {
+                        const none = document.createElement("div");
+                        none.className = "quick-switch-no-match";
+                        none.textContent = "No matching stacks";
+                        resultsDropdown.appendChild(none);
+                    } else {
+                        matches.forEach((matchStack) => {
+                            const item = document.createElement("div");
+                            item.className = "quick-switch-item";
+                            if (matchStack.path === stack.path) {
+                                item.classList.add("current");
+                            }
+                            const itemDot = document.createElement("span");
+                            itemDot.className = "health-dot health-" + (matchStack.health || "unknown");
+                            item.appendChild(itemDot);
+                            const itemName = document.createElement("span");
+                            itemName.className = "quick-switch-item-name";
+                            itemName.textContent = extractDirName(matchStack.path);
+                            item.appendChild(itemName);
+                            const itemServices = document.createElement("span");
+                            itemServices.className = "quick-switch-item-detail";
+                            itemServices.textContent = (matchStack.services || []).join(", ");
+                            item.appendChild(itemServices);
+                            item.addEventListener("click", () => {
+                                searchInput.value = "";
+                                resultsDropdown.classList.add("hidden");
+                                selectStack(matchStack, null);
+                            });
+                            resultsDropdown.appendChild(item);
+                        });
+                    }
+                    resultsDropdown.classList.remove("hidden");
+                }, 150);
+            });
+
+            // Close dropdown on blur (with delay for click to register)
+            searchInput.addEventListener("blur", () => {
+                setTimeout(() => resultsDropdown.classList.add("hidden"), 200);
+            });
+
+            // Reopen on focus if there's text
+            searchInput.addEventListener("focus", () => {
+                if (searchInput.value.trim()) {
+                    searchInput.dispatchEvent(new Event("input"));
+                }
+            });
+
+            switchRow.appendChild(searchInput);
+            switchRow.appendChild(resultsDropdown);
+            selectedSummary.appendChild(switchRow);
+
+            // "Show all stacks" link
+            const showAllBtn = document.createElement("button");
+            showAllBtn.className = "btn btn-ghost btn-sm quick-switch-showall";
+            showAllBtn.textContent = "Show all " + state.stacks.length + " stacks";
+            showAllBtn.addEventListener("click", () => {
                 selectedSummary.remove();
                 stackList.classList.remove("hidden");
+                if (state.stacks.length >= 6) {
+                    if (filterDiv) filterDiv.classList.remove("hidden");
+                }
                 clearAnalysisResults();
             });
-            selectedSummary.appendChild(changeBtn);
+            selectedSummary.appendChild(showAllBtn);
         }
     }
 
@@ -1264,12 +1485,18 @@ async function selectStack(stack, clickEvent) {
         if (data.status === "error") {
             setTerminalDots("error");
             showAnalysisError(data.error, data.stage);
+        } else if (data.status === "healthy_pipeline") {
+            setTerminalDots("done");
+            showHealthyResult(data);
         } else if (data.status === "healthy") {
             setTerminalDots("done");
             showHealthyResult(data);
         } else if (data.status === "healthy_cross_stack") {
             setTerminalDots("done");
             showCrossStackHealthy(data);
+        } else if (data.status === "pipeline_conflict") {
+            setTerminalDots("error");
+            showCrossStackConflict(data);
         } else if (data.status === "cross_stack_conflict") {
             setTerminalDots("error");
             showCrossStackConflict(data);
@@ -1673,7 +1900,16 @@ function renderCategoryAdvisoryInto(container, data) {
     const hasArr = services.some((s) => s.role === "arr");
     const hasDl = services.some((s) => s.role === "download_client");
 
-    if (!hasArr || !hasDl) return false;
+    // Pipeline-aware: if this compose file only has one role, check the
+    // pipeline for the complementary role. The category advisory applies
+    // as long as the PIPELINE has both arr and download client — they don't
+    // need to be in the same compose file.
+    const pipeline = data.pipeline || state.pipeline;
+    const pipelineByRole = pipeline ? (pipeline.services_by_role || {}) : {};
+    const pipelineHasArr = hasArr || (pipelineByRole.arr || []).length > 0;
+    const pipelineHasDl = hasDl || (pipelineByRole.download_client || []).length > 0;
+
+    if (!pipelineHasArr || !pipelineHasDl) return false;
 
     const callout = document.createElement("div");
     callout.className = "callout callout-category";
@@ -1684,8 +1920,15 @@ function renderCategoryAdvisoryInto(container, data) {
     title.textContent = "Also check: download client category save paths";
     callout.appendChild(title);
 
-    const arrNames = services.filter((s) => s.role === "arr").map((s) => s.name);
-    const dlNames = services.filter((s) => s.role === "download_client").map((s) => s.name);
+    // Gather names from both local services and pipeline
+    let arrNames = services.filter((s) => s.role === "arr").map((s) => s.name);
+    let dlNames = services.filter((s) => s.role === "download_client").map((s) => s.name);
+    if (arrNames.length === 0 && pipelineByRole.arr) {
+        arrNames = pipelineByRole.arr.map((s) => s.service_name);
+    }
+    if (dlNames.length === 0 && pipelineByRole.download_client) {
+        dlNames = pipelineByRole.download_client.map((s) => s.service_name);
+    }
 
     const dlName = dlNames[0] || "your download client";
     const arrName = arrNames[0] || "your *arr app";
@@ -2017,37 +2260,13 @@ function showHealthyResult(data) {
         setupToggle.appendChild(document.createTextNode(isExpanded ? " Hide setup" : " View full setup"));
     });
 
-    // ─── Inline actions (Copy Diagnostic + Analyze Another) ───
-    const actions = document.createElement("div");
-    actions.className = "healthy-inline-actions";
+    // ─── Category advisory at bottom of green result ───
+    // Green = "one more thing" reminder. Sits below the setup details,
+    // above the action buttons. Gentle, not alarming.
+    renderCategoryAdvisoryInto(details, data);
 
-    const analyzeBtn = document.createElement("button");
-    analyzeBtn.className = "btn btn-primary";
-    analyzeBtn.textContent = "Analyze Another Stack";
-    analyzeBtn.addEventListener("click", () => analyzeAnother());
-    actions.appendChild(analyzeBtn);
-
-    const diagBtn = document.createElement("button");
-    diagBtn.className = "btn btn-subtle";
-    const diagIcon = document.createElement("span");
-    diagIcon.className = "btn-icon";
-    diagIcon.textContent = "\uD83D\uDCCB";
-    diagBtn.appendChild(diagIcon);
-    diagBtn.appendChild(document.createTextNode(" Copy Diagnostic"));
-    diagBtn.addEventListener("click", () => copyDiagnosticSummary());
-    actions.appendChild(diagBtn);
-
-    const startOverBtn = document.createElement("button");
-    startOverBtn.className = "btn btn-subtle";
-    const soIcon = document.createElement("span");
-    soIcon.className = "btn-icon";
-    soIcon.textContent = "\u21BA";
-    startOverBtn.appendChild(soIcon);
-    startOverBtn.appendChild(document.createTextNode(" Start Over"));
-    startOverBtn.addEventListener("click", () => startOver());
-    actions.appendChild(startOverBtn);
-
-    details.appendChild(actions);
+    // ─── Bottom quick-switch + utility actions ───
+    renderBottomActions(details);
 
     // Don't show separate setup, trash, or again cards for healthy results
     section.classList.remove("hidden");
@@ -2068,12 +2287,12 @@ function showIncompleteResult(data) {
         stepNum.className = "step-number gold-icon";
         stepNum.textContent = "!";
     }
-    if (heading) heading.textContent = "Incomplete Stack";
+    if (heading) heading.textContent = "Limited Analysis";
 
     const msg = document.createElement("p");
     msg.className = "healthy-message";
     msg.style.color = "var(--warning)";
-    msg.textContent = "Incomplete media stack";
+    msg.textContent = "Single-service stack";
     details.appendChild(msg);
 
     // Determine what's missing
@@ -2087,8 +2306,8 @@ function showIncompleteResult(data) {
     const detail = document.createElement("p");
     detail.className = "healthy-detail";
     detail.textContent =
-        "This stack has media services but is missing: " + missing.join(" and ") + ". " +
-        "MapArr can't fully analyze hardlink compatibility without both an *arr app and a download client in the same stack.";
+        "This compose file has media services but no " + missing.join(" or ") + " alongside them. " +
+        "If they're in separate stacks nearby, try scanning the parent directory so MapArr can build a full pipeline view.";
     details.appendChild(detail);
 
     // Show what IS in the stack
@@ -2323,37 +2542,8 @@ function showCrossStackHealthy(data) {
         setupToggle.appendChild(document.createTextNode(isExpanded ? " Hide setup" : " View full setup (including siblings)"));
     });
 
-    // Inline actions
-    const actions = document.createElement("div");
-    actions.className = "healthy-inline-actions";
-
-    const analyzeBtn = document.createElement("button");
-    analyzeBtn.className = "btn btn-primary";
-    analyzeBtn.textContent = "Analyze Another Stack";
-    analyzeBtn.addEventListener("click", () => analyzeAnother());
-    actions.appendChild(analyzeBtn);
-
-    const diagBtn = document.createElement("button");
-    diagBtn.className = "btn btn-subtle";
-    const diagIcon = document.createElement("span");
-    diagIcon.className = "btn-icon";
-    diagIcon.textContent = "\uD83D\uDCCB";
-    diagBtn.appendChild(diagIcon);
-    diagBtn.appendChild(document.createTextNode(" Copy Diagnostic"));
-    diagBtn.addEventListener("click", () => copyDiagnosticSummary());
-    actions.appendChild(diagBtn);
-
-    const startOverBtn = document.createElement("button");
-    startOverBtn.className = "btn btn-subtle";
-    const soIcon = document.createElement("span");
-    soIcon.className = "btn-icon";
-    soIcon.textContent = "\u21BA";
-    startOverBtn.appendChild(soIcon);
-    startOverBtn.appendChild(document.createTextNode(" Start Over"));
-    startOverBtn.addEventListener("click", () => startOver());
-    actions.appendChild(startOverBtn);
-
-    details.appendChild(actions);
+    // Bottom quick-switch + utility actions
+    renderBottomActions(details);
 
     section.classList.remove("hidden");
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -2499,6 +2689,16 @@ function showAnalysisError(error, stage) {
 
 function showAgainButton() {
     const section = document.getElementById("step-again");
+
+    // Replace the static HTML buttons with the dynamic quick-switch bar
+    const staticActions = section.querySelector(".step-actions");
+    if (staticActions) staticActions.classList.add("hidden");
+
+    // Remove any previous quick-switch from this section
+    const prev = section.querySelector(".bottom-quick-switch");
+    if (prev) prev.remove();
+
+    renderBottomActions(section);
     section.classList.remove("hidden");
 
     // If smart-match auto-selected with alternatives, show "wrong stack?" link
@@ -2565,17 +2765,154 @@ function clearAnalysisResults() {
     if (summary) summary.remove();
 }
 
+/**
+ * Render a bottom-of-card quick-switch search + utility buttons.
+ * This is the "what next?" funnel — user finishes reading results,
+ * eyes land here, type to instantly analyze another stack.
+ * Also includes Copy Diagnostic and Start Over as secondary actions.
+ */
+function renderBottomActions(container) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "bottom-quick-switch";
+
+    // Quick-switch search — the primary action
+    if (state.mode === "browse" && state.stacks.length > 1) {
+        const searchLabel = document.createElement("div");
+        searchLabel.className = "bottom-switch-label";
+        searchLabel.textContent = "Analyze another stack";
+        wrapper.appendChild(searchLabel);
+
+        const searchWrap = document.createElement("div");
+        searchWrap.className = "quick-switch-search";
+        const searchInput = document.createElement("input");
+        searchInput.type = "text";
+        searchInput.className = "path-input quick-switch-input";
+        searchInput.placeholder = "Start typing to switch...";
+        searchInput.spellcheck = false;
+
+        const resultsDropdown = document.createElement("div");
+        resultsDropdown.className = "quick-switch-results quick-switch-results-up hidden";
+
+        let searchTimer = null;
+        searchInput.addEventListener("input", () => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => {
+                const q = searchInput.value.trim().toLowerCase();
+                resultsDropdown.replaceChildren();
+                if (!q) {
+                    resultsDropdown.classList.add("hidden");
+                    return;
+                }
+                const currentPath = state.selectedStack || "";
+                const matches = state.stacks.filter((s) => {
+                    const name = extractDirName(s.path).toLowerCase();
+                    if (name.includes(q)) return true;
+                    return (s.services || []).some((svc) => svc.toLowerCase().includes(q));
+                }).slice(0, 8);
+
+                if (matches.length === 0) {
+                    const none = document.createElement("div");
+                    none.className = "quick-switch-no-match";
+                    none.textContent = "No matching stacks";
+                    resultsDropdown.appendChild(none);
+                } else {
+                    matches.forEach((matchStack) => {
+                        const item = document.createElement("div");
+                        item.className = "quick-switch-item";
+                        if (matchStack.path === currentPath) {
+                            item.classList.add("current");
+                        }
+                        const itemDot = document.createElement("span");
+                        itemDot.className = "health-dot health-" + (matchStack.health || "unknown");
+                        item.appendChild(itemDot);
+                        const itemName = document.createElement("span");
+                        itemName.className = "quick-switch-item-name";
+                        itemName.textContent = extractDirName(matchStack.path);
+                        item.appendChild(itemName);
+                        const itemServices = document.createElement("span");
+                        itemServices.className = "quick-switch-item-detail";
+                        itemServices.textContent = (matchStack.services || []).join(", ");
+                        item.appendChild(itemServices);
+                        item.addEventListener("click", () => {
+                            searchInput.value = "";
+                            resultsDropdown.classList.add("hidden");
+                            selectStack(matchStack, null);
+                        });
+                        resultsDropdown.appendChild(item);
+                    });
+                }
+                resultsDropdown.classList.remove("hidden");
+            }, 150);
+        });
+
+        searchInput.addEventListener("blur", () => {
+            setTimeout(() => resultsDropdown.classList.add("hidden"), 200);
+        });
+        searchInput.addEventListener("focus", () => {
+            if (searchInput.value.trim()) {
+                searchInput.dispatchEvent(new Event("input"));
+            }
+        });
+
+        searchWrap.appendChild(searchInput);
+        searchWrap.appendChild(resultsDropdown);
+        wrapper.appendChild(searchWrap);
+    }
+
+    // Secondary action buttons
+    const buttons = document.createElement("div");
+    buttons.className = "bottom-switch-buttons";
+
+    if (state.mode !== "browse" || state.stacks.length <= 1) {
+        const analyzeBtn = document.createElement("button");
+        analyzeBtn.className = "btn btn-primary";
+        analyzeBtn.textContent = "Analyze Another Stack";
+        analyzeBtn.addEventListener("click", () => analyzeAnother());
+        buttons.appendChild(analyzeBtn);
+    }
+
+    const diagBtn = document.createElement("button");
+    diagBtn.className = "btn btn-subtle";
+    const diagIcon = document.createElement("span");
+    diagIcon.className = "btn-icon";
+    diagIcon.textContent = "\uD83D\uDCCB";
+    diagBtn.appendChild(diagIcon);
+    diagBtn.appendChild(document.createTextNode(" Copy Diagnostic"));
+    diagBtn.addEventListener("click", () => copyDiagnosticSummary());
+    buttons.appendChild(diagBtn);
+
+    const startOverBtn = document.createElement("button");
+    startOverBtn.className = "btn btn-subtle";
+    const soIcon = document.createElement("span");
+    soIcon.className = "btn-icon";
+    soIcon.textContent = "\u21BA";
+    startOverBtn.appendChild(soIcon);
+    startOverBtn.appendChild(document.createTextNode(" Start Over"));
+    startOverBtn.addEventListener("click", () => startOver());
+    buttons.appendChild(startOverBtn);
+
+    wrapper.appendChild(buttons);
+    container.appendChild(wrapper);
+}
+
 function analyzeAnother() {
     clearAnalysisResults();
 
     if (state.mode === "browse") {
-        // Restore full stack list
+        // Scroll to the quick-switch bar and focus the search input.
+        // Don't restore the full list — the quick-switch is faster.
+        const stackSection = document.getElementById("step-stacks");
+        stackSection.scrollIntoView({ behavior: "smooth", block: "start" });
+        const searchInput = stackSection.querySelector(".quick-switch-input");
+        if (searchInput) {
+            setTimeout(() => searchInput.focus(), 400);
+            return;
+        }
+        // Fallback if no quick-switch (shouldn't happen)
         const stackList = document.getElementById("stacks-list");
         if (stackList) stackList.classList.remove("hidden");
         const summary = document.getElementById("selected-stack-summary");
         if (summary) summary.remove();
-        const stackSection = document.getElementById("step-stacks");
-        stackSection.scrollIntoView({ behavior: "smooth", block: "start" });
     } else if (state.mode === "fix") {
         // In fix mode, scroll back to the fix-match section
         const fixMatch = document.getElementById("step-fix-match");
@@ -3079,6 +3416,28 @@ async function changeStacksPath() {
         }
 
         updateConnectionStatus(data);
+
+        // Re-run pipeline scan on directory change — pipeline was built
+        // from the old path, so it's stale. Fire and forget.
+        state.pipeline = null;
+        if (state.stacks.length > 0) {
+            try {
+                const pResp = await fetch("/api/pipeline-scan", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ scan_dir: newPath }),
+                });
+                if (pResp.ok) {
+                    state.pipeline = await pResp.json();
+                    // Re-render stack list with pipeline banner if in browse mode
+                    if (inBrowseMode && state.stacks.length > 0) {
+                        renderStacks(state.stacks);
+                    }
+                }
+            } catch (e) {
+                console.warn("Pipeline re-scan failed:", e);
+            }
+        }
     } catch {
         if (inBrowseMode) {
             loading.classList.add("hidden");
@@ -3122,21 +3481,29 @@ function generateDiagnosticMarkdown() {
     const stackName = data.stack_name || extractDirName(data.stack_path || "unknown");
     const serviceCount = data.service_count || (data.services || []).length;
     const conflicts = data.conflicts || [];
-    const isHealthy = data.status === "healthy";
+    const isHealthy = data.status === "healthy" || data.status === "healthy_pipeline";
     const isIncomplete = data.status === "incomplete";
 
     const lines = [];
     lines.push("## MapArr Diagnostic \u2014 " + stackName);
     lines.push("");
 
+    // Pipeline context in diagnostic
+    if (data.pipeline) {
+        const p = data.pipeline;
+        lines.push("**Pipeline:** " + p.total_media + " media services | health: " + p.health +
+            (p.shared_mount && p.mount_root ? " | shared mount: " + p.mount_root : ""));
+        lines.push("");
+    }
+
     if (isHealthy) {
         lines.push("**Status:** \u2705 Healthy | **Services:** " + serviceCount);
         lines.push("");
-        lines.push("No path mapping issues detected. All volume mounts look correct.");
+        lines.push(data.fix_summary || "No path mapping issues detected. All volume mounts look correct.");
     } else if (isIncomplete) {
-        lines.push("**Status:** \u26A0\uFE0F Incomplete Stack | **Services:** " + serviceCount);
+        lines.push("**Status:** \u26A0\uFE0F Limited Analysis | **Services:** " + serviceCount);
         lines.push("");
-        lines.push(data.fix_summary || "Incomplete media stack \u2014 missing key roles for full analysis.");
+        lines.push(data.fix_summary || "Single-service stack \u2014 complementary services not found nearby.");
     } else {
         const criticalCount = conflicts.filter((c) => c.severity === "critical").length;
         const highCount = conflicts.filter((c) => c.severity === "high").length;
