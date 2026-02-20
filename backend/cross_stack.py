@@ -209,12 +209,17 @@ def check_cross_stack(
         all_sources.update(sib.host_sources)
         sibling_source_map[sib.service_name] = sib.host_sources
 
+    # Log the mount paths being compared
+    logger.info("Cross-stack mount comparison: current=%s", sorted(current_host_sources))
+    for sib in siblings:
+        if sib.host_sources:
+            logger.info("Cross-stack mount comparison: %s=%s", sib.service_name, sorted(sib.host_sources))
+
     shared_mount, mount_root = _check_shared_root(current_host_sources, siblings)
     if shared_mount:
-        logger.info("Cross-stack: shared mount root detected → %s", mount_root)
+        logger.info("Cross-stack: shared mount root → %s (hardlinks OK)", mount_root)
     elif current_host_sources:
-        logger.warning("Cross-stack: mount paths differ — current=%s",
-                       sorted(current_host_sources))
+        logger.warning("Cross-stack: mount roots differ — hardlinks will NOT work")
 
     # Build conflicts if mounts don't align
     conflicts = []
@@ -222,6 +227,8 @@ def check_cross_stack(
         # Find which siblings conflict
         for sib in siblings:
             if sib.host_sources and not _paths_share_root(current_host_sources, sib.host_sources):
+                logger.warning("Cross-stack conflict: %s mounts %s (vs current %s)",
+                               sib.service_name, sorted(sib.host_sources), sorted(current_host_sources))
                 conflicts.append({
                     "type": "cross_stack_mount_mismatch",
                     "severity": "critical",
@@ -385,6 +392,7 @@ def _check_shared_root(
     for s in all_source_sets[1:]:
         common &= s
     if common:
+        logger.debug("Shared root: exact match on %s", sorted(common)[0])
         return True, sorted(common)[0]
 
     # Check 2: parent-child — all sources fall under one common root
@@ -400,6 +408,7 @@ def _check_shared_root(
                 all_under = False
                 break
         if all_under:
+            logger.debug("Shared root: parent-child match on %s", candidate)
             return True, candidate
 
     # Check 3: common path prefix (e.g. /mnt/nas/media and /mnt/nas/downloads share /mnt/nas)
