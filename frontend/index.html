@@ -157,8 +157,11 @@
             <span>Scanning for compose stacks...</span>
         </div>
         <div class="stack-filter hidden" id="stack-filter">
-            <input type="text" id="stack-filter-input" class="path-input"
-                   placeholder="Filter stacks..." spellcheck="false" />
+            <div class="stack-filter-search">
+                <input type="text" id="stack-filter-input" class="path-input quick-switch-input"
+                       placeholder="Search stacks — type to filter..." spellcheck="false" />
+                <div class="quick-switch-results hidden" id="stack-filter-results"></div>
+            </div>
         </div>
         <div id="stacks-list" class="stacks-list hidden"></div>
         <div id="stacks-empty" class="empty-state hidden">

@@ -37,6 +37,7 @@ SCAN STRATEGY:
 
 import os
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -102,6 +103,8 @@ def discover_stacks(custom_path: Optional[str] = None) -> List[Stack]:
     stacks: List[Stack] = []
     seen_paths: set = set()
 
+    t0 = time.time()
+
     if custom_path:
         # User specified a custom path — scan only that
         logger.info("Discovery: scanning custom path %s", custom_path)
@@ -119,9 +122,15 @@ def discover_stacks(custom_path: Optional[str] = None) -> List[Stack]:
             if os.path.isdir(search_path):
                 _scan_directory(search_path, stacks, seen_paths, source="common")
 
-    logger.info("Discovery: found %d stacks (%d with media services)",
-                len(stacks),
-                sum(1 for s in stacks if s.health != "unknown"))
+    elapsed = time.time() - t0
+    health_counts = {"ok": 0, "warning": 0, "problem": 0, "unknown": 0}
+    for s in stacks:
+        h = s.health if s.health in health_counts else "unknown"
+        health_counts[h] += 1
+    logger.info("Discovery: found %d stacks in %.2fs — %d ok, %d warning, %d problem, %d unknown",
+                len(stacks), elapsed,
+                health_counts["ok"], health_counts["warning"],
+                health_counts["problem"], health_counts["unknown"])
 
     # Cross-stack health pass: upgrade single-service media stacks
     # when complementary services exist in sibling stacks with compatible mounts
@@ -217,6 +226,9 @@ def _scan_directory(
             stack = _parse_compose_minimal(str(compose_path), source)
             if stack:
                 stacks.append(stack)
+                logger.debug("Discovery: %s → %d services (%s) [%s]",
+                            root_path.name, stack.service_count,
+                            stack.health, filename)
             # Don't scan deeper once we find a compose file in this dir
             return
 
@@ -396,8 +408,9 @@ def _quick_health_check(
     if common:
         return "ok", "Shared mount detected"
 
-    # Second: check if all sources share a common PARENT
-    # Only flag as OK if ALL sources from ALL participants fall under one tree
+    # Second: check if all sources share a common PARENT directory.
+    # This catches sibling paths like /mnt/data/tv + /mnt/data/downloads
+    # which share /mnt/data as a common ancestor (hardlinks work).
     all_sources = set()
     for sources in all_source_sets:
         all_sources.update(sources)
@@ -413,6 +426,17 @@ def _quick_health_check(
                 break
         if all_under_candidate:
             return "ok", "Shared mount detected"
+
+    # Third: check commonpath — sibling directories under the same parent
+    # (e.g. /mnt/data/tv and /mnt/data/downloads share /mnt/data)
+    try:
+        common = os.path.commonpath([p.replace("\\", "/") for p in all_sources])
+        common = common.replace("\\", "/")
+        # Reject too-shallow roots like "/" or "C:/"
+        if common not in ("", "/") and not (len(common) <= 3 and common[1:2] == ":"):
+            return "ok", "Shared mount detected"
+    except ValueError:
+        pass  # Different drives — fall through to problem
 
     return "problem", "Separate mount trees — hardlinks will fail"
 

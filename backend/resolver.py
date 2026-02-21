@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -70,25 +71,31 @@ def resolve_compose(
 
     # Strategy 1: docker compose config
     logger.info("Attempting resolution via docker compose config...")
+    t0 = time.time()
     result = _try_docker_compose_config(stack, cf_path)
     if result is not None:
         svc_count = len(result.get("services", {}))
-        logger.info("Docker compose config succeeded: %d services resolved", svc_count)
+        logger.info("Docker compose config succeeded: %d services resolved (%.2fs)",
+                    svc_count, time.time() - t0)
         result["_resolution"] = "docker"
         result["_compose_file"] = str(cf_path)
         result["_warnings"] = warnings
         return result
 
-    logger.info("Docker compose config unavailable, falling back to manual resolution")
+    logger.warning("Resolution fallback: docker compose config unavailable for %s — "
+                   "using manual YAML + .env parsing (extends/include won't resolve)",
+                   stack.name)
     warnings.append(
         "docker compose config unavailable — using manual resolution. "
         "extends/include directives won't be resolved."
     )
 
     # Strategy 2: Raw YAML + .env
+    t0_manual = time.time()
     result = _resolve_manual(stack, cf_path)
     svc_count = len(result.get("services", {}))
-    logger.info("Manual resolution succeeded: %d services parsed", svc_count)
+    logger.info("Manual resolution succeeded: %d services parsed (%.2fs)",
+                svc_count, time.time() - t0_manual)
     result["_resolution"] = "manual"
     result["_compose_file"] = str(cf_path)
     result["_warnings"] = warnings

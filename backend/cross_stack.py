@@ -31,7 +31,10 @@ from typing import Dict, List, Optional, Set
 import yaml
 
 from backend.analyzer import _classify_service, ARR_APPS, DOWNLOAD_CLIENTS, MEDIA_SERVERS
-from backend.discovery import COMPOSE_FILENAMES, _extract_host_sources, MAX_COMPOSE_FILE_SIZE
+from backend.discovery import (
+    COMPOSE_FILENAMES, _extract_host_sources, MAX_COMPOSE_FILE_SIZE,
+    _CONFIG_TARGETS,
+)
 
 logger = logging.getLogger("maparr.cross_stack")
 
@@ -280,12 +283,79 @@ def _find_compose_file(directory: str) -> Optional[str]:
     return None
 
 
+def _extract_volume_mounts(volumes: list) -> List[dict]:
+    """
+    Extract data volume mount pairs (host source + container target) from raw
+    volume declarations. Filters out config/utility mounts using the same rules
+    as _extract_host_sources. Returns list of {"source": str, "target": str}.
+
+    Used by the RPM calculator to compute container-path translations between
+    download clients and *arr apps.
+    """
+    mounts = []
+    for vol in volumes:
+        source = ""
+        target = ""
+
+        if isinstance(vol, str):
+            parts = vol.split(":")
+            if len(parts) < 2:
+                continue
+            # Handle Windows paths (C:\path:...)
+            if len(parts) >= 3 and len(parts[0]) == 1 and parts[0].isalpha():
+                source = parts[0] + ":" + parts[1]
+                target = parts[2] if len(parts) > 2 else ""
+            # 3-part with access mode: /host:/container:ro or /host:/container:rw
+            elif len(parts) == 3 and parts[2] in ("ro", "rw", "z", "Z", "shared",
+                                                    "slave", "private", "rshared",
+                                                    "rslave", "rprivate"):
+                source = parts[0]
+                target = parts[1]
+            # Handle NFS syntax (nfs-server:/remote/path:/container/path)
+            elif len(parts) >= 3 and "/" in parts[1]:
+                source = parts[0] + ":" + parts[1]
+                target = parts[2]
+            else:
+                source = parts[0]
+                target = parts[1]
+        elif isinstance(vol, dict):
+            source = vol.get("source", "")
+            target = vol.get("target", "")
+
+        if not source or not target:
+            continue
+
+        # Skip config mounts (same filter as _extract_host_sources)
+        target_clean = target.rstrip("/").split(":")[0]  # strip :ro etc
+        if any(target_clean == c or target_clean.startswith(c + "/")
+               for c in _CONFIG_TARGETS):
+            continue
+
+        # Skip named volumes — only keep host-path bind mounts
+        is_host_path = (source.startswith("/") or source.startswith("./") or
+                        source.startswith("../") or source.startswith("~") or
+                        (len(source) >= 2 and source[1] == ":"))
+        is_remote = ":/" in source
+
+        if not is_host_path and not is_remote:
+            continue
+
+        norm_source = source.replace("\\", "/").rstrip("/")
+        norm_target = target_clean.rstrip("/")
+        if norm_source and norm_target:
+            mounts.append({"source": norm_source, "target": norm_target})
+
+    return mounts
+
+
 def _parse_sibling_services(compose_file: str) -> Dict[str, dict]:
     """
     Parse a sibling compose file minimally.
 
-    Returns dict of {service_name: {"role": str, "host_sources": set}}
+    Returns dict of {service_name: {"role": str, "host_sources": set, "volume_mounts": list}}
     Only includes media-relevant services (arr, download_client, media_server).
+    volume_mounts is a list of {"source": str, "target": str} dicts for data volumes,
+    needed by the RPM calculator to compute container-path translations.
     """
     try:
         file_size = os.path.getsize(compose_file)
@@ -315,10 +385,12 @@ def _parse_sibling_services(compose_file: str) -> Dict[str, dict]:
 
             volumes = config.get("volumes", [])
             host_sources, _ = _extract_host_sources(volumes)
+            volume_mounts = _extract_volume_mounts(volumes)
 
             result[name] = {
                 "role": role,
                 "host_sources": host_sources,
+                "volume_mounts": volume_mounts,
             }
 
         return result

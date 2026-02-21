@@ -44,7 +44,7 @@ _log_handler = install_log_handler()
 # ─── Version ───
 # Single source of truth — used in FastAPI metadata and /api/health.
 # Frontend reads this via the health endpoint on page load.
-VERSION = "1.3.0"
+VERSION = "1.5.0"
 
 # ─── App ───
 
@@ -141,10 +141,13 @@ async def api_discover_stacks():
     """
     custom = _session.get("custom_stacks_path")
     logger.info("Discover stacks: scanning %s", custom or "default locations")
+    t0 = time.time()
     if custom:
         stacks = discover_stacks(custom_path=custom)
     else:
         stacks = discover_stacks()
+    elapsed = time.time() - t0
+    logger.info("Discovery complete: %d stacks found in %.2fs", len(stacks), elapsed)
 
     # Determine the effective scan path to display
     scan_path = custom or os.environ.get("MAPARR_STACKS_PATH", "")
@@ -213,10 +216,12 @@ async def api_pipeline_scan(request: Request):
             status_code=400,
         )
 
+    t0 = time.time()
     result = run_pipeline_scan(scan_dir)
+    elapsed = time.time() - t0
     _session["pipeline"] = result.to_dict()
 
-    logger.info("Pipeline scan: %s → %s", scan_dir, result.summary)
+    logger.info("Pipeline scan: %s → %s (%.2fs)", scan_dir, result.summary, elapsed)
 
     return _session["pipeline"]
 
@@ -251,16 +256,20 @@ async def api_change_stacks_path(request: Request):
             status_code=400,
         )
 
+    old_path = _session.get("custom_stacks_path", "default")
     _session["custom_stacks_path"] = new_path
     _session["pipeline"] = None  # Invalidate — pipeline was built from old path
-    logger.info("Stacks path changed to: %s (pipeline cache cleared)", new_path)
+    logger.info("Stacks path changed: %s → %s (pipeline cache cleared)", old_path, new_path)
 
     # Run discovery on the new path immediately
+    t0 = time.time()
     stacks = discover_stacks(custom_path=new_path)
+    logger.info("Re-discovery on new path: %d stacks found (%.2fs)", len(stacks), time.time() - t0)
 
     return {
         "status": "ok",
         "path": new_path,
+        "scan_path": new_path,
         "stacks": [s.to_dict() for s in stacks],
         "total": len(stacks),
         "search_note": _get_search_note(new_path),
@@ -303,7 +312,14 @@ async def api_select_stack(request: Request):
         "stack_path": stack_path,
         "parsed_error": _session.get("parsed_error"),
     }
-    logger.info("Stack selected: %s", os.path.basename(stack_path))
+    error_ctx = _session.get("parsed_error")
+    if error_ctx:
+        logger.info("Stack selected: %s (carrying error context: service=%s, type=%s)",
+                    os.path.basename(stack_path),
+                    error_ctx.get("service", "?"), error_ctx.get("error_type", "?"))
+    else:
+        logger.info("Stack selected: %s (browse mode — no error context)",
+                    os.path.basename(stack_path))
 
     return {
         "status": "ready",
@@ -357,16 +373,20 @@ async def api_analyze(request: Request):
         error_path = error_info.get("path")
 
     stack_name = os.path.basename(stack_path)
-    logger.info("Analyze: starting analysis of %s", stack_name)
+    logger.info("Analyze: starting analysis of %s (error_service=%s, error_path=%s)",
+                stack_name, error_service or "none", error_path or "none")
+    t0_total = time.time()
 
     # Step 1: Resolve compose file
     steps = [
         {"icon": "run", "text": f"Resolving compose for {stack_name}..."},
     ]
+    t0_resolve = time.time()
     try:
         resolved = resolve_compose(stack_path)
     except ResolveError as e:
-        logger.error("Analyze: resolution failed for %s: %s", stack_name, e)
+        logger.error("Analyze: resolution failed for %s: %s (%.2fs)",
+                     stack_name, e, time.time() - t0_resolve)
         steps.append({"icon": "fail", "text": f"Resolution failed: {e}"})
         return JSONResponse({
             "status": "error",
@@ -375,6 +395,11 @@ async def api_analyze(request: Request):
             "stack_path": os.path.basename(stack_path),
             "steps": steps,
         }, status_code=200)
+    resolve_elapsed = time.time() - t0_resolve
+    resolve_method = resolved.get("_resolution", "unknown")
+    svc_resolved = len(resolved.get("services", {}))
+    logger.info("Analyze: compose resolved via %s — %d services (%.2fs)",
+                resolve_method, svc_resolved, resolve_elapsed)
 
     # Read raw compose content for patching in the "Your Config (Corrected)" tab
     raw_compose_content = None
@@ -390,19 +415,41 @@ async def api_analyze(request: Request):
     # the selected stack is the scan root (sibling stacks live next to it).
     scan_dir = _session.get("custom_stacks_path") or os.path.dirname(stack_path)
 
-    # Build pipeline context for this stack (if pipeline scan has run)
+    # Build pipeline context for this stack (if pipeline scan has run).
+    # Safety net: if the compose file was modified AFTER the last pipeline scan,
+    # the pipeline cache is stale (e.g. Apply Fix wrote a corrected compose but
+    # the frontend's refresh didn't complete). Force an inline rescan so the
+    # analysis always runs against current compose data.
+    pipeline = _session.get("pipeline")
+    if pipeline and compose_file_path:
+        try:
+            compose_mtime = os.path.getmtime(compose_file_path)
+            pipeline_scanned_at = pipeline.get("scanned_at", 0)
+            if compose_mtime > pipeline_scanned_at:
+                logger.info("Analyze: pipeline stale (compose mtime %.0f > scan %.0f) — rescanning",
+                            compose_mtime, pipeline_scanned_at)
+                fresh = run_pipeline_scan(scan_dir)
+                pipeline = fresh.to_dict()
+                _session["pipeline"] = pipeline
+        except Exception as e:
+            logger.warning("Analyze: pipeline freshness check failed: %s", e)
+
     pipeline_context = None
-    if _session.get("pipeline"):
+    if pipeline:
         pipeline_context = get_pipeline_context_for_stack(
-            _session["pipeline"], stack_path
+            pipeline, stack_path
         )
         logger.info("Analyze: pipeline context available (role=%s, %d siblings)",
                      pipeline_context.get("role", "?"),
                      len(pipeline_context.get("sibling_services", [])))
 
-    # Step 2: Analyze
+    # Step 2: Analyze — run in thread executor so the event loop stays free.
+    # This lets SSE stream log entries in real-time as analysis progresses,
+    # instead of buffering them until the sync call returns.
+    t0_analyze = time.time()
     try:
-        result = analyze_stack(
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, lambda: analyze_stack(
             resolved_compose=resolved,
             stack_path=stack_path,
             compose_file=resolved.get("_compose_file", ""),
@@ -412,7 +459,7 @@ async def api_analyze(request: Request):
             raw_compose_content=raw_compose_content,
             scan_dir=scan_dir,
             pipeline_context=pipeline_context,
-        )
+        ))
     except Exception as e:
         logger.exception("Analysis failed for %s", os.path.basename(stack_path))
         steps.append({"icon": "fail", "text": f"Analysis failed: {e}"})
@@ -424,6 +471,9 @@ async def api_analyze(request: Request):
             "steps": steps,
         }, status_code=200)
 
+    analyze_elapsed = time.time() - t0_analyze
+    total_elapsed = time.time() - t0_total
+
     rd = result.to_dict()
     svc_count = len(rd.get("services", []))
     conflict_count = rd.get("conflict_count", 0)
@@ -433,8 +483,13 @@ async def api_analyze(request: Request):
     if cs and cs.get("siblings"):
         cs_summary = " | cross-stack: %d siblings, shared=%s" % (
             len(cs["siblings"]), cs.get("shared_mount", False))
-    logger.info("Analyze: %s → %s (%d services, %d conflicts%s)",
-                stack_name, status, svc_count, conflict_count, cs_summary)
+    pipeline_summary = ""
+    if rd.get("pipeline_role"):
+        pipeline_summary = " | pipeline: role=%s" % rd["pipeline_role"]
+    logger.info("Analyze: %s → %s (%d services, %d conflicts%s%s) [resolve=%.2fs, analyze=%.2fs, total=%.2fs]",
+                stack_name, status, svc_count, conflict_count,
+                cs_summary, pipeline_summary,
+                resolve_elapsed, analyze_elapsed, total_elapsed)
 
     return rd
 
@@ -489,12 +544,15 @@ async def api_smart_match(request: Request):
         if s:
             candidates.append(s)
 
-    logger.info("Smart match: %d candidates for service=%s",
-                 len(candidates), parsed_error.get("service", "?"))
+    logger.info("Smart match: %d candidates for service=%s (type=%s, path=%s)",
+                 len(candidates), parsed_error.get("service", "?"),
+                 parsed_error.get("error_type", "?"), parsed_error.get("path", "?"))
+    t0 = time.time()
     result = smart_match(parsed_error, candidates)
-    logger.info("Smart match result: confidence=%s best=%s",
+    logger.info("Smart match result: confidence=%s best=%s (%.2fs)",
                  result["confidence"],
-                 os.path.basename(result["best"].get("path", "?")) if result["best"] else "none")
+                 os.path.basename(result["best"].get("path", "?")) if result["best"] else "none",
+                 time.time() - t0)
 
     return {
         "best": result["best"],
@@ -655,6 +713,7 @@ async def api_log_stream():
 
         handler = get_log_handler()
         handler.add_listener(on_log)
+        logger.info("Log stream: client connected (SSE)")
         try:
             # Send initial keepalive
             yield "event: connected\ndata: {}\n\n"
@@ -671,6 +730,7 @@ async def api_log_stream():
             pass
         finally:
             handler.remove_listener(on_log)
+            logger.debug("Log stream: client disconnected")
 
     return StreamingResponse(
         event_generator(),

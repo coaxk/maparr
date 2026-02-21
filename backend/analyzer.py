@@ -48,6 +48,7 @@ ARR_APPS = {
 DOWNLOAD_CLIENTS = {
     "qbittorrent", "sabnzbd", "nzbget", "transmission",
     "deluge", "rtorrent", "jdownloader",
+    "aria2", "flood", "rdtclient",
 }
 
 MEDIA_SERVERS = {
@@ -116,9 +117,10 @@ class Conflict:
     description: str         # Human-readable explanation
     detail: str = ""         # Technical detail
     fix: Optional[str] = None  # Suggested fix (set by fix generator)
+    rpm_hint: Optional[dict] = None  # If set, this conflict is an RPM scenario
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "type": self.conflict_type,
             "severity": self.severity,
             "services": self.services,
@@ -126,6 +128,9 @@ class Conflict:
             "detail": self.detail,
             "fix": self.fix,
         }
+        if self.rpm_hint:
+            d["rpm_hint"] = self.rpm_hint
+        return d
 
 
 @dataclass
@@ -149,22 +154,29 @@ class AnalysisResult:
     incomplete_stack: bool = False  # True if missing arr or download client
     cross_stack: Optional[dict] = None  # Cross-stack analysis result (when incomplete + siblings found)
     pipeline: Optional[dict] = None  # Pipeline context (role, health, sibling awareness)
+    rpm_mappings: List[dict] = field(default_factory=list)  # RPM calculator output for wizard
 
     def to_dict(self) -> dict:
         # Determine status: pipeline-aware > conflicts > cross-stack > incomplete > healthy
         if self.conflicts:
             status = "conflicts_found"
         elif self.pipeline:
-            # Pipeline-aware status: this stack has full directory context
-            p_health = self.pipeline.get("health", "unknown")
-            if p_health == "problem":
+            # Pipeline-aware status: this stack has full directory context.
+            # Check if THIS stack specifically has pipeline conflicts, not just
+            # the global pipeline health.  A stack that's aligned with the
+            # majority shouldn't show "pipeline_conflict" just because other
+            # stacks are misaligned.
+            p_conflicts = self.pipeline.get("conflicts", [])
+            stack_name = os.path.basename(self.stack_path) if self.stack_path else ""
+            this_stack_has_conflict = any(
+                c.get("stack_name") == stack_name for c in p_conflicts
+            )
+            if this_stack_has_conflict:
                 status = "pipeline_conflict"
-            elif self.incomplete_stack and self.cross_stack and self.cross_stack.get("shared_mount"):
-                status = "healthy_pipeline"
             elif self.incomplete_stack and self.cross_stack:
                 status = "healthy_pipeline"
             else:
-                status = "healthy_pipeline" if p_health == "ok" else "healthy"
+                status = "healthy_pipeline"
         elif self.incomplete_stack and self.cross_stack:
             cs = self.cross_stack
             if cs.get("missing_roles_filled") and cs.get("shared_mount"):
@@ -203,6 +215,7 @@ class AnalysisResult:
             "incomplete_stack": self.incomplete_stack,
             "cross_stack": self.cross_stack,
             "pipeline": self.pipeline,
+            "rpm_mappings": self.rpm_mappings,
         }
 
 
@@ -275,7 +288,7 @@ def analyze_stack(
     steps.append({"icon": "ok", "text": f"Scanned {total_vols} volume mounts ({data_vols} data paths)"})
 
     # Step 4: Detect conflicts
-    conflicts = _detect_conflicts(services, error_service, error_path)
+    conflicts = _detect_conflicts(services, error_service, error_path, pipeline_context)
     for c in conflicts:
         logger.warning("Conflict [%s/%s]: %s — %s",
                        c.conflict_type, c.severity, ", ".join(c.services), c.description)
@@ -301,10 +314,50 @@ def analyze_stack(
     # Promote remote-FS warnings to conflicts
     _add_mount_conflicts(conflicts, mount_classifications, services)
 
+    # Inject pipeline mount mismatch as a real conflict so fix generation picks it up.
+    # The pipeline knows this stack's mounts differ from the majority — e.g. this stack
+    # uses /host/data but 6 other services use /srv/data.  Without this, the intra-stack
+    # checks see no problem (both services share /host/data) and no fix is generated.
+    #
+    # Always capture pipeline_host_root when available — even if within-stack conflicts
+    # already exist. This way the fix targets the pipeline majority root, resolving both
+    # within-stack AND cross-stack issues in a single Apply Fix. Without this, the fix
+    # only unifies mounts within the stack (e.g. /home/user) but the user still sees red
+    # because the pipeline majority is /srv/data.
+    pipeline_host_root = None  # Override for _detect_host_data_root when pipeline provides majority
+    if pipeline_context:
+        p_conflicts = pipeline_context.get("conflicts", [])
+        stack_p_conflicts = [
+            c for c in p_conflicts
+            if c.get("stack_name") == os.path.basename(stack_path)
+        ]
+        if stack_p_conflicts:
+            majority_root = stack_p_conflicts[0].get("majority_root", "")
+            if majority_root:
+                pipeline_host_root = majority_root
+                # Only add pipeline conflict if there are no within-stack conflicts
+                # already covering the issue — avoids duplicate/confusing messages.
+                # But always set pipeline_host_root so fixes target the right root.
+                if not conflicts:
+                    affected = [s.name for s in services if s.role in ("arr", "download_client", "media_server")]
+                    if affected:
+                        conflicts.append(Conflict(
+                            conflict_type="no_shared_mount",
+                            severity="critical",
+                            services=affected,
+                            description=(
+                                f"This stack's host mounts differ from the rest of your pipeline. "
+                                f"Most services use {majority_root}."
+                            ),
+                            detail=f"Pipeline majority root: {majority_root}",
+                        ))
+
     # Step 6: Generate fixes
     _generate_fixes(conflicts, services)
     fix_summary = _build_fix_summary(conflicts, services, error_service, pipeline_context)
-    solution_yaml, solution_changed_lines = _generate_solution_yaml(conflicts, services)
+    solution_yaml, solution_changed_lines = _generate_solution_yaml(
+        conflicts, services, host_root_override=pipeline_host_root
+    )
     if solution_yaml:
         logger.info("Generated solution YAML (%d lines, %d changed)",
                      solution_yaml.count("\n") + 1, len(solution_changed_lines))
@@ -315,7 +368,8 @@ def analyze_stack(
     original_changed_lines: List[int] = []
     if solution_yaml and raw_compose_content:
         original_corrected_yaml, original_changed_lines = _patch_original_yaml(
-            raw_compose_content, conflicts, services
+            raw_compose_content, conflicts, services,
+            host_root_override=pipeline_host_root,
         )
         if original_corrected_yaml:
             steps.append({"icon": "ok", "text": "Generated corrected version of your compose file"})
@@ -450,6 +504,17 @@ def analyze_stack(
     elif incomplete_stack:
         steps.append({"icon": "info", "text": f"Single-service stack — no {' or '.join(missing)} in this compose file"})
 
+    # RPM calculation: compute Remote Path Mapping entries for all
+    # (download_client, arr_app) pairs.  The wizard uses these to guide users
+    # through bridging container-path mismatches without restructuring mounts.
+    rpm_mappings = []
+    if pipeline_context:
+        rpm_mappings = _calculate_rpm_mappings(services, pipeline_context, stack_path=stack_path)
+        if rpm_mappings:
+            possible_count = sum(1 for m in rpm_mappings if m["possible"])
+            logger.info("RPM calculator: %d mappings (%d possible, %d impossible)",
+                        len(rpm_mappings), possible_count, len(rpm_mappings) - possible_count)
+
     status_preview = "conflicts" if conflicts else ("incomplete" if incomplete_stack else "healthy")
     if pipeline_data:
         status_preview = f"pipeline ({pipeline_data.get('health', '?')})"
@@ -478,6 +543,7 @@ def analyze_stack(
         incomplete_stack=incomplete_stack,
         cross_stack=cross_stack_result,
         pipeline=pipeline_data,
+        rpm_mappings=rpm_mappings,
     )
 
 
@@ -572,17 +638,27 @@ def _parse_short_volume(vol_str: str) -> Optional[VolumeMount]:
         source = parts[0] + ":" + parts[1]
         target = parts[2]
         read_only = len(parts) > 3 and parts[3].strip().lower() == "ro"
+    elif len(parts) >= 3 and "/" in parts[1]:
+        # NFS syntax: nfs-server:/remote/path:/container/path[:ro]
+        # The second part contains "/" so it's a remote path, not a container path.
+        source = parts[0] + ":" + parts[1]
+        target = parts[2]
+        read_only = len(parts) > 3 and parts[3].strip().lower() == "ro"
     else:
         source = parts[0]
         target = parts[1]
         read_only = len(parts) > 2 and parts[2].strip().lower() == "ro"
 
+    # Detect if this is a bind mount (host path) vs a named Docker volume.
+    # Named volumes are simple identifiers like "mydata". Everything else is a path.
     is_named = not (
         source.startswith("/")
         or source.startswith("./")
         or source.startswith("../")
         or source.startswith("~")
-        or (len(source) >= 2 and source[1] == ":")  # Windows drive
+        or source.startswith("//")                    # UNC/SMB path
+        or (len(source) >= 2 and source[1] == ":")    # Windows drive letter (C:)
+        or (":" in source and "/" in source)           # NFS remote (server:/path)
     )
 
     return VolumeMount(
@@ -668,6 +744,7 @@ def _detect_conflicts(
     services: List[ServiceInfo],
     error_service: Optional[str],
     error_path: Optional[str],
+    pipeline_context: Optional[Dict] = None,
 ) -> List[Conflict]:
     """
     Detect path mapping conflicts.
@@ -675,12 +752,15 @@ def _detect_conflicts(
     Checks:
     1. Hardlink-participant services without a shared parent mount
     2. Same container path backed by different host paths across services
-    3. Error path unreachable by the error service
+    3. Error path unreachable by the error service (RPM-aware)
     """
     conflicts: List[Conflict] = []
 
     # Get hardlink participants from this stack
     participants = [s for s in services if s.role in ("arr", "download_client", "media_server")]
+
+    # Check 0: Named volumes used for data paths (hardlinks impossible)
+    conflicts.extend(_check_named_volume_data(participants))
 
     if len(participants) >= 2:
         # Check 1: No shared parent mount (the #1 *arr problem)
@@ -689,15 +769,71 @@ def _detect_conflicts(
         # Check 2: Inconsistent host path mapping
         conflicts.extend(_check_host_path_consistency(participants))
 
-    # Check 3: Error path unreachable
+    # Check 3: Error path unreachable (RPM-aware — detects DC path patterns)
     if error_service and error_path:
         conflicts.extend(
-            _check_error_path_reachable(services, error_service, error_path)
+            _check_error_path_reachable(
+                services, error_service, error_path, pipeline_context
+            )
         )
 
     # Deduplicate and sort by severity
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     conflicts.sort(key=lambda c: severity_order.get(c.severity, 99))
+
+    return conflicts
+
+
+def _check_named_volume_data(participants: List[ServiceInfo]) -> List[Conflict]:
+    """
+    Detect named Docker volumes used for data paths.
+
+    Named volumes (e.g. `tv_data:/data/tv`) are managed by Docker and stored
+    in Docker's internal volume directory. Each named volume is a separate
+    filesystem — hardlinks CANNOT cross between them. Data volumes must be
+    bind mounts from a shared host directory for hardlinks to work.
+
+    This is a common mistake: users declare volumes in the `volumes:` section
+    thinking it's cleaner, but it silently breaks hardlinks and atomic moves.
+    """
+    conflicts = []
+    affected_services = []
+
+    for svc in participants:
+        named_data_vols = []
+        for vol in svc.volumes:
+            if vol.is_named_volume and not _is_config_mount(vol.target):
+                named_data_vols.append(vol)
+        if named_data_vols:
+            affected_services.append((svc.name, named_data_vols))
+
+    if not affected_services:
+        return conflicts
+
+    detail_lines = []
+    svc_names = []
+    for svc_name, vols in affected_services:
+        svc_names.append(svc_name)
+        for vol in vols:
+            detail_lines.append(f"  {svc_name}: {vol.source}:{vol.target} (named volume)")
+
+    conflicts.append(Conflict(
+        conflict_type="named_volume_data",
+        severity="critical",
+        services=svc_names,
+        description=(
+            "Data volumes use Docker named volumes instead of bind mounts. "
+            "Each named volume is a separate filesystem — hardlinks and atomic "
+            "moves CANNOT work across them. Switch to bind mounts from a "
+            "shared host directory."
+        ),
+        detail="Named volumes used for data:\n" + "\n".join(detail_lines),
+    ))
+
+    logger.warning(
+        "Conflict [named_volume_data/critical]: %s — Named volumes used for data paths",
+        ", ".join(svc_names),
+    )
 
     return conflicts
 
@@ -809,12 +945,18 @@ def _check_error_path_reachable(
     services: List[ServiceInfo],
     error_service: str,
     error_path: str,
+    pipeline_context: Optional[Dict] = None,
 ) -> List[Conflict]:
     """
     Check if the path from the error message is reachable by the service.
 
     If the user's error says "Sonarr can't find /data/downloads/file.mkv",
     check whether Sonarr has a volume mount that covers /data/downloads.
+
+    RPM-aware: if the error path matches a download client's container path,
+    this is an RPM scenario — the DC reported a path using its own container
+    namespace, and the arr app doesn't have it mounted. We flag this so the
+    frontend can offer the RPM wizard.
     """
     conflicts = []
 
@@ -842,7 +984,15 @@ def _check_error_path_reachable(
         # Find the closest mount that COULD cover it
         closest = _find_closest_mount(target_svc, error_path_posix)
 
-        conflicts.append(Conflict(
+        # RPM detection: check if the error path looks like it came from a
+        # download client's container namespace. If a DC's container mount
+        # covers this path, the DC told the arr app "file is at X" but the
+        # arr app can't see X — classic RPM scenario.
+        rpm_hint = _detect_rpm_scenario(
+            error_path_posix, target_svc, services, pipeline_context
+        )
+
+        conflict = Conflict(
             conflict_type="path_unreachable",
             severity="critical",
             services=[target_svc.name],
@@ -854,9 +1004,89 @@ def _check_error_path_reachable(
                 f"Available mounts: {', '.join(v.target for v in target_svc.volumes)}"
                 + (f"\nClosest match: {closest}" if closest else "")
             ),
-        ))
+            rpm_hint=rpm_hint,
+        )
+        conflicts.append(conflict)
 
     return conflicts
+
+
+def _detect_rpm_scenario(
+    error_path: str,
+    arr_svc: ServiceInfo,
+    services: List[ServiceInfo],
+    pipeline_context: Optional[Dict],
+) -> Optional[dict]:
+    """
+    Detect if an unreachable error path matches a download client's container path.
+
+    When qBittorrent tells Sonarr "file at /downloads/tv/show.mkv", and sonarr
+    doesn't have /downloads mounted, the error path /downloads/tv/show.mkv matches
+    qBittorrent's container path /downloads. This is a Remote Path Mapping scenario.
+
+    Returns an rpm_hint dict with the matching DC info, or None if no match.
+    """
+    # Collect DC services from this stack and pipeline siblings
+    dc_candidates = []
+
+    # From this stack's services
+    for svc in services:
+        if svc.role == "download_client":
+            container_paths = [
+                v.target.rstrip("/") for v in svc.volumes
+                if v.is_bind_mount and not _is_config_mount(v.target)
+            ]
+            dc_candidates.append({
+                "name": svc.name,
+                "stack": "",  # same stack
+                "container_paths": container_paths,
+                "volumes": [
+                    {"source": v.source.replace("\\", "/"), "target": v.target}
+                    for v in svc.volumes
+                    if v.is_bind_mount and not _is_config_mount(v.target)
+                ],
+            })
+
+    # From pipeline siblings
+    if pipeline_context:
+        for sib in pipeline_context.get("sibling_services", []):
+            if sib.get("role") == "download_client":
+                mounts = sib.get("volume_mounts", [])
+                container_paths = [m.get("target", "").rstrip("/") for m in mounts]
+                dc_candidates.append({
+                    "name": sib.get("service_name", ""),
+                    "stack": sib.get("stack_name", ""),
+                    "container_paths": container_paths,
+                    "volumes": mounts,
+                })
+
+    if not dc_candidates:
+        return None
+
+    # Check if the error path matches any DC's container path
+    for dc in dc_candidates:
+        for cp in dc["container_paths"]:
+            if not cp:
+                continue
+            if error_path == cp or error_path.startswith(cp + "/"):
+                logger.info(
+                    "RPM hint: error path %s matches DC %s container path %s",
+                    error_path, dc["name"], cp,
+                )
+                return {
+                    "dc_name": dc["name"],
+                    "dc_stack": dc["stack"],
+                    "dc_container_path": cp,
+                    "arr_name": arr_svc.name,
+                    "description": (
+                        f"This path looks like it came from {dc['name']}'s "
+                        f"container ({cp}). {arr_svc.name} can't see it because "
+                        f"the mount structures differ. Remote Path Mapping can "
+                        f"bridge this without restructuring your mounts."
+                    ),
+                }
+
+    return None
 
 
 def _find_closest_mount(service: ServiceInfo, path: str) -> Optional[str]:
@@ -928,6 +1158,9 @@ def _generate_fixes(
         elif conflict.conflict_type == "different_host_paths":
             conflict.fix = _fix_different_host_paths(conflict)
 
+        elif conflict.conflict_type == "named_volume_data":
+            conflict.fix = _fix_named_volume_data(conflict, participants)
+
         elif conflict.conflict_type == "path_unreachable":
             conflict.fix = _fix_path_unreachable(conflict, services)
 
@@ -978,6 +1211,48 @@ def _fix_no_shared_mount(
         "",
         "This ensures hardlinks and atomic moves work because all",
         "services see the same filesystem through the same mount.",
+    ])
+
+    return "\n".join(lines)
+
+
+def _fix_named_volume_data(
+    conflict: Conflict, participants: List[ServiceInfo]
+) -> str:
+    """
+    Generate fix for named volumes used for data paths.
+
+    Named volumes are isolated filesystems. Data must be on bind mounts
+    from a shared host directory for hardlinks to work.
+    """
+    lines = [
+        "RECOMMENDED FIX: Replace named volumes with bind mounts.",
+        "",
+        "Docker named volumes create separate filesystems. Hardlinks and",
+        "atomic moves cannot cross filesystem boundaries.",
+        "",
+        "1. Create a shared data directory on your host:",
+        "     mkdir -p /host/data/{torrents,media/tv,media/movies}",
+        "",
+        "2. Replace named volume declarations with bind mounts:",
+        "",
+        "   BEFORE (broken):",
+    ]
+
+    for svc in participants:
+        for vol in svc.volumes:
+            if vol.is_named_volume and not _is_config_mount(vol.target):
+                lines.append(f"     - {vol.source}:{vol.target}")
+
+    lines.extend([
+        "",
+        "   AFTER (working):",
+        "     - /host/data:/data",
+        "",
+        "3. Remove the named volume declarations from the `volumes:` section",
+        "   at the bottom of your compose file.",
+        "",
+        "4. Update your *arr app settings to use paths under /data/.",
     ])
 
     return "\n".join(lines)
@@ -1097,6 +1372,224 @@ def _build_fix_summary(
     return summary or None
 
 
+# ─── RPM Calculator ───
+# Computes Remote Path Mapping entries for each (download_client, arr_app) pair.
+# RPM is the *arr apps' built-in bridge for container-path mismatches.
+# When qBittorrent reports "/downloads/tv/show.mkv" but Sonarr sees that same
+# data at "/data/downloads/tv/show.mkv", an RPM entry translates the path.
+
+
+def _find_host_overlap(dc_host: str, arr_host: str) -> Optional[str]:
+    """
+    Check if two host-side mount paths overlap and return the relative offset.
+
+    RPM needs to know the path difference between where the download client
+    stores data on the host and where the arr app can see it.
+
+    Returns:
+        The relative path offset if paths overlap, None otherwise.
+
+    Examples:
+        _find_host_overlap("/mnt/nas/downloads", "/mnt/nas")
+          → "/downloads"  (DC is deeper, offset from arr's root)
+        _find_host_overlap("/mnt/nas", "/mnt/nas/downloads")
+          → ""  (arr is deeper — DC path is a parent of arr's mount)
+        _find_host_overlap("/host/downloads", "/srv/media")
+          → None  (no overlap, RPM impossible)
+    """
+    dc = dc_host.rstrip("/")
+    arr = arr_host.rstrip("/")
+
+    if dc == arr:
+        # Same host path — RPM only needed if container paths differ
+        return ""
+    elif dc.startswith(arr + "/"):
+        # DC path is deeper: /mnt/nas/downloads under /mnt/nas
+        return dc[len(arr):]
+    elif arr.startswith(dc + "/"):
+        # Arr path is deeper: /mnt/nas/downloads under /mnt/nas
+        # DC data is accessible at arr's container root minus the extra depth
+        return ""
+    else:
+        return None
+
+
+def _calculate_rpm_mappings(
+    services: List[ServiceInfo],
+    pipeline_context: Optional[dict],
+    stack_path: str = "",
+) -> List[dict]:
+    """
+    Compute Remote Path Mapping entries for all (download_client, arr_app) pairs.
+
+    Gathers services from both the current stack and pipeline siblings, then
+    calculates the RPM triple (Host, Remote Path, Local Path) for each pair
+    based on host-side mount overlap.
+
+    Each mapping dict contains:
+        arr_service, arr_stack: Which arr app needs this RPM entry
+        dc_service, dc_stack: Which download client this maps
+        host: The RPM "Host" field (DC container name)
+        remote_path: The RPM "Remote Path" (DC container path)
+        local_path: The RPM "Local Path" (arr container path that sees the same data)
+        dc_host_path, arr_host_path: Host mount sources for user context
+        possible: Whether host paths actually overlap
+        reason: Human-readable explanation
+    """
+    if not pipeline_context:
+        return []
+
+    # Gather all arr services and download clients from stack + pipeline
+    arr_entries = []   # [{name, stack, volume_mounts: [{source, target}]}]
+    dc_entries = []
+
+    # Config/utility mount targets to filter out (same as discovery._CONFIG_TARGETS)
+    _config_targets = {
+        "/config", "/app", "/etc", "/var", "/tmp", "/run", "/dev",
+        "/backup", "/backups", "/restore", "/log", "/logs",
+        "/cache", "/certs", "/ssl", "/scripts",
+    }
+
+    # From this stack's services (full VolumeMount objects)
+    current_stack_name = os.path.basename(stack_path) if stack_path else ""
+    for svc in services:
+        data_mounts = []
+        for v in svc.volumes:
+            if not v.is_bind_mount or not v.source:
+                continue
+            target_clean = v.target.rstrip("/")
+            if any(target_clean == c or target_clean.startswith(c + "/")
+                   for c in _config_targets):
+                continue
+            data_mounts.append({
+                "source": v.source.replace("\\", "/").rstrip("/"),
+                "target": target_clean,
+            })
+        entry = {
+            "name": svc.name,
+            "stack": current_stack_name,
+            "volume_mounts": data_mounts,
+        }
+        if svc.role == "arr":
+            arr_entries.append(entry)
+        elif svc.role == "download_client":
+            dc_entries.append(entry)
+
+    # From pipeline siblings (already dict format with volume_mounts)
+    for sib in pipeline_context.get("sibling_services", []):
+        role = sib.get("role", "")
+        mounts = sib.get("volume_mounts", [])
+        entry = {
+            "name": sib.get("service_name", ""),
+            "stack": sib.get("stack_name", ""),
+            "volume_mounts": mounts,
+        }
+        if role == "arr":
+            arr_entries.append(entry)
+        elif role == "download_client":
+            dc_entries.append(entry)
+
+    if not arr_entries or not dc_entries:
+        return []
+
+    # Only compute mappings where at least one side belongs to the current stack.
+    # Without this filter, the cross-product explodes across the full pipeline
+    # (e.g. 198 entries when only ~4 are relevant to the stack being analyzed).
+    mappings = []
+
+    for dc in dc_entries:
+        dc_data_mounts = dc["volume_mounts"]
+        if not dc_data_mounts:
+            continue
+
+        for arr in arr_entries:
+            # Skip pairs where neither service is in the current stack
+            if (dc["stack"] != current_stack_name and
+                    arr["stack"] != current_stack_name):
+                continue
+            arr_data_mounts = arr["volume_mounts"]
+            if not arr_data_mounts:
+                continue
+
+            # Find the best-matching mount pair (host path overlap)
+            best_mapping = None
+
+            for dc_mount in dc_data_mounts:
+                dc_host = dc_mount["source"]
+                dc_target = dc_mount["target"]
+
+                for arr_mount in arr_data_mounts:
+                    arr_host = arr_mount["source"]
+                    arr_target = arr_mount["target"]
+
+                    offset = _find_host_overlap(dc_host, arr_host)
+                    if offset is not None:
+                        # RPM possible — compute the paths
+                        # Remote = DC container path (what DC reports to arr)
+                        remote = dc_target.rstrip("/") + "/"
+                        # Local = arr container path + offset (where arr sees DC's data)
+                        if offset:
+                            local = arr_target.rstrip("/") + offset + "/"
+                        else:
+                            # Same host path or arr is deeper — figure out the right mapping
+                            if dc_host == arr_host.rstrip("/"):
+                                # Identical host paths, different container paths
+                                local = arr_target.rstrip("/") + "/"
+                            elif arr_host.rstrip("/").startswith(dc_host.rstrip("/") + "/"):
+                                # Arr is deeper: arr=/mnt/nas/downloads, dc=/mnt/nas
+                                # DC's /downloads = arr's / (root of its mount)
+                                arr_extra = arr_host.rstrip("/")[len(dc_host.rstrip("/")):]
+                                # DC container subpath that maps to arr container root
+                                remote = dc_target.rstrip("/") + arr_extra + "/"
+                                local = arr_target.rstrip("/") + "/"
+                            else:
+                                local = arr_target.rstrip("/") + "/"
+
+                        best_mapping = {
+                            "arr_service": arr["name"],
+                            "arr_stack": arr["stack"],
+                            "dc_service": dc["name"],
+                            "dc_stack": dc["stack"],
+                            "host": dc["name"],
+                            "remote_path": remote,
+                            "local_path": local,
+                            "dc_host_path": dc_host,
+                            "arr_host_path": arr_host,
+                            "possible": True,
+                            "reason": f"Host paths overlap — {dc_host} is accessible from {arr_host}",
+                        }
+                        break  # Use first matching mount pair
+
+                if best_mapping:
+                    break
+
+            if not best_mapping:
+                # No overlap found — RPM impossible for this pair
+                dc_hosts = [m["source"] for m in dc_data_mounts]
+                arr_hosts = [m["source"] for m in arr_data_mounts]
+                best_mapping = {
+                    "arr_service": arr["name"],
+                    "arr_stack": arr["stack"],
+                    "dc_service": dc["name"],
+                    "dc_stack": dc["stack"],
+                    "host": dc["name"],
+                    "remote_path": "",
+                    "local_path": "",
+                    "dc_host_path": dc_hosts[0] if dc_hosts else "",
+                    "arr_host_path": arr_hosts[0] if arr_hosts else "",
+                    "possible": False,
+                    "reason": (
+                        f"Host paths don't overlap — {dc['name']} uses "
+                        f"{', '.join(dc_hosts)} but {arr['name']} uses "
+                        f"{', '.join(arr_hosts)}. Mount restructuring required."
+                    ),
+                }
+
+            mappings.append(best_mapping)
+
+    return mappings
+
+
 # ─── Step 5: Solution YAML ───
 
 # Role → recommended container path mapping.
@@ -1116,6 +1609,9 @@ _ROLE_CONTAINER_PATHS = {
     "sabnzbd": "/data/usenet",
     "nzbget": "/data/usenet",
     "jdownloader": "/data/downloads",
+    "aria2": "/data/torrents",
+    "flood": "/data/torrents",
+    "rdtclient": "/data/torrents",
     "plex": "/data/media",
     "jellyfin": "/data/media",
     "emby": "/data/media",
@@ -1123,7 +1619,8 @@ _ROLE_CONTAINER_PATHS = {
 
 
 def _generate_solution_yaml(
-    conflicts: List[Conflict], services: List[ServiceInfo]
+    conflicts: List[Conflict], services: List[ServiceInfo],
+    host_root_override: Optional[str] = None,
 ) -> Tuple[Optional[str], List[int]]:
     """
     Generate full copy-pasteable YAML showing the complete services section
@@ -1148,8 +1645,15 @@ def _generate_solution_yaml(
     if not affected_names:
         return None, []
 
-    # Try to detect the host data root from existing mounts
-    host_data_root = _detect_host_data_root(services)
+    # Use pipeline majority root when available, otherwise detect from current mounts
+    host_data_root = host_root_override or _detect_host_data_root(services)
+
+    # When targeting the pipeline majority root, include ALL media services
+    # so the generated YAML achieves full pipeline alignment.
+    if host_root_override:
+        for svc in services:
+            if svc.role in ("arr", "download_client", "media_server"):
+                affected_names.add(svc.name)
 
     lines = [
         "# Full corrected volume configuration (TRaSH Guides pattern)",
@@ -1223,8 +1727,14 @@ def _detect_host_data_root(services: List[ServiceInfo]) -> str:
         return parts[0] if len(parts) > 1 else data_sources[0]
 
     # Multiple sources — find common prefix
-    common = os.path.commonpath([s.replace("\\", "/") for s in data_sources])
-    common = common.replace("\\", "/")
+    # os.path.commonpath() raises ValueError when paths have different drives
+    # (e.g. /mnt/media vs //MediaNAS/Downloads, or C:\ vs D:\).
+    # Fall back to generic /data root when paths can't be compared.
+    try:
+        common = os.path.commonpath([s.replace("\\", "/") for s in data_sources])
+        common = common.replace("\\", "/")
+    except ValueError:
+        return "/data"
 
     # Don't return something too short like "/" or "C:/"
     if common in ("", "/") or (len(common) <= 3 and common[1:2] == ":"):
@@ -1347,6 +1857,7 @@ def _patch_original_yaml(
     raw_content: str,
     conflicts: List[Conflict],
     services: List[ServiceInfo],
+    host_root_override: Optional[str] = None,
 ) -> Tuple[Optional[str], List[int]]:
     """
     Patch the user's original compose YAML, replacing ONLY affected
@@ -1368,7 +1879,16 @@ def _patch_original_yaml(
     if not affected_names:
         return None, []
 
-    host_data_root = _detect_host_data_root(services)
+    host_data_root = host_root_override or _detect_host_data_root(services)
+
+    # When patching to match the pipeline majority root, expand to ALL media
+    # services — not just those named in the specific conflict. Otherwise we fix
+    # sonarr/radarr to /srv/data but leave qbittorrent at /home/user/downloads,
+    # creating a new conflict immediately after apply.
+    if host_root_override:
+        for svc in services:
+            if svc.role in ("arr", "download_client", "media_server"):
+                affected_names.add(svc.name)
     svc_lookup = {s.name: s for s in services}
 
     lines = raw_content.splitlines()

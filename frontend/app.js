@@ -1,5 +1,5 @@
 /**
- * MapArr v1.3 — Frontend Application
+ * MapArr v1.5 — Frontend Application
  *
  * Two-mode UI:
  *   FIX MODE  — paste error → auto-match stack → focused analysis
@@ -24,6 +24,8 @@ const state = {
     bootComplete: false, // Has boot sequence finished?
     bootPhase: "idle",   // "idle" | "scanning" | "done" | "failed"
     pipeline: null,      // Cached PipelineResult from /api/pipeline-scan
+    verifiedStacks: new Set(), // Stacks analyzed/fixed this session — skip caution override
+    preflightOverridden: false, // User bypassed a pre-flight warning for this analysis
 };
 
 // Load persisted custom dirs from localStorage
@@ -339,6 +341,7 @@ async function bootScanCustomPath() {
             const data = await resp.json();
             state.stacks = data.stacks || [];
             state.activeScanPath = (data.scan_path || "").replace(/\\/g, "/");
+            state.verifiedStacks.clear();
             updateConnectionStatus(data);
             if (state.stacks.length > 0) {
                 const dirCounts = {};
@@ -431,6 +434,11 @@ function enterFixMode() {
     document.getElementById("step-stacks").classList.add("hidden");
     document.getElementById("stacks-loading").classList.add("hidden");
     document.getElementById("stacks-list").classList.add("hidden");
+    // Clear stale fix-mode intermediate state (pills, parse result) from prior sessions
+    document.getElementById("step-parse-result").classList.add("hidden");
+    document.getElementById("step-fix-match").classList.add("hidden");
+    const fixMatchList = document.getElementById("fix-match-list");
+    if (fixMatchList) fixMatchList.replaceChildren();
     document.getElementById("error-input").focus();
 }
 
@@ -570,8 +578,12 @@ async function parseError() {
         return;
     }
 
-    // Clear any previous analysis results
+    // Clear any previous analysis results and stale verified-healthy state.
+    // Browse mode may have marked stacks green, but the user is now bringing
+    // an error — don't let stale green dots mislead them about which stack
+    // has the problem.
     clearAnalysisResults();
+    state.verifiedStacks.clear();
     document.getElementById("step-fix-match").classList.add("hidden");
 
     const btn = document.getElementById("btn-parse");
@@ -749,9 +761,9 @@ function renderFixMatchPills(container, matches, detectedService) {
         pill.className = "fix-match-pill";
         pill.title = stack.path.replace(/\\/g, "/");
 
-        // Health dot
+        // Health dot (pipeline-aware)
         const dot = document.createElement("span");
-        dot.className = "health-dot health-" + (stack.health || "unknown");
+        dot.className = "health-dot health-" + _effectiveHealth(stack);
         pill.appendChild(dot);
 
         // Stack name
@@ -1010,7 +1022,10 @@ async function showStackSelection() {
     }
 }
 
-// ─── Stack Filter ───
+// ─── Stack Filter (Smart) ───
+// Mirrors the quick-switch UX: type-to-search with health dots, service
+// names, and click-to-analyze. Also filters the grid below for visual
+// context so users can scan everything at once.
 
 function showStackFilter(stackCount) {
     const filter = document.getElementById("stack-filter");
@@ -1020,35 +1035,44 @@ function showStackFilter(stackCount) {
     // Only show filter when there are enough stacks to warrant it
     if (stackCount >= 6) {
         filter.classList.remove("hidden");
-        // Attach listener once
+        input.placeholder = "Search or click to browse stacks...";
+        // Attach smart filter listeners once
         if (!input._filterBound) {
-            input.addEventListener("input", () => filterStacks(input.value));
+            const results = document.getElementById("stack-filter-results");
+
+            wireQuickSwitchCombobox(input, results, {
+                limit: 8,
+                onSelect: (matchStack) => {
+                    input.value = "";
+                    results.classList.add("hidden");
+                    selectStack(matchStack, null);
+                },
+            });
+
+            // Also filter the grid below as user types
+            let gridTimer = null;
+            input.addEventListener("input", () => {
+                clearTimeout(gridTimer);
+                gridTimer = setTimeout(() => {
+                    const q = input.value.trim().toLowerCase();
+                    if (!q) {
+                        renderStacks(state.stacks);
+                    } else {
+                        const filtered = state.stacks.filter((s) => {
+                            const name = extractDirName(s.path).toLowerCase();
+                            if (name.includes(q)) return true;
+                            return (s.services || []).some((svc) => svc.toLowerCase().includes(q));
+                        });
+                        renderStacks(filtered);
+                    }
+                }, 150);
+            });
+
             input._filterBound = true;
         }
     } else {
         filter.classList.add("hidden");
     }
-}
-
-function filterStacks(query) {
-    const q = query.trim().toLowerCase();
-    const list = document.getElementById("stacks-list");
-    if (!list) return;
-
-    if (!q) {
-        // Show all — re-render full list
-        renderStacks(state.stacks);
-        return;
-    }
-
-    // Filter stacks by name or service match
-    const filtered = state.stacks.filter((stack) => {
-        const name = extractDirName(stack.path).toLowerCase();
-        if (name.includes(q)) return true;
-        return (stack.services || []).some((svc) => svc.toLowerCase().includes(q));
-    });
-
-    renderStacks(filtered);
 }
 
 // ─── Render Stacks ───
@@ -1165,23 +1189,118 @@ function renderStacks(stacks) {
         list.appendChild(guidance);
     }
 
-    // Count health statuses for legend — show all categories as a full summary
-    const healthCounts = { ok: 0, warning: 0, problem: 0, unknown: 0 };
+    // Count health statuses for legend — uses effective health (pipeline-aware)
+    const healthCounts = { ok: 0, caution: 0, warning: 0, problem: 0, unknown: 0 };
     stacks.forEach((s) => {
-        const h = s.health || "unknown";
+        const h = _effectiveHealth(s);
         if (h in healthCounts) healthCounts[h]++;
         else healthCounts.unknown++;
     });
 
     const legend = document.createElement("div");
     legend.className = "health-legend";
-    legend.appendChild(_legendDot("ok", healthCounts.ok + " healthy"));
-    legend.appendChild(_legendDot("warning", healthCounts.warning + " need review"));
-    legend.appendChild(_legendDot("problem", healthCounts.problem + " with issues"));
-    legend.appendChild(_legendDot("unknown", healthCounts.unknown + " not applicable"));
+
+    // Each legend dot is clickable — filters the stack list to that health category.
+    // Clicking the active filter again (or clicking the total count) resets to show all.
+    let activeFilter = null;
+    const allDots = [];
+
+    function applyHealthFilter(health) {
+        if (activeFilter === health) {
+            // Toggle off — show all
+            activeFilter = null;
+            allDots.forEach((d) => d.classList.remove("legend-active", "legend-dimmed"));
+            document.querySelectorAll(".stack-item").forEach((el) => el.classList.remove("hidden"));
+            total.textContent = stacks.length + " stack" + (stacks.length !== 1 ? "s" : "") + " detected";
+        } else {
+            // Filter to this health
+            activeFilter = health;
+            allDots.forEach((d) => {
+                const h = d.getAttribute("data-health");
+                d.classList.toggle("legend-active", h === health);
+                d.classList.toggle("legend-dimmed", h !== health);
+            });
+            let shown = 0;
+            document.querySelectorAll(".stack-item").forEach((el) => {
+                const path = el.getAttribute("data-stack-path");
+                const stack = stacks.find((s) => s.path.replace(/\\/g, "/") === (path || "").replace(/\\/g, "/"));
+                const h = stack ? _effectiveHealth(stack) : "unknown";
+                const visible = h === health;
+                el.classList.toggle("hidden", !visible);
+                if (visible) shown++;
+            });
+            total.textContent = shown + " of " + stacks.length + " stacks (filtered)";
+        }
+    }
+
+    function addFilterableDot(health, label, count) {
+        const dot = _legendDot(health, label);
+        dot.setAttribute("data-health", health);
+        dot.style.cursor = count > 0 ? "pointer" : "default";
+        if (count > 0) {
+            dot.addEventListener("click", () => applyHealthFilter(health));
+        }
+        allDots.push(dot);
+        legend.appendChild(dot);
+    }
+
+    addFilterableDot("ok", healthCounts.ok + " healthy", healthCounts.ok);
+    if (healthCounts.caution > 0) {
+        addFilterableDot("caution", healthCounts.caution + " caution", healthCounts.caution);
+    }
+    addFilterableDot("warning", healthCounts.warning + " need review", healthCounts.warning);
+    addFilterableDot("problem", healthCounts.problem + " with issues", healthCounts.problem);
+    if (healthCounts.unknown > 0) {
+        addFilterableDot("unknown", healthCounts.unknown + " not applicable", healthCounts.unknown);
+    }
+
+    // Make the total count clickable to reset filter
+    total.style.cursor = "pointer";
+    total.addEventListener("click", () => {
+        if (activeFilter) applyHealthFilter(activeFilter); // toggle off
+    });
+
     list.appendChild(legend);
 
-    // Render each group
+    // Traffic light reference — helps users understand what each indicator means
+    const guide = document.createElement("details");
+    guide.className = "traffic-light-guide";
+    const guideSummary = document.createElement("summary");
+    guideSummary.textContent = "What do the indicators mean?";
+    guide.appendChild(guideSummary);
+
+    const guideBody = document.createElement("div");
+    guideBody.className = "traffic-light-guide-body";
+
+    const guideEntries = [
+        ["ok", "Green", "Healthy. Services share a common mount path. Hardlinks and atomic moves will work."],
+        ["caution", "Blinking Yellow", "Caution. This stack is internally fine, but its mount paths differ from the rest of your pipeline. Worth investigating."],
+        ["warning", "Yellow", "Needs review. Single media service or can\u2019t fully determine health from quick scan alone."],
+        ["problem", "Red", "Issues found. Services mount different host directories. Hardlinks and atomic moves will fail."],
+        ["unknown", "Grey", "Not applicable. No media services detected (infrastructure stack)."],
+    ];
+
+    guideEntries.forEach(([health, title, desc]) => {
+        const row = document.createElement("div");
+        row.className = "tl-row";
+        const rowDot = document.createElement("span");
+        rowDot.className = "health-dot health-" + health;
+        row.appendChild(rowDot);
+        const rowText = document.createElement("div");
+        const strong = document.createElement("strong");
+        strong.textContent = title;
+        rowText.appendChild(strong);
+        rowText.appendChild(document.createTextNode(" \u2014 " + desc));
+        row.appendChild(rowText);
+        guideBody.appendChild(row);
+    });
+
+    guide.appendChild(guideBody);
+    list.appendChild(guide);
+
+    // Render each group as a compact scrollable box.
+    // Each role gets its own container with a fixed max-height so users
+    // see all groups at once without a long page scroll.
     const groupMeta = [
         { key: "arr", label: "*arr Apps", items: groups.arr },
         { key: "download", label: "Download Clients", items: groups.download },
@@ -1189,8 +1308,12 @@ function renderStacks(stacks) {
         { key: "other", label: "Infrastructure & Other", items: groups.other },
     ];
 
-    groupMeta.forEach(({ label, items }) => {
+    groupMeta.forEach(({ key, label, items }) => {
         if (items.length === 0) return;
+
+        // Group container wraps header + scrollable items
+        const groupBox = document.createElement("div");
+        groupBox.className = "stack-group stack-group-" + key;
 
         const header = document.createElement("div");
         header.className = "stack-group-header";
@@ -1201,23 +1324,33 @@ function renderStacks(stacks) {
         headerCount.className = "stack-group-count";
         headerCount.textContent = "(" + items.length + ")";
         header.appendChild(headerCount);
-        list.appendChild(header);
+        groupBox.appendChild(header);
 
+        // Scrollable items container — holds the stack cards
+        const itemsContainer = document.createElement("div");
+        itemsContainer.className = "stack-group-items";
         items.forEach((stack) => {
-            list.appendChild(renderStackItem(stack, detectedService));
+            itemsContainer.appendChild(renderStackItem(stack, detectedService));
         });
+        groupBox.appendChild(itemsContainer);
+
+        list.appendChild(groupBox);
     });
 }
 
 function renderStackItem(stack, detectedService) {
     const item = document.createElement("div");
     item.className = "stack-item";
+    item.setAttribute("data-stack-path", stack.path.replace(/\\/g, "/"));
     item.addEventListener("click", (e) => selectStack(stack, e));
 
-    // Health indicator (traffic light) — always show for consistent alignment
+    // Health indicator (traffic light) — uses effective health which factors
+    // in pipeline alignment. Green = all good. Blinking yellow = internally OK
+    // but doesn't fit the broader pipeline. Red = broken.
+    const effectiveH = _effectiveHealth(stack);
     const dot = document.createElement("span");
-    dot.className = "health-dot health-" + (stack.health || "unknown");
-    dot.title = _healthTooltip(stack.health || "unknown", stack.health_hint);
+    dot.className = "health-dot health-" + effectiveH;
+    dot.title = _healthTooltip(effectiveH, stack.health_hint);
     item.appendChild(dot);
 
     // Left: info
@@ -1291,6 +1424,9 @@ function renderStackItem(stack, detectedService) {
 // ─── Select Stack → Analyze ───
 
 async function selectStack(stack, clickEvent) {
+    // Reset pre-flight override flag — fresh analysis starts clean
+    state.preflightOverridden = false;
+
     // Clear previous results before new analysis
     clearAnalysisResults();
 
@@ -1304,6 +1440,20 @@ async function selectStack(stack, clickEvent) {
     }
 
     state.selectedStack = stack.path;
+
+    // Pre-flight check (Browse mode): does this stack have any media services?
+    // If the pipeline shows 0 media-relevant services, there's nothing useful
+    // to analyze for path mapping. Show a note but let the user proceed.
+    if (state.mode === "browse" && state.pipeline) {
+        const stackName = extractDirName(stack.path);
+        const mediaInStack = (state.pipeline.media_services || [])
+            .filter((s) => s.stack_name === stackName);
+        if (mediaInStack.length === 0) {
+            const svcList = (stack.services || []).join(", ") || "none detected";
+            const proceed = await showBrowsePreflightWarning(stack, svcList);
+            if (!proceed) return;
+        }
+    }
 
     // In browse mode, collapse the stack list to show quick-switch bar.
     // Users can type to search and instantly jump to another stack without
@@ -1329,7 +1479,7 @@ async function selectStack(stack, clickEvent) {
             const currentRow = document.createElement("div");
             currentRow.className = "quick-switch-current";
             const dot = document.createElement("span");
-            dot.className = "health-dot health-" + (stack.health || "unknown");
+            dot.className = "health-dot health-" + _effectiveHealth(stack);
             currentRow.appendChild(dot);
             const nameSpan = document.createElement("span");
             nameSpan.className = "quick-switch-name";
@@ -1347,97 +1497,238 @@ async function selectStack(stack, clickEvent) {
             const searchInput = document.createElement("input");
             searchInput.type = "text";
             searchInput.className = "path-input quick-switch-input";
-            searchInput.placeholder = "Switch stack \u2014 start typing...";
+            searchInput.placeholder = "Search or click to browse...";
             searchInput.spellcheck = false;
 
             const resultsDropdown = document.createElement("div");
             resultsDropdown.className = "quick-switch-results hidden";
 
-            // Debounced search as user types
-            let searchTimer = null;
-            searchInput.addEventListener("input", () => {
-                clearTimeout(searchTimer);
-                searchTimer = setTimeout(() => {
-                    const q = searchInput.value.trim().toLowerCase();
-                    resultsDropdown.replaceChildren();
-                    if (!q) {
-                        resultsDropdown.classList.add("hidden");
-                        return;
-                    }
-                    const matches = state.stacks.filter((s) => {
-                        const name = extractDirName(s.path).toLowerCase();
-                        if (name.includes(q)) return true;
-                        return (s.services || []).some((svc) => svc.toLowerCase().includes(q));
-                    }).slice(0, 8);
-
-                    if (matches.length === 0) {
-                        const none = document.createElement("div");
-                        none.className = "quick-switch-no-match";
-                        none.textContent = "No matching stacks";
-                        resultsDropdown.appendChild(none);
-                    } else {
-                        matches.forEach((matchStack) => {
-                            const item = document.createElement("div");
-                            item.className = "quick-switch-item";
-                            if (matchStack.path === stack.path) {
-                                item.classList.add("current");
-                            }
-                            const itemDot = document.createElement("span");
-                            itemDot.className = "health-dot health-" + (matchStack.health || "unknown");
-                            item.appendChild(itemDot);
-                            const itemName = document.createElement("span");
-                            itemName.className = "quick-switch-item-name";
-                            itemName.textContent = extractDirName(matchStack.path);
-                            item.appendChild(itemName);
-                            const itemServices = document.createElement("span");
-                            itemServices.className = "quick-switch-item-detail";
-                            itemServices.textContent = (matchStack.services || []).join(", ");
-                            item.appendChild(itemServices);
-                            item.addEventListener("click", () => {
-                                searchInput.value = "";
-                                resultsDropdown.classList.add("hidden");
-                                selectStack(matchStack, null);
-                            });
-                            resultsDropdown.appendChild(item);
-                        });
-                    }
-                    resultsDropdown.classList.remove("hidden");
-                }, 150);
-            });
-
-            // Close dropdown on blur (with delay for click to register)
-            searchInput.addEventListener("blur", () => {
-                setTimeout(() => resultsDropdown.classList.add("hidden"), 200);
-            });
-
-            // Reopen on focus if there's text
-            searchInput.addEventListener("focus", () => {
-                if (searchInput.value.trim()) {
-                    searchInput.dispatchEvent(new Event("input"));
-                }
+            wireQuickSwitchCombobox(searchInput, resultsDropdown, {
+                currentPath: stack.path,
+                limit: 8,
+                onSelect: (matchStack) => {
+                    searchInput.value = "";
+                    resultsDropdown.classList.add("hidden");
+                    selectStack(matchStack, null);
+                },
             });
 
             switchRow.appendChild(searchInput);
             switchRow.appendChild(resultsDropdown);
             selectedSummary.appendChild(switchRow);
 
-            // "Show all stacks" link
+            // "Back to stack list" link — same as the bottom button
             const showAllBtn = document.createElement("button");
             showAllBtn.className = "btn btn-ghost btn-sm quick-switch-showall";
-            showAllBtn.textContent = "Show all " + state.stacks.length + " stacks";
-            showAllBtn.addEventListener("click", () => {
-                selectedSummary.remove();
-                stackList.classList.remove("hidden");
-                if (state.stacks.length >= 6) {
-                    if (filterDiv) filterDiv.classList.remove("hidden");
-                }
-                clearAnalysisResults();
-            });
+            showAllBtn.textContent = "\u2190 Back to stack list (" + state.stacks.length + " stacks)";
+            showAllBtn.addEventListener("click", () => backToStackList());
             selectedSummary.appendChild(showAllBtn);
         }
     }
 
-    // Show terminal with initial message including compose file
+    // Pre-flight check 1 (Fix mode): does the error service exist in this stack?
+    // If the error says "sonarr" but the stack only has radarr + qbittorrent,
+    // the user probably clicked the wrong stack.
+    if (state.mode === "fix" && state.parsedError && state.parsedError.service) {
+        const errorSvc = state.parsedError.service.toLowerCase();
+        const stackSvcs = (stack.services || []).map((s) => s.toLowerCase());
+        const svcFound = stackSvcs.some((s) => s.includes(errorSvc) || errorSvc.includes(s));
+
+        if (!svcFound && stackSvcs.length > 0) {
+            const proceed = await showPreflightWarning(
+                stack,
+                null, // no path mismatch — this is a service mismatch
+                null,
+                {
+                    title: "Service not found in this stack",
+                    message:
+                        "Your error mentions " + state.parsedError.service +
+                        " but this stack only contains: " + stack.services.join(", ") + ". " +
+                        "Are you sure this is the right stack?",
+                }
+            );
+            if (!proceed) return;
+            state.preflightOverridden = true;
+        }
+    }
+
+    // Pre-flight check 2 (Fix mode): does the error path match any mount
+    // in the selected stack? If the error path doesn't correspond to any
+    // container mount in this stack, the error probably isn't from here.
+    // This prevents confusing results where a healthy stack gets flagged
+    // with a "path_unreachable" conflict from an unrelated error.
+    if (state.mode === "fix" && state.parsedError && state.parsedError.path && state.pipeline) {
+        const errorPath = (state.parsedError.path || "").replace(/\\/g, "/");
+        const stackName = extractDirName(stack.path);
+
+        // Gather container mount targets for this stack from pipeline data
+        const stackServices = (state.pipeline.media_services || [])
+            .filter((s) => s.stack_name === stackName);
+        const containerTargets = [];
+        stackServices.forEach((svc) => {
+            (svc.volume_mounts || []).forEach((m) => {
+                if (m.target) containerTargets.push(m.target.replace(/\/$/, ""));
+            });
+        });
+
+        // Check if any container target covers the error path
+        const pathCovered = containerTargets.some((t) =>
+            errorPath === t || errorPath.startsWith(t + "/")
+        );
+
+        if (!pathCovered && containerTargets.length > 0) {
+            // Show a warning interstitial — let user decide
+            const proceed = await showPreflightWarning(stack, errorPath, containerTargets);
+            if (!proceed) return; // User chose to go back
+            state.preflightOverridden = true;
+        }
+    }
+
+    await runAnalysis(stack);
+}
+
+
+/**
+ * Show a pre-flight warning when something doesn't add up between the
+ * user's error and the selected stack. Returns true if user wants to
+ * proceed anyway, false if they want to pick a different stack.
+ *
+ * Two modes:
+ *   1. Path mismatch: errorPath + containerTargets provided
+ *   2. Custom message: override.title + override.message provided
+ */
+function showPreflightWarning(stack, errorPath, containerTargets, override) {
+    return new Promise((resolve) => {
+        const section = document.getElementById("step-fix-match");
+        const existing = section.querySelector(".preflight-warning");
+        if (existing) existing.remove();
+
+        const warn = document.createElement("div");
+        warn.className = "preflight-warning callout callout-warning";
+        warn.style.marginTop = "0.75rem";
+
+        const titleEl = document.createElement("p");
+        titleEl.style.fontWeight = "600";
+        titleEl.style.marginBottom = "0.25rem";
+        titleEl.textContent = (override && override.title) || "This error might not be from this stack";
+        warn.appendChild(titleEl);
+
+        const desc = document.createElement("p");
+        desc.style.fontSize = "0.82rem";
+        desc.style.marginBottom = "0.5rem";
+
+        if (override && override.message) {
+            desc.textContent = override.message;
+        } else {
+            const pathBase = errorPath.split("/").slice(0, 3).join("/");
+            desc.textContent =
+                "The error path " + pathBase + "/... doesn't match any data mount " +
+                "in " + extractDirName(stack.path) + ". " +
+                "This stack's mounts are: " + containerTargets.join(", ") + ". " +
+                "The error may be from a different configuration or an older setup.";
+        }
+        warn.appendChild(desc);
+
+        const btnRow = document.createElement("div");
+        btnRow.style.display = "flex";
+        btnRow.style.gap = "0.5rem";
+
+        const proceedBtn = document.createElement("button");
+        proceedBtn.className = "gate-next";
+        proceedBtn.style.fontSize = "0.8rem";
+        proceedBtn.textContent = "Analyze anyway";
+        proceedBtn.addEventListener("click", () => {
+            warn.remove();
+            resolve(true);
+        });
+        btnRow.appendChild(proceedBtn);
+
+        const backBtn = document.createElement("button");
+        backBtn.style.fontSize = "0.8rem";
+        backBtn.textContent = "Pick a different stack";
+        backBtn.addEventListener("click", () => {
+            warn.remove();
+            resolve(false);
+        });
+        btnRow.appendChild(backBtn);
+
+        warn.appendChild(btnRow);
+        section.appendChild(warn);
+        warn.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+}
+
+
+/**
+ * Browse mode pre-flight: stack has no media services.
+ * Shows warning in the stacks list area. Returns true to proceed, false to cancel.
+ */
+function showBrowsePreflightWarning(stack, serviceList) {
+    return new Promise((resolve) => {
+        const section = document.getElementById("step-stacks");
+        const existing = section.querySelector(".preflight-warning");
+        if (existing) existing.remove();
+
+        const warn = document.createElement("div");
+        warn.className = "preflight-warning callout callout-warning";
+        warn.style.marginTop = "0.75rem";
+
+        const titleEl = document.createElement("p");
+        titleEl.style.fontWeight = "600";
+        titleEl.style.marginBottom = "0.25rem";
+        titleEl.textContent = "No media services in this stack";
+        warn.appendChild(titleEl);
+
+        const desc = document.createElement("p");
+        desc.style.fontSize = "0.82rem";
+        desc.style.marginBottom = "0.5rem";
+        desc.textContent =
+            extractDirName(stack.path) + " has no *arr apps, download clients, or media servers. " +
+            "Services found: " + serviceList + ". " +
+            "MapArr analyzes path mappings between media services — there's nothing to check here.";
+        warn.appendChild(desc);
+
+        const btnRow = document.createElement("div");
+        btnRow.style.display = "flex";
+        btnRow.style.gap = "0.5rem";
+
+        const proceedBtn = document.createElement("button");
+        proceedBtn.className = "gate-next";
+        proceedBtn.style.fontSize = "0.8rem";
+        proceedBtn.textContent = "Analyze anyway";
+        proceedBtn.addEventListener("click", () => {
+            warn.remove();
+            resolve(true);
+        });
+        btnRow.appendChild(proceedBtn);
+
+        const backBtn = document.createElement("button");
+        backBtn.style.fontSize = "0.8rem";
+        backBtn.textContent = "Pick a different stack";
+        backBtn.addEventListener("click", () => {
+            warn.remove();
+            resolve(false);
+        });
+        btnRow.appendChild(backBtn);
+
+        warn.appendChild(btnRow);
+        section.appendChild(warn);
+        warn.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+}
+
+
+/**
+ * Run analysis on a stack and render the results.
+ *
+ * Extracted so both selectStack() and post-Apply-Fix re-analysis
+ * can share the same logic. Clears previous results, hits the
+ * backend, renders terminal steps, and shows the appropriate
+ * result card based on status.
+ */
+async function runAnalysis(stack) {
+    clearAnalysisResults();
+
     const termSection = document.getElementById("step-analyzing");
     const termOutput = document.getElementById("terminal-output");
     termOutput.replaceChildren();
@@ -1446,11 +1737,9 @@ async function selectStack(stack, clickEvent) {
     const composeFileName = composeFile.split(/[/\\]/).pop();
     const stackDirName = extractDirName(stack.path);
 
-    // Update terminal title to show compose file location
     const termTitle = document.querySelector(".terminal-title");
     if (termTitle) termTitle.textContent = stack.path.replace(/\\/g, "/") + "/" + composeFileName;
 
-    // Update card heading to include stack name
     const cardHeading = termSection.querySelector("h2");
     if (cardHeading) cardHeading.textContent = "Analyzing: " + stackDirName;
 
@@ -1479,6 +1768,13 @@ async function selectStack(stack, clickEvent) {
         const data = await resp.json();
         state.analysis = data;
 
+        // Mark this stack as verified — deep analysis is authoritative.
+        // Healthy stacks skip the blinking-yellow caution override.
+        const verifiedName = extractDirName(stack.path);
+        if (["healthy", "healthy_pipeline", "healthy_cross_stack"].includes(data.status)) {
+            state.verifiedStacks.add(verifiedName);
+        }
+
         // Render terminal steps with staggered animation
         await renderTerminalSteps(data.steps || []);
 
@@ -1504,10 +1800,48 @@ async function selectStack(stack, clickEvent) {
             setTerminalDots("warning");
             showIncompleteResult(data);
         } else {
-            // Conflicts found — show warning dots, not green
-            const hasCritical = (data.conflicts || []).some((c) => c.severity === "critical");
-            setTerminalDots(hasCritical ? "error" : "warning");
-            showAnalysisResult(data);
+            // Check if the user overrode a pre-flight warning and the ONLY
+            // conflicts are error-path-related (not real stack issues).
+            // If so, the stack is actually healthy — don't lie about it.
+            const conflicts = data.conflicts || [];
+            const allErrorPathOnly = state.preflightOverridden && conflicts.length > 0 &&
+                conflicts.every((c) => c.type === "path_unreachable");
+
+
+            if (allErrorPathOnly) {
+                // Stack is actually healthy — show green with context.
+                // The backend reported "path conflicts" because the pasted error
+                // triggered detection, but those conflicts don't belong to this
+                // stack. We need to visually CORRECT the terminal so the user
+                // doesn't see yellow warnings and think something is wrong.
+
+                // 1. Retroactively dim all yellow warning lines — they're misleading
+                const termOutput = document.getElementById("terminal-output");
+                termOutput.querySelectorAll(".terminal-line").forEach((line) => {
+                    const icon = line.querySelector(".terminal-icon.warn");
+                    if (icon) {
+                        line.classList.add("terminal-line-overridden");
+                        // Keep the yellow ! icon — it baits the eye, then
+                        // the strikethrough resolves the tension and guides
+                        // the reader down to the green RESULT line.
+                    }
+                });
+
+                // 2. Add a prominent green banner that visually dominates
+                setTerminalDots("done");
+                addTerminalLine("ok", "────────────────────────────────────────");
+                addTerminalLine("ok", "RESULT: Stack is healthy — no real issues found");
+                addTerminalLine("info", "The path conflict above came from your pasted error, not this stack");
+                // Update the terminal card heading to match reality
+                const termHeading = document.querySelector("#step-analyzing h2");
+                if (termHeading) termHeading.textContent = "Analyzed: " + extractDirName(stack.path) + " (healthy)";
+                showPreflightOverrideResult(data);
+            } else {
+                // Genuine conflicts — show warning dots
+                const hasCritical = conflicts.some((c) => c.severity === "critical");
+                setTerminalDots(hasCritical ? "error" : "warning");
+                showAnalysisResult(data);
+            }
         }
     } catch {
         setTerminalDots("error");
@@ -1581,6 +1915,101 @@ function showAnalysisResult(data) {
     showAgainButton();
     // Store analysis data for the auto-apply feature
     setAnalysisForApply(data);
+}
+
+/**
+ * Show truthful results when user overrode a pre-flight warning and the stack
+ * is actually healthy. Instead of lying ("Found 1 critical issue"), we show:
+ * 1. The stack's real health — green, healthy
+ * 2. An informational callout explaining why the pasted error doesn't apply
+ * 3. A clear action to go back and pick the right stack
+ */
+function showPreflightOverrideResult(data) {
+    // Show the healthy result card — because the stack IS healthy
+    const section = document.getElementById("step-healthy");
+    const details = document.getElementById("healthy-details");
+    details.replaceChildren();
+
+    const stepNum = section.querySelector(".step-number");
+    const heading = section.querySelector("h2");
+    if (stepNum) {
+        stepNum.className = "step-number ok";
+        stepNum.textContent = "\u2713";
+    }
+    if (heading) heading.textContent = "This Stack Is Healthy";
+
+    // Summary
+    const serviceCount = (data.services || []).length;
+    const msg = document.createElement("p");
+    msg.className = "healthy-message";
+    msg.textContent = "No real issues found across " + serviceCount +
+        " service" + (serviceCount !== 1 ? "s" : "") +
+        " in this stack.";
+    details.appendChild(msg);
+
+    // Informational callout — explain why the error doesn't apply
+    const callout = document.createElement("div");
+    callout.className = "callout callout-info";
+    callout.style.marginTop = "0.75rem";
+
+    const calloutTitle = document.createElement("p");
+    calloutTitle.style.fontWeight = "600";
+    calloutTitle.style.marginBottom = "0.25rem";
+    calloutTitle.textContent = "About the error you pasted";
+    callout.appendChild(calloutTitle);
+
+    // Pull the error path from the conflict detail for context
+    const errorConflict = (data.conflicts || []).find((c) => c.type === "path_unreachable");
+    if (errorConflict) {
+        const explainText = document.createElement("p");
+        explainText.style.margin = "0";
+        explainText.textContent = errorConflict.description;
+        callout.appendChild(explainText);
+
+        // If there's an RPM hint, show it as additional context
+        if (errorConflict.rpm_hint) {
+            const rpmText = document.createElement("p");
+            rpmText.style.margin = "0.5rem 0 0 0";
+            rpmText.style.fontStyle = "italic";
+            rpmText.textContent = errorConflict.rpm_hint.description;
+            callout.appendChild(rpmText);
+        }
+    }
+
+    const conclusion = document.createElement("p");
+    conclusion.style.margin = "0.5rem 0 0 0";
+    conclusion.style.fontWeight = "500";
+    conclusion.textContent = "This error likely belongs to a different stack. " +
+        "We warned you about this — no harm done.";
+    callout.appendChild(conclusion);
+
+    details.appendChild(callout);
+
+    // Action: go back to pick the right stack
+    const actions = document.createElement("div");
+    actions.style.marginTop = "1rem";
+    actions.style.display = "flex";
+    actions.style.gap = "0.75rem";
+
+    const backBtn = document.createElement("button");
+    backBtn.className = "btn btn-primary";
+    backBtn.textContent = "\u2190 Pick a different stack";
+    backBtn.addEventListener("click", () => {
+        clearAnalysisResults();
+        const fixMatch = document.getElementById("step-fix-match");
+        if (fixMatch && !fixMatch.classList.contains("hidden")) {
+            fixMatch.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+    });
+    actions.appendChild(backBtn);
+
+    details.appendChild(actions);
+
+    section.classList.remove("hidden");
+    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+    // Reset the flag
+    state.preflightOverridden = false;
 }
 
 // ─── Current Setup ───
@@ -1681,6 +2110,15 @@ function showProblem(data) {
             item.appendChild(detail);
         }
 
+        // RPM hint: if this conflict is an RPM scenario, show an insight callout
+        if (conflict.rpm_hint) {
+            const hint = document.createElement("div");
+            hint.className = "callout callout-info";
+            hint.style.marginTop = "0.5rem";
+            hint.textContent = conflict.rpm_hint.description;
+            item.appendChild(hint);
+        }
+
         details.appendChild(item);
     });
 
@@ -1720,28 +2158,143 @@ function showSolution(data) {
     const originalBlock = document.getElementById("solution-block-original");
     const recommendedBlock = document.getElementById("solution-block-recommended");
 
-    summaryEl.textContent =
-        "Replace the services section in your docker-compose.yml with the corrected configuration below. " +
-        "This includes all services with corrected volume mounts.";
+    // Clean up any previously injected track elements from a prior render
+    section.querySelectorAll(".solution-tracks, .track-content-quick, .track-content-proper").forEach((el) => el.remove());
 
-    if (data.solution_yaml) {
-        renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
+    // Ensure YAML blocks are back in the section (they may have been moved into properContent)
+    const solutionTabs = document.getElementById("solution-tabs");
+    if (solutionTabs && solutionTabs.parentElement !== section) {
+        summaryEl.after(solutionTabs);
+    }
+    if (recommendedBlock && recommendedBlock.parentElement !== section) {
+        (solutionTabs || summaryEl).after(recommendedBlock);
+    }
+    if (originalBlock && originalBlock.parentElement !== section) {
+        recommendedBlock.after(originalBlock);
+    }
+
+    // Check if RPM wizard should be offered as an alternative.
+    // Two triggers: (1) rpm_mappings with possible entries from mount overlap,
+    // or (2) an rpm_hint on a conflict (error path matches a DC container path).
+    const rpmMappings = data.rpm_mappings || [];
+    const hasPossibleRpm = rpmMappings.some((m) => m.possible);
+    const hasRpmHint = (data.conflicts || []).some((c) => c.rpm_hint);
+
+    if (hasPossibleRpm || hasRpmHint) {
+        // Show track selector: Quick Fix (RPM) vs Proper Fix (YAML restructure)
+        // The RPM wizard goes above the existing YAML solution
+        summaryEl.textContent = "Two fix options available. Choose the approach that works best for your setup.";
+
+        const trackWrap = document.createElement("div");
+        trackWrap.className = "solution-tracks";
+
+        const trackHeader = document.createElement("div");
+        trackHeader.className = "track-header";
+        trackHeader.textContent = "Choose your fix approach:";
+        trackWrap.appendChild(trackHeader);
+
+        const trackOpts = document.createElement("div");
+        trackOpts.className = "track-options";
+
+        const quickBtn = document.createElement("button");
+        quickBtn.className = "track-btn track-active";
+        const quickTitle = document.createElement("span");
+        quickTitle.textContent = "Quick Fix (RPM Wizard)";
+        quickBtn.appendChild(quickTitle);
+        const quickDesc = document.createElement("span");
+        quickDesc.className = "track-desc";
+        quickDesc.textContent = "Keep your mounts, bridge the paths step by step";
+        quickBtn.appendChild(quickDesc);
+        trackOpts.appendChild(quickBtn);
+
+        const properBtn = document.createElement("button");
+        properBtn.className = "track-btn";
+        const properTitle = document.createElement("span");
+        properTitle.textContent = "Proper Fix (Restructure)";
+        properBtn.appendChild(properTitle);
+        const properDesc = document.createElement("span");
+        properDesc.className = "track-desc";
+        properDesc.textContent = "TRaSH Guides compliance \u2014 no RPM needed after";
+        properBtn.appendChild(properDesc);
+        trackOpts.appendChild(properBtn);
+
+        trackWrap.appendChild(trackOpts);
+
+        // Quick Fix content (RPM wizard)
+        const quickContent = document.createElement("div");
+        quickContent.className = "track-content-quick";
+
+        // Proper Fix content (existing YAML solution — relocated)
+        const properContent = document.createElement("div");
+        properContent.className = "track-content-proper hidden";
+
+        // Insert track selector after the summary text
+        summaryEl.after(trackWrap, quickContent, properContent);
+
+        // Track toggle
+        quickBtn.addEventListener("click", () => {
+            quickBtn.classList.add("track-active");
+            properBtn.classList.remove("track-active");
+            quickContent.classList.remove("hidden");
+            properContent.classList.add("hidden");
+        });
+        properBtn.addEventListener("click", () => {
+            properBtn.classList.add("track-active");
+            quickBtn.classList.remove("track-active");
+            properContent.classList.remove("hidden");
+            quickContent.classList.add("hidden");
+        });
+
+        // Render RPM wizard into Quick Fix track
+        renderRpmWizard(data, quickContent);
+
+        // Move existing YAML solution elements into Proper Fix track
+        const solutionTabs = document.getElementById("solution-tabs");
+        if (solutionTabs) properContent.appendChild(solutionTabs);
+        if (recommendedBlock) properContent.appendChild(recommendedBlock);
+        if (originalBlock) properContent.appendChild(originalBlock);
+        // Move apply-confirm modal too
+        const applyConfirm = document.getElementById("apply-confirm");
+        if (applyConfirm) properContent.appendChild(applyConfirm);
+        const applyResult = document.getElementById("apply-result");
+        if (applyResult) properContent.appendChild(applyResult);
+
+        // Populate YAML content as before
+        if (data.solution_yaml) {
+            renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
+        } else {
+            const firstFix = data.conflicts?.find((c) => c.fix);
+            yamlEl.textContent = firstFix?.fix || "No specific YAML changes generated.";
+        }
+        if (data.original_corrected_yaml && originalTab && originalYamlEl) {
+            renderYamlWithHighlights(originalYamlEl, data.original_corrected_yaml, data.original_changed_lines || []);
+            originalTab.classList.remove("hidden");
+        } else if (originalTab) {
+            originalTab.classList.add("hidden");
+        }
+        switchSolutionTab("recommended");
     } else {
-        // Fallback: show the fix text from the first conflict
-        const firstFix = data.conflicts?.find((c) => c.fix);
-        yamlEl.textContent = firstFix?.fix || "No specific YAML changes generated.";
-    }
+        // No RPM available — show standard YAML solution only
+        summaryEl.textContent =
+            "Replace the services section in your docker-compose.yml with the corrected configuration below. " +
+            "This includes all services with corrected volume mounts.";
 
-    // Populate "Your Config (Corrected)" tab if backend generated it
-    if (data.original_corrected_yaml && originalTab && originalYamlEl) {
-        renderYamlWithHighlights(originalYamlEl, data.original_corrected_yaml, data.original_changed_lines || []);
-        originalTab.classList.remove("hidden");
-    } else if (originalTab) {
-        originalTab.classList.add("hidden");
-    }
+        if (data.solution_yaml) {
+            renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
+        } else {
+            const firstFix = data.conflicts?.find((c) => c.fix);
+            yamlEl.textContent = firstFix?.fix || "No specific YAML changes generated.";
+        }
 
-    // Ensure recommended tab is active by default
-    switchSolutionTab("recommended");
+        if (data.original_corrected_yaml && originalTab && originalYamlEl) {
+            renderYamlWithHighlights(originalYamlEl, data.original_corrected_yaml, data.original_changed_lines || []);
+            originalTab.classList.remove("hidden");
+        } else if (originalTab) {
+            originalTab.classList.add("hidden");
+        }
+
+        switchSolutionTab("recommended");
+    }
 
     section.classList.remove("hidden");
 }
@@ -1915,11 +2468,11 @@ function renderCategoryAdvisoryInto(container, data) {
 
     const callout = document.createElement("div");
     callout.className = "callout callout-category";
-    callout.style.marginBottom = "1rem";
+    callout.style.cssText = "margin-bottom: 1rem; padding: 1rem 1.25rem; background: #2d2418; border-left: 4px solid #d29922; border-radius: 6px; color: #e6edf3;";
 
     const title = document.createElement("strong");
-    title.style.cssText = "display: block; margin-bottom: 0.4rem; font-size: 0.9rem;";
-    title.textContent = "Also check: download client category save paths";
+    title.style.cssText = "display: block; margin-bottom: 0.4rem; font-size: 0.9rem; color: #d29922;";
+    title.textContent = "\u26A0 Also check: download client category save paths";
     callout.appendChild(title);
 
     // Gather names from both local services and pipeline
@@ -1932,34 +2485,43 @@ function renderCategoryAdvisoryInto(container, data) {
         dlNames = pipelineByRole.download_client.map((s) => s.service_name);
     }
 
-    const dlName = dlNames[0] || "your download client";
-    const arrName = arrNames[0] || "your *arr app";
-    const isQbit = dlName.toLowerCase().includes("qbit") || dlName.toLowerCase().includes("torrent");
-    const isSab = dlName.toLowerCase().includes("sab") || dlName.toLowerCase().includes("nzb");
+    const arrName = arrNames.length > 0 ? arrNames.join(", ") : "your *arr app";
 
-    const example = document.createElement("p");
-    example.style.cssText = "margin: 0.5rem 0; font-size: 0.88rem; color: var(--text-secondary);";
+    // Deduplicate download client names (pipeline can list same service multiple times)
+    const uniqueDlNames = [...new Set(dlNames.map((n) => n.toLowerCase()))];
 
-    if (isQbit) {
-        example.textContent =
-            "In qBittorrent: Options > Downloads — check Default Save Path AND each category's save path. " +
-            "These must point inside a volume mount that " + arrName + " can also see.";
-    } else if (isSab) {
-        example.textContent =
-            "In SABnzbd: Config > Folders — check the Completed Download Folder and category output folders. " +
-            "These must point inside a volume mount that " + arrName + " can also see.";
-    } else {
-        example.textContent =
-            "In " + dlName + ": check the download save path / category output folders. " +
-            "These must point inside a volume mount that " + arrName + " can also see.";
+    // Generate specific advice for each detected download client
+    function dlAdvice(name) {
+        const lower = name.toLowerCase();
+        if (lower.includes("qbit") || lower === "qbittorrent")
+            return "In qBittorrent: Options > Downloads — check Default Save Path AND each category's save path.";
+        if (lower.includes("sab") || lower.includes("nzb"))
+            return "In SABnzbd: Config > Folders — check the Completed Download Folder and category output folders.";
+        if (lower.includes("deluge"))
+            return "In Deluge: Preferences > Downloads — check the Download to path and any label/category plugin paths.";
+        if (lower.includes("transmission"))
+            return "In Transmission: Preferences > Downloading — check the Default download folder and incomplete directory.";
+        if (lower.includes("jdownloader") || lower.includes("jdown"))
+            return "In JDownloader: Settings > General — check Default Download Folder.";
+        return "In " + name + ": check the download save path and any category/label output folders.";
     }
-    callout.appendChild(example);
+
+    // Render advice for each unique download client
+    uniqueDlNames.forEach((dlLower) => {
+        // Find the original-case name
+        const originalName = dlNames.find((n) => n.toLowerCase() === dlLower) || dlLower;
+        const advice = document.createElement("p");
+        advice.style.cssText = "margin: 0.4rem 0; font-size: 0.88rem; color: var(--text-secondary);";
+        advice.textContent = dlAdvice(originalName) +
+            " These must point inside a volume mount that " + arrName + " can also see.";
+        callout.appendChild(advice);
+    });
 
     const why = document.createElement("p");
     why.style.cssText = "margin: 0.5rem 0 0; font-size: 0.82rem; color: var(--text-muted);";
     why.textContent =
         "This is the #1 cause of import failures that survives a correct volume setup. " +
-        "If " + dlName + "'s category path isn't under a shared mount, imports fail even with perfect volumes.";
+        "If a download client's category path isn't under a shared mount, imports fail even with perfect volumes.";
     callout.appendChild(why);
 
     container.appendChild(callout);
@@ -2227,9 +2789,6 @@ function showHealthyResult(data) {
     table.appendChild(tbody);
     setupContent.appendChild(table);
 
-    // Category advisory inline in the setup details
-    renderCategoryAdvisoryInto(setupContent, data);
-
     // Compact troubleshooting hints
     const troubleHint = document.createElement("p");
     troubleHint.style.cssText = "font-size: 0.82rem; color: var(--text-muted); margin-top: 0.5rem;";
@@ -2267,11 +2826,8 @@ function showHealthyResult(data) {
     // above the action buttons. Gentle, not alarming.
     renderCategoryAdvisoryInto(details, data);
 
-    // ─── Bottom quick-switch + utility actions ───
-    renderBottomActions(details);
-
-    // Don't show separate setup, trash, or again cards for healthy results
     section.classList.remove("hidden");
+    showAgainButton();
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -2551,6 +3107,786 @@ function showCrossStackHealthy(data) {
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
+// ─── RPM Wizard ───
+// Gated wizard for Remote Path Mapping configuration.
+// Each gate must be satisfied before the next unlocks. If the wizard
+// completes, the RPM works. If it doesn't complete, that's on the user.
+
+function getDcAdvice(name) {
+    const lower = (name || "").toLowerCase();
+    if (lower.includes("qbit") || lower === "qbittorrent")
+        return {
+            app: "qBittorrent",
+            steps: "1. Go to Options \u2192 Downloads\n2. Note the Default Save Path\n3. Right-click each category \u2192 Edit category\n4. Note each category's Save Path",
+            categories: "tv-sonarr, radarr, lidarr",
+        };
+    if (lower.includes("sab") || lower.includes("nzb"))
+        return {
+            app: "SABnzbd",
+            steps: "1. Go to Config \u2192 Categories\n2. Note each category's Folder/Path value\n3. Note the default Completed Download Folder in Config \u2192 Folders",
+            categories: "tv, movies, music",
+        };
+    if (lower.includes("nzbget"))
+        return {
+            app: "NZBGet",
+            steps: "1. Go to Settings \u2192 Categories\n2. Note each category's DestDir value",
+            categories: "tv, movies, music",
+        };
+    if (lower.includes("deluge"))
+        return {
+            app: "Deluge",
+            steps: "1. Go to Preferences \u2192 Downloads\n2. Note the Download to path\n3. Check the Label plugin for per-label paths",
+            categories: "tv-sonarr, radarr",
+        };
+    if (lower.includes("transmission"))
+        return {
+            app: "Transmission",
+            steps: "1. Go to Preferences \u2192 Downloading\n2. Note the default download folder\n3. Note the incomplete directory if set",
+            categories: "(Transmission uses one folder for all)",
+        };
+    if (lower.includes("rtorrent") || lower.includes("flood"))
+        return {
+            app: lower.includes("flood") ? "Flood" : "rTorrent",
+            steps: "1. Check Settings \u2192 Downloads\n2. Note the default directory\n3. Note any per-label directory overrides",
+            categories: "tv-sonarr, radarr",
+        };
+    if (lower.includes("jdownloader") || lower.includes("jdown"))
+        return {
+            app: "JDownloader",
+            steps: "1. Go to Settings \u2192 General\n2. Note the Default Download Folder",
+            categories: "(JDownloader uses one folder)",
+        };
+    if (lower.includes("aria2"))
+        return {
+            app: "aria2",
+            steps: "1. Check your aria2.conf or RPC settings\n2. Note the dir parameter value",
+            categories: "(aria2 uses one folder)",
+        };
+    if (lower.includes("rdtclient"))
+        return {
+            app: "rdtclient (Real-Debrid)",
+            steps: "1. Go to Settings \u2192 Download path\n2. Note the path value (behaves like qBit API)",
+            categories: "(rdtclient uses one folder)",
+        };
+    return {
+        app: name,
+        steps: "1. Open your download client settings\n2. Note the download save path\n3. Check any category/label folder overrides",
+        categories: "",
+    };
+}
+
+function renderRpmTable(entries, container) {
+    // Group by arr_service
+    const byArr = {};
+    entries.forEach((m) => {
+        const key = m.arr_service + " (" + m.arr_stack + ")";
+        (byArr[key] = byArr[key] || []).push(m);
+    });
+
+    for (const [arrLabel, rows] of Object.entries(byArr)) {
+        const header = document.createElement("div");
+        header.className = "rpm-arr-header";
+        header.textContent = arrLabel;
+        container.appendChild(header);
+
+        const table = document.createElement("table");
+        table.className = "rpm-table";
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["Host", "Remote Path", "Local Path"].forEach((col) => {
+            const th = document.createElement("th");
+            th.textContent = col;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        rows.forEach((m) => {
+            const tr = document.createElement("tr");
+            [m.host, m.remote_path, m.local_path].forEach((val) => {
+                const td = document.createElement("td");
+                td.textContent = val;
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+    }
+}
+
+function renderRpmWizard(data, container) {
+    const allMappings = data.rpm_mappings || [];
+    // Filter to mappings relevant to this stack (current stack as DC or arr)
+    const stackName = data.stack_name || "";
+    const relevantMappings = allMappings.filter(
+        (m) => m.dc_stack === stackName || m.arr_stack === stackName
+    );
+    const possibleMappings = relevantMappings.filter((m) => m.possible);
+    const impossibleMappings = relevantMappings.filter((m) => !m.possible);
+
+    if (possibleMappings.length === 0) {
+        const noRpm = document.createElement("div");
+        noRpm.className = "rpm-impossible";
+        noRpm.textContent =
+            "RPM can't help here \u2014 the host mount paths don't overlap between your " +
+            "download clients and *arr apps. The data files aren't accessible across services. " +
+            "Switch to the Proper Fix tab to restructure your mounts.";
+        container.appendChild(noRpm);
+        return;
+    }
+
+    // Unique DCs in the possible mappings
+    const uniqueDcs = [];
+    const seenDcs = new Set();
+    possibleMappings.forEach((m) => {
+        const key = m.dc_service + "|" + m.dc_stack;
+        if (!seenDcs.has(key)) {
+            seenDcs.add(key);
+            uniqueDcs.push({ name: m.dc_service, stack: m.dc_stack });
+        }
+    });
+
+    // Unique arrs in possible mappings
+    const uniqueArrs = [];
+    const seenArrs = new Set();
+    possibleMappings.forEach((m) => {
+        const key = m.arr_service + "|" + m.arr_stack;
+        if (!seenArrs.has(key)) {
+            seenArrs.add(key);
+            uniqueArrs.push({ name: m.arr_service, stack: m.arr_stack });
+        }
+    });
+
+    const wizard = document.createElement("div");
+    wizard.className = "rpm-wizard";
+    container.appendChild(wizard);
+
+    let currentGate = 1;
+    const gateEls = {};
+
+    // Wizard state
+    const wState = {
+        usesDefaultForAll: false,
+        defaultPath: "",
+        categories: "",
+        arrConfirmed: new Set(),
+    };
+
+    function setGateState(n, state) {
+        const el = gateEls[n];
+        if (!el) return;
+        el.classList.remove("active", "locked", "complete");
+        el.classList.add(state);
+    }
+
+    function updateGates() {
+        for (let i = 1; i <= 5; i++) {
+            if (i < currentGate) setGateState(i, "complete");
+            else if (i === currentGate) setGateState(i, "active");
+            else setGateState(i, "locked");
+        }
+    }
+
+    function canAdvance(n) {
+        if (n === 2) {
+            return wState.usesDefaultForAll || wState.categories.trim().length > 0;
+        }
+        if (n === 4) {
+            return wState.arrConfirmed.size >= uniqueArrs.length;
+        }
+        return true;
+    }
+
+    // ─── Gate 1: What We See ───
+    function buildGate1() {
+        const gate = document.createElement("div");
+        gate.className = "wizard-gate active";
+        gateEls[1] = gate;
+
+        const header = document.createElement("div");
+        header.className = "gate-header";
+        const num = document.createElement("span");
+        num.className = "gate-number";
+        num.textContent = "1";
+        header.appendChild(num);
+        const title = document.createElement("span");
+        title.textContent = "What MapArr Detected";
+        header.appendChild(title);
+        gate.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "gate-content";
+
+        const intro = document.createElement("p");
+        intro.textContent =
+            "Based on your Docker Compose volume mounts, here's what we can determine:";
+        content.appendChild(intro);
+
+        // Show each DC → arr pair
+        possibleMappings.forEach((m) => {
+            const detail = document.createElement("div");
+            detail.className = "mount-detail";
+
+            const pairs = [
+                ["Download Client:", m.dc_service + " (" + m.dc_stack + ")"],
+                ["DC mount:", m.dc_host_path + " \u2192 " + m.remote_path.replace(/\/$/, "")],
+                ["*Arr App:", m.arr_service + " (" + m.arr_stack + ")"],
+                ["Arr mount:", m.arr_host_path + " \u2192 " + m.local_path.replace(/\/$/, "")],
+                ["Base RPM:", "Remote=" + m.remote_path + " \u2192 Local=" + m.local_path],
+            ];
+            pairs.forEach(([label, value]) => {
+                const lbl = document.createElement("span");
+                lbl.className = "mount-label";
+                lbl.textContent = label;
+                detail.appendChild(lbl);
+                const val = document.createElement("span");
+                val.className = "mount-value";
+                val.textContent = value;
+                detail.appendChild(val);
+            });
+
+            content.appendChild(detail);
+        });
+
+        const caveat = document.createElement("p");
+        caveat.style.color = "var(--warning)";
+        caveat.textContent =
+            "This is based on volume mounts only. We need to verify your download client's " +
+            "category settings to ensure these RPM entries are accurate.";
+        content.appendChild(caveat);
+
+        // "Missing a DC?" link
+        const addDcLink = document.createElement("span");
+        addDcLink.className = "add-dc-link";
+        addDcLink.textContent = "+ Missing a download client? Add manually";
+        const manualForm = document.createElement("div");
+        manualForm.className = "manual-dc-form hidden";
+
+        const dcNote = document.createElement("p");
+        dcNote.style.fontSize = "0.78rem";
+        dcNote.style.color = "var(--text-muted)";
+        dcNote.textContent =
+            "If a download client is in a different directory, on another machine, or not " +
+            "managed by Docker Compose, we can't detect it. You can still configure RPM " +
+            "manually in your *arr app's settings.";
+        manualForm.appendChild(dcNote);
+
+        addDcLink.addEventListener("click", () => {
+            manualForm.classList.toggle("hidden");
+        });
+        content.appendChild(addDcLink);
+        content.appendChild(manualForm);
+
+        gate.appendChild(content);
+
+        // Actions
+        const actions = document.createElement("div");
+        actions.className = "gate-actions";
+        const nextBtn = document.createElement("button");
+        nextBtn.className = "gate-next";
+        nextBtn.textContent = "Next: Verify DC \u2192";
+        nextBtn.addEventListener("click", () => {
+            currentGate = 2;
+            updateGates();
+            gateEls[2].scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+        actions.appendChild(nextBtn);
+        gate.appendChild(actions);
+
+        wizard.appendChild(gate);
+    }
+
+    // ─── Gate 2: Verify DC ───
+    function buildGate2() {
+        const gate = document.createElement("div");
+        gate.className = "wizard-gate locked";
+        gateEls[2] = gate;
+
+        const header = document.createElement("div");
+        header.className = "gate-header";
+        const num = document.createElement("span");
+        num.className = "gate-number";
+        num.textContent = "2";
+        header.appendChild(num);
+        const title = document.createElement("span");
+        title.textContent = "Verify Download Client Categories";
+        header.appendChild(title);
+        gate.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "gate-content";
+
+        // Per-DC instructions
+        uniqueDcs.forEach((dc) => {
+            const advice = getDcAdvice(dc.name);
+            const dcSection = document.createElement("div");
+            dcSection.style.marginBottom = "0.75rem";
+
+            const dcTitle = document.createElement("p");
+            dcTitle.style.fontWeight = "600";
+            dcTitle.style.color = "var(--text)";
+            dcTitle.textContent = "Open " + advice.app + " and check your category settings:";
+            dcSection.appendChild(dcTitle);
+
+            const stepsText = document.createElement("p");
+            stepsText.style.whiteSpace = "pre-line";
+            stepsText.textContent = advice.steps;
+            dcSection.appendChild(stepsText);
+
+            if (advice.categories) {
+                const catHint = document.createElement("p");
+                catHint.style.color = "var(--text-muted)";
+                catHint.textContent = "Common categories: " + advice.categories;
+                dcSection.appendChild(catHint);
+            }
+
+            content.appendChild(dcSection);
+        });
+
+        // Default path input
+        const defaultLabel = document.createElement("label");
+        defaultLabel.style.fontSize = "0.8rem";
+        defaultLabel.style.color = "var(--text-secondary)";
+        defaultLabel.style.display = "block";
+        defaultLabel.style.marginTop = "0.5rem";
+        defaultLabel.textContent = "Default Save Path (from your DC):";
+        content.appendChild(defaultLabel);
+
+        const defaultInput = document.createElement("input");
+        defaultInput.type = "text";
+        defaultInput.className = "rpm-input";
+        defaultInput.placeholder = "/downloads";
+        defaultInput.addEventListener("input", () => {
+            wState.defaultPath = defaultInput.value;
+        });
+        content.appendChild(defaultInput);
+
+        // Category input
+        const catLabel = document.createElement("label");
+        catLabel.style.fontSize = "0.8rem";
+        catLabel.style.color = "var(--text-secondary)";
+        catLabel.style.display = "block";
+        catLabel.style.marginTop = "0.5rem";
+        catLabel.textContent = "Categories (one per line, name:path):";
+        content.appendChild(catLabel);
+
+        const catInput = document.createElement("textarea");
+        catInput.className = "rpm-input";
+        catInput.rows = 3;
+        catInput.placeholder = "tv-sonarr:/downloads/tv\nradarr:/downloads/movies";
+        catInput.addEventListener("input", () => {
+            wState.categories = catInput.value;
+            nextBtn2.disabled = !canAdvance(2);
+        });
+        content.appendChild(catInput);
+
+        // "Uses default for all" checkbox
+        const checkRow = document.createElement("label");
+        checkRow.className = "rpm-checkbox-row";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.addEventListener("change", () => {
+            wState.usesDefaultForAll = checkbox.checked;
+            nextBtn2.disabled = !canAdvance(2);
+            if (checkbox.checked) {
+                catInput.disabled = true;
+                catInput.style.opacity = "0.4";
+            } else {
+                catInput.disabled = false;
+                catInput.style.opacity = "1";
+            }
+        });
+        checkRow.appendChild(checkbox);
+        const checkText = document.createTextNode(
+            " My DC uses the default save path for all categories (no per-category paths)"
+        );
+        checkRow.appendChild(checkText);
+        content.appendChild(checkRow);
+
+        gate.appendChild(content);
+
+        // Actions
+        const actions = document.createElement("div");
+        actions.className = "gate-actions";
+        const backBtn = document.createElement("button");
+        backBtn.textContent = "\u2190 Back";
+        backBtn.addEventListener("click", () => {
+            currentGate = 1;
+            updateGates();
+        });
+        actions.appendChild(backBtn);
+
+        const nextBtn2 = document.createElement("button");
+        nextBtn2.className = "gate-next";
+        nextBtn2.textContent = "Next: Calculate RPM \u2192";
+        nextBtn2.disabled = true;
+        nextBtn2.addEventListener("click", () => {
+            currentGate = 3;
+            updateGates();
+            buildGate3Content();
+            gateEls[3].scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+        actions.appendChild(nextBtn2);
+        gate.appendChild(actions);
+
+        wizard.appendChild(gate);
+    }
+
+    // ─── Gate 3: Your RPM Settings ───
+    let gate3Content = null;
+
+    function buildGate3() {
+        const gate = document.createElement("div");
+        gate.className = "wizard-gate locked";
+        gateEls[3] = gate;
+
+        const header = document.createElement("div");
+        header.className = "gate-header";
+        const num = document.createElement("span");
+        num.className = "gate-number";
+        num.textContent = "3";
+        header.appendChild(num);
+        const title = document.createElement("span");
+        title.textContent = "Your RPM Settings";
+        header.appendChild(title);
+        gate.appendChild(header);
+
+        gate3Content = document.createElement("div");
+        gate3Content.className = "gate-content";
+        gate.appendChild(gate3Content);
+
+        // Actions
+        const actions = document.createElement("div");
+        actions.className = "gate-actions";
+        const backBtn = document.createElement("button");
+        backBtn.textContent = "\u2190 Back";
+        backBtn.addEventListener("click", () => {
+            currentGate = 2;
+            updateGates();
+        });
+        actions.appendChild(backBtn);
+
+        const nextBtn3 = document.createElement("button");
+        nextBtn3.className = "gate-next";
+        nextBtn3.textContent = "Next: Apply in *arr \u2192";
+        nextBtn3.addEventListener("click", () => {
+            currentGate = 4;
+            updateGates();
+            gateEls[4].scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+        actions.appendChild(nextBtn3);
+        gate.appendChild(actions);
+
+        wizard.appendChild(gate);
+    }
+
+    function buildGate3Content() {
+        if (!gate3Content) return;
+        gate3Content.replaceChildren();
+
+        const intro = document.createElement("p");
+        intro.textContent = "These are the exact RPM entries to add in your *arr apps:";
+        gate3Content.appendChild(intro);
+
+        // For now, use the base RPM mappings. Category refinement: if user entered
+        // categories that are subdirs of the base container path, the base RPM already
+        // handles them via prefix replacement — explain this.
+        if (wState.usesDefaultForAll || wState.categories.trim().length === 0) {
+            const note = document.createElement("p");
+            note.style.color = "var(--text-muted)";
+            note.textContent =
+                "Using base RPM entries. RPM does prefix replacement, so category " +
+                "subdirectories (like /downloads/tv/) are automatically handled.";
+            gate3Content.appendChild(note);
+        } else {
+            // Parse categories and check if they require per-category RPMs
+            const cats = wState.categories.trim().split("\n").filter(Boolean);
+            const needsPerCat = cats.some((line) => {
+                const parts = line.split(":");
+                if (parts.length < 2) return false;
+                const catPath = parts.slice(1).join(":").trim();
+                // If category path doesn't start with the DC container base, it needs its own RPM
+                return possibleMappings.some(
+                    (m) => !catPath.startsWith(m.remote_path.replace(/\/$/, ""))
+                );
+            });
+
+            if (needsPerCat) {
+                const note = document.createElement("p");
+                note.style.color = "var(--warning)";
+                note.textContent =
+                    "Some category paths use a different base than the default. " +
+                    "Per-category RPM entries may be needed. Review the entries below.";
+                gate3Content.appendChild(note);
+            } else {
+                const note = document.createElement("p");
+                note.style.color = "var(--text-muted)";
+                note.textContent =
+                    "Your categories are subdirectories of the base path. The base RPM " +
+                    "entry handles them all via prefix replacement.";
+                gate3Content.appendChild(note);
+            }
+        }
+
+        renderRpmTable(possibleMappings, gate3Content);
+
+        if (impossibleMappings.length > 0) {
+            const warn = document.createElement("div");
+            warn.className = "rpm-impossible";
+            const names = impossibleMappings.map(
+                (m) => m.dc_service + " \u2192 " + m.arr_service
+            );
+            warn.textContent =
+                "RPM can't bridge these pairs (host paths don't overlap): " +
+                names.join(", ") +
+                ". These require mount restructuring (see Proper Fix tab).";
+            gate3Content.appendChild(warn);
+        }
+    }
+
+    // ─── Gate 4: Apply in *Arr ───
+    function buildGate4() {
+        const gate = document.createElement("div");
+        gate.className = "wizard-gate locked";
+        gateEls[4] = gate;
+
+        const header = document.createElement("div");
+        header.className = "gate-header";
+        const num = document.createElement("span");
+        num.className = "gate-number";
+        num.textContent = "4";
+        header.appendChild(num);
+        const title = document.createElement("span");
+        title.textContent = "Add RPM in Your *Arr Apps";
+        header.appendChild(title);
+        gate.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "gate-content";
+
+        uniqueArrs.forEach((arr) => {
+            const arrMappings = possibleMappings.filter(
+                (m) => m.arr_service === arr.name && m.arr_stack === arr.stack
+            );
+            if (arrMappings.length === 0) return;
+
+            const arrSection = document.createElement("div");
+            arrSection.style.marginBottom = "1rem";
+
+            const arrTitle = document.createElement("p");
+            arrTitle.style.fontWeight = "600";
+            arrTitle.style.color = "var(--text)";
+            arrTitle.textContent = "In " + arr.name + ":";
+            arrSection.appendChild(arrTitle);
+
+            const steps = document.createElement("div");
+            steps.className = "rpm-instructions";
+            steps.textContent =
+                "1. Open " + arr.name + " \u2192 Settings \u2192 Download Clients\n" +
+                "2. Click on each download client in your list\n" +
+                "3. Scroll to Remote Path Mappings\n" +
+                "4. Click + to add a new mapping\n" +
+                "5. Enter the Host, Remote Path, and Local Path from the table below\n" +
+                "6. Click Save";
+            steps.style.whiteSpace = "pre-line";
+            arrSection.appendChild(steps);
+
+            renderRpmTable(arrMappings, arrSection);
+
+            // Confirmation checkbox
+            const checkRow = document.createElement("label");
+            checkRow.className = "rpm-checkbox-row";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.addEventListener("change", () => {
+                const arrKey = arr.name + "|" + arr.stack;
+                if (cb.checked) wState.arrConfirmed.add(arrKey);
+                else wState.arrConfirmed.delete(arrKey);
+                nextBtn4.disabled = !canAdvance(4);
+            });
+            checkRow.appendChild(cb);
+            const cbText = document.createTextNode(
+                " I've added the RPM entries in " + arr.name
+            );
+            checkRow.appendChild(cbText);
+            arrSection.appendChild(checkRow);
+
+            content.appendChild(arrSection);
+        });
+
+        gate.appendChild(content);
+
+        // Actions
+        const actions = document.createElement("div");
+        actions.className = "gate-actions";
+        const backBtn = document.createElement("button");
+        backBtn.textContent = "\u2190 Back";
+        backBtn.addEventListener("click", () => {
+            currentGate = 3;
+            updateGates();
+        });
+        actions.appendChild(backBtn);
+
+        const nextBtn4 = document.createElement("button");
+        nextBtn4.className = "gate-next";
+        nextBtn4.textContent = "Next: Verify \u2192";
+        nextBtn4.disabled = true;
+        nextBtn4.addEventListener("click", () => {
+            currentGate = 5;
+            updateGates();
+            gateEls[5].scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+        actions.appendChild(nextBtn4);
+        gate.appendChild(actions);
+
+        wizard.appendChild(gate);
+    }
+
+    // ─── Gate 5: Verify ───
+    function buildGate5() {
+        const gate = document.createElement("div");
+        gate.className = "wizard-gate locked";
+        gateEls[5] = gate;
+
+        const header = document.createElement("div");
+        header.className = "gate-header";
+        const num = document.createElement("span");
+        num.className = "gate-number";
+        num.textContent = "5";
+        header.appendChild(num);
+        const title = document.createElement("span");
+        title.textContent = "Test Your Setup";
+        header.appendChild(title);
+        gate.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "gate-content";
+
+        const intro = document.createElement("p");
+        intro.textContent = "Trigger a test download to verify RPM is working:";
+        content.appendChild(intro);
+
+        const steps = document.createElement("p");
+        steps.style.whiteSpace = "pre-line";
+        steps.textContent =
+            "1. In your *arr app, do a manual search for any item\n" +
+            "2. Grab a small file and let it download\n" +
+            "3. Watch if the *arr app successfully imports it\n\n" +
+            "If import succeeds \u2192 your RPM is working!\n" +
+            "If import fails \u2192 go back and double-check the paths";
+        content.appendChild(steps);
+
+        gate.appendChild(content);
+
+        // Actions
+        const actions = document.createElement("div");
+        actions.className = "gate-actions";
+        const backBtn = document.createElement("button");
+        backBtn.textContent = "\u2190 Back";
+        backBtn.addEventListener("click", () => {
+            currentGate = 4;
+            updateGates();
+        });
+        actions.appendChild(backBtn);
+
+        const brokenBtn = document.createElement("button");
+        brokenBtn.textContent = "Still broken";
+        brokenBtn.addEventListener("click", () => {
+            // Replace gate 5 content with troubleshooting
+            content.replaceChildren();
+            const troubleTitle = document.createElement("p");
+            troubleTitle.style.fontWeight = "600";
+            troubleTitle.textContent = "Troubleshooting:";
+            content.appendChild(troubleTitle);
+
+            const tips = document.createElement("p");
+            tips.style.whiteSpace = "pre-line";
+            tips.textContent =
+                "\u2022 Double-check the Host field matches the DC container name exactly\n" +
+                "\u2022 Ensure Remote and Local paths end with a trailing slash /\n" +
+                "\u2022 Restart the *arr app after adding RPM entries\n" +
+                "\u2022 Check the *arr app's logs for import errors\n\n" +
+                "If RPM still doesn't work, consider the Proper Fix tab \u2014 " +
+                "restructuring mounts is the permanent solution.";
+            content.appendChild(tips);
+        });
+        actions.appendChild(brokenBtn);
+
+        const worksBtn = document.createElement("button");
+        worksBtn.className = "gate-next";
+        worksBtn.textContent = "It works!";
+        worksBtn.addEventListener("click", () => {
+            // Replace wizard with success
+            wizard.replaceChildren();
+            const success = document.createElement("div");
+            success.className = "wizard-success";
+
+            const icon = document.createElement("div");
+            icon.className = "success-icon";
+            icon.textContent = "\u2705";
+            success.appendChild(icon);
+
+            const h3 = document.createElement("h3");
+            h3.textContent = "RPM Configured Successfully!";
+            success.appendChild(h3);
+
+            const desc = document.createElement("p");
+            const dcNames = uniqueDcs.map((d) => d.name).join(", ");
+            const arrNames = uniqueArrs.map((a) => a.name).join(", ");
+            desc.textContent = dcNames + " \u2192 " + arrNames + " path mapping verified.";
+            success.appendChild(desc);
+
+            const btnRow = document.createElement("div");
+            btnRow.className = "success-actions";
+
+            const anotherBtn = document.createElement("button");
+            anotherBtn.textContent = "Fix another DC";
+            anotherBtn.addEventListener("click", () => {
+                // Restart wizard
+                wizard.replaceChildren();
+                currentGate = 1;
+                wState.usesDefaultForAll = false;
+                wState.defaultPath = "";
+                wState.categories = "";
+                wState.arrConfirmed.clear();
+                buildGate1();
+                buildGate2();
+                buildGate3();
+                buildGate4();
+                buildGate5();
+                updateGates();
+            });
+            btnRow.appendChild(anotherBtn);
+
+            const doneBtn = document.createElement("button");
+            doneBtn.className = "btn-primary";
+            doneBtn.textContent = "I'm all done";
+            doneBtn.addEventListener("click", () => {
+                showSimpleToast("RPM configuration complete!", "success");
+            });
+            btnRow.appendChild(doneBtn);
+
+            success.appendChild(btnRow);
+            wizard.appendChild(success);
+        });
+        actions.appendChild(worksBtn);
+        gate.appendChild(actions);
+
+        wizard.appendChild(gate);
+    }
+
+    // Build all gates
+    buildGate1();
+    buildGate2();
+    buildGate3();
+    buildGate4();
+    buildGate5();
+    updateGates();
+}
+
+
 // ─── Cross-Stack Conflict (red — siblings found but mounts differ) ───
 
 function showCrossStackConflict(data) {
@@ -2643,18 +3979,200 @@ function showCrossStackConflict(data) {
         details.appendChild(conflictDiv);
     });
 
-    // Fix recommendation
-    const fixCallout = document.createElement("div");
-    fixCallout.className = "callout callout-warning";
-    fixCallout.textContent =
-        "All media services need to share the same host directory for hardlinks to work. " +
-        "Update the volume mounts in each stack's compose file to use one unified host path " +
-        "(e.g. /mnt/nas:/data or /host/data:/data) following the TRaSH Guides pattern.";
-    details.appendChild(fixCallout);
-
     // Show what IS in the current stack
     showCurrentSetup(data);
     renderMountWarningsInto(details, data);
+
+    // ─── Solution Track Selector ───
+    // Two tracks: Quick Fix (RPM Wizard) and Proper Fix (Restructure Mounts)
+    const rpmMappings = data.rpm_mappings || [];
+    const hasPossibleRpm = rpmMappings.some((m) => m.possible);
+
+    const trackWrap = document.createElement("div");
+    trackWrap.className = "solution-tracks";
+
+    const trackHeader = document.createElement("div");
+    trackHeader.className = "track-header";
+    trackHeader.textContent = "Choose your fix approach:";
+    trackWrap.appendChild(trackHeader);
+
+    const trackOpts = document.createElement("div");
+    trackOpts.className = "track-options";
+
+    const quickBtn = document.createElement("button");
+    quickBtn.className = "track-btn" + (hasPossibleRpm ? " track-active" : "");
+    const quickTitle = document.createElement("span");
+    quickTitle.textContent = "Quick Fix (RPM Wizard)";
+    quickBtn.appendChild(quickTitle);
+    const quickDesc = document.createElement("span");
+    quickDesc.className = "track-desc";
+    quickDesc.textContent = "Keep your mounts, bridge the paths step by step";
+    quickBtn.appendChild(quickDesc);
+    trackOpts.appendChild(quickBtn);
+
+    const properBtn = document.createElement("button");
+    properBtn.className = "track-btn" + (!hasPossibleRpm ? " track-active" : "");
+    const properTitle = document.createElement("span");
+    properTitle.textContent = "Proper Fix (Restructure)";
+    properBtn.appendChild(properTitle);
+    const properDesc = document.createElement("span");
+    properDesc.className = "track-desc";
+    properDesc.textContent = "TRaSH Guides compliance \u2014 no RPM needed after";
+    properBtn.appendChild(properDesc);
+    trackOpts.appendChild(properBtn);
+
+    trackWrap.appendChild(trackOpts);
+    details.appendChild(trackWrap);
+
+    // Track content containers
+    const quickContent = document.createElement("div");
+    quickContent.className = "track-content-quick";
+    if (!hasPossibleRpm) quickContent.classList.add("hidden");
+    details.appendChild(quickContent);
+
+    const properContent = document.createElement("div");
+    properContent.className = "track-content-proper";
+    if (hasPossibleRpm) properContent.classList.add("hidden");
+    details.appendChild(properContent);
+
+    // Track toggle
+    quickBtn.addEventListener("click", () => {
+        quickBtn.classList.add("track-active");
+        properBtn.classList.remove("track-active");
+        quickContent.classList.remove("hidden");
+        properContent.classList.add("hidden");
+    });
+    properBtn.addEventListener("click", () => {
+        properBtn.classList.add("track-active");
+        quickBtn.classList.remove("track-active");
+        properContent.classList.remove("hidden");
+        quickContent.classList.add("hidden");
+    });
+
+    // ─── Quick Fix Track: RPM Wizard ───
+    renderRpmWizard(data, quickContent);
+
+    // ─── Proper Fix Track: Existing Apply Fix ───
+    const properIntro = document.createElement("div");
+    properIntro.className = "callout callout-warning";
+    properIntro.textContent =
+        "Restructure your volume mounts so all media services share one root directory " +
+        "(e.g. /mnt/nas:/data). After this, every service sees the same paths \u2014 " +
+        "hardlinks work, imports are instant, and RPM entries become unnecessary.";
+    properContent.appendChild(properIntro);
+
+    // Apply Fix button for the Proper Fix track
+    if (data && data.original_corrected_yaml && data.compose_file_path) {
+        _lastAnalysisForApply = data;
+
+        const applyWrap = document.createElement("div");
+        applyWrap.className = "cross-stack-apply-wrap";
+        applyWrap.style.marginTop = "1rem";
+
+        const applyBtn = document.createElement("button");
+        applyBtn.className = "apply-btn";
+        applyBtn.textContent = "Apply Fix";
+        applyBtn.addEventListener("click", () => {
+            confirmWrap.classList.remove("hidden");
+        });
+        applyWrap.appendChild(applyBtn);
+
+        const confirmWrap = document.createElement("div");
+        confirmWrap.className = "apply-confirm hidden";
+        confirmWrap.style.position = "relative";
+
+        const confirmContent = document.createElement("div");
+        confirmContent.className = "apply-confirm-content";
+
+        const confirmTitle = document.createElement("p");
+        confirmTitle.className = "apply-confirm-title";
+        confirmTitle.textContent = "Apply fix to your compose file?";
+        confirmContent.appendChild(confirmTitle);
+
+        const confirmFile = document.createElement("p");
+        confirmFile.className = "apply-confirm-detail";
+        confirmFile.textContent = data.compose_file_path;
+        confirmContent.appendChild(confirmFile);
+
+        const confirmNote = document.createElement("p");
+        confirmNote.className = "apply-confirm-note";
+        confirmNote.textContent = "A backup (.bak) will be created before any changes are made.";
+        confirmContent.appendChild(confirmNote);
+
+        const btnRow = document.createElement("div");
+        btnRow.className = "apply-confirm-buttons";
+
+        const yesBtn = document.createElement("button");
+        yesBtn.className = "apply-confirm-yes";
+        yesBtn.textContent = "Apply Fix";
+        yesBtn.addEventListener("click", async () => {
+            yesBtn.disabled = true;
+            yesBtn.textContent = "Applying...";
+            try {
+                const resp = await fetch("/api/apply-fix", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        compose_file_path: data.compose_file_path,
+                        corrected_yaml: data.original_corrected_yaml,
+                    }),
+                });
+                const result = await resp.json();
+                if (resp.ok && result.status === "applied") {
+                    resultDiv.className = "apply-result apply-result-success";
+                    resultDiv.textContent = result.message;
+                    resultDiv.classList.remove("hidden");
+                    applyBtn.textContent = "Applied";
+                    applyBtn.disabled = true;
+                    applyBtn.classList.add("applied");
+                    confirmWrap.classList.add("hidden");
+                    showSimpleToast("Fix applied successfully!", "success");
+
+                    _refreshHealthAfterFix().then(() => {
+                        const stackPath = data.compose_file_path
+                            .replace(/\\/g, "/")
+                            .replace(/\/[^/]+$/, "");
+                        const stackObj = state.stacks.find((s) =>
+                            s.path.replace(/\\/g, "/") === stackPath
+                        ) || { path: stackPath, compose_file: "docker-compose.yml" };
+                        runAnalysis(stackObj);
+                    });
+                } else {
+                    resultDiv.className = "apply-result apply-result-error";
+                    resultDiv.textContent = result.error || "Failed to apply fix.";
+                    resultDiv.classList.remove("hidden");
+                    confirmWrap.classList.add("hidden");
+                }
+            } catch (err) {
+                resultDiv.className = "apply-result apply-result-error";
+                resultDiv.textContent = "Error: " + (err?.message || "could not reach backend");
+                resultDiv.classList.remove("hidden");
+                confirmWrap.classList.add("hidden");
+            } finally {
+                yesBtn.disabled = false;
+                yesBtn.textContent = "Apply Fix";
+            }
+        });
+        btnRow.appendChild(yesBtn);
+
+        const noBtn = document.createElement("button");
+        noBtn.className = "apply-confirm-no";
+        noBtn.textContent = "Cancel";
+        noBtn.addEventListener("click", () => {
+            confirmWrap.classList.add("hidden");
+        });
+        btnRow.appendChild(noBtn);
+
+        confirmContent.appendChild(btnRow);
+        confirmWrap.appendChild(confirmContent);
+        applyWrap.appendChild(confirmWrap);
+
+        const resultDiv = document.createElement("div");
+        resultDiv.className = "apply-result hidden";
+        applyWrap.appendChild(resultDiv);
+
+        properContent.appendChild(applyWrap);
+    }
 
     // Actions
     section.classList.remove("hidden");
@@ -2765,6 +4283,26 @@ function clearAnalysisResults() {
     // Clean up collapsed summary
     const summary = document.getElementById("selected-stack-summary");
     if (summary) summary.remove();
+
+    // Clear apply-fix state so it doesn't bleed into the next stack
+    _lastAnalysisForApply = null;
+    const applyBtn = document.getElementById("btn-apply-fix");
+    if (applyBtn) {
+        applyBtn.classList.add("hidden");
+        applyBtn.disabled = false;
+        applyBtn.textContent = "Apply Fix";
+        applyBtn.classList.remove("applied");
+    }
+    const applyResult = document.getElementById("apply-result");
+    if (applyResult) {
+        applyResult.classList.add("hidden");
+        applyResult.textContent = "";
+    }
+    const applyConfirm = document.getElementById("apply-confirm");
+    if (applyConfirm) applyConfirm.classList.add("hidden");
+
+    // Remove any dynamically-added "Analyze Another Stack" buttons
+    document.querySelectorAll(".btn-analyze-another").forEach((el) => el.remove());
 }
 
 /**
@@ -2789,71 +4327,20 @@ function renderBottomActions(container) {
         const searchInput = document.createElement("input");
         searchInput.type = "text";
         searchInput.className = "path-input quick-switch-input";
-        searchInput.placeholder = "Start typing to switch...";
+        searchInput.placeholder = "Search or click to browse...";
         searchInput.spellcheck = false;
 
         const resultsDropdown = document.createElement("div");
         resultsDropdown.className = "quick-switch-results quick-switch-results-up hidden";
 
-        let searchTimer = null;
-        searchInput.addEventListener("input", () => {
-            clearTimeout(searchTimer);
-            searchTimer = setTimeout(() => {
-                const q = searchInput.value.trim().toLowerCase();
-                resultsDropdown.replaceChildren();
-                if (!q) {
-                    resultsDropdown.classList.add("hidden");
-                    return;
-                }
-                const currentPath = state.selectedStack || "";
-                const matches = state.stacks.filter((s) => {
-                    const name = extractDirName(s.path).toLowerCase();
-                    if (name.includes(q)) return true;
-                    return (s.services || []).some((svc) => svc.toLowerCase().includes(q));
-                }).slice(0, 8);
-
-                if (matches.length === 0) {
-                    const none = document.createElement("div");
-                    none.className = "quick-switch-no-match";
-                    none.textContent = "No matching stacks";
-                    resultsDropdown.appendChild(none);
-                } else {
-                    matches.forEach((matchStack) => {
-                        const item = document.createElement("div");
-                        item.className = "quick-switch-item";
-                        if (matchStack.path === currentPath) {
-                            item.classList.add("current");
-                        }
-                        const itemDot = document.createElement("span");
-                        itemDot.className = "health-dot health-" + (matchStack.health || "unknown");
-                        item.appendChild(itemDot);
-                        const itemName = document.createElement("span");
-                        itemName.className = "quick-switch-item-name";
-                        itemName.textContent = extractDirName(matchStack.path);
-                        item.appendChild(itemName);
-                        const itemServices = document.createElement("span");
-                        itemServices.className = "quick-switch-item-detail";
-                        itemServices.textContent = (matchStack.services || []).join(", ");
-                        item.appendChild(itemServices);
-                        item.addEventListener("click", () => {
-                            searchInput.value = "";
-                            resultsDropdown.classList.add("hidden");
-                            selectStack(matchStack, null);
-                        });
-                        resultsDropdown.appendChild(item);
-                    });
-                }
-                resultsDropdown.classList.remove("hidden");
-            }, 150);
-        });
-
-        searchInput.addEventListener("blur", () => {
-            setTimeout(() => resultsDropdown.classList.add("hidden"), 200);
-        });
-        searchInput.addEventListener("focus", () => {
-            if (searchInput.value.trim()) {
-                searchInput.dispatchEvent(new Event("input"));
-            }
+        wireQuickSwitchCombobox(searchInput, resultsDropdown, {
+            currentPath: state.selectedStack || "",
+            limit: 8,
+            onSelect: (matchStack) => {
+                searchInput.value = "";
+                resultsDropdown.classList.add("hidden");
+                selectStack(matchStack, null);
+            },
         });
 
         searchWrap.appendChild(searchInput);
@@ -2864,6 +4351,21 @@ function renderBottomActions(container) {
     // Secondary action buttons
     const buttons = document.createElement("div");
     buttons.className = "bottom-switch-buttons";
+
+    // "Back to stack list" — primary nav action in browse mode.
+    // Restores the full stack grid so users can visually pick their next target
+    // without needing to remember names or search.
+    if (state.mode === "browse" && state.stacks.length > 1) {
+        const backBtn = document.createElement("button");
+        backBtn.className = "btn btn-primary";
+        const backIcon = document.createElement("span");
+        backIcon.className = "btn-icon";
+        backIcon.textContent = "\u2190";
+        backBtn.appendChild(backIcon);
+        backBtn.appendChild(document.createTextNode(" Back to Stack List"));
+        backBtn.addEventListener("click", () => backToStackList());
+        buttons.appendChild(backBtn);
+    }
 
     if (state.mode !== "browse" || state.stacks.length <= 1) {
         const analyzeBtn = document.createElement("button");
@@ -2895,6 +4397,40 @@ function renderBottomActions(container) {
 
     wrapper.appendChild(buttons);
     container.appendChild(wrapper);
+}
+
+/**
+ * Navigate back to the full stack list grid.
+ * Clears analysis results, removes the collapsed quick-switch summary,
+ * restores the full stack grid with filter bar, and scrolls to it.
+ * The visual scan-and-click workflow: list → drill → fix → back to list → repeat.
+ */
+function backToStackList() {
+    clearAnalysisResults();
+
+    const stackSection = document.getElementById("step-stacks");
+
+    // Remove the collapsed quick-switch summary bar
+    const summary = document.getElementById("selected-stack-summary");
+    if (summary) summary.remove();
+
+    // Restore the full stack grid
+    const stackList = document.getElementById("stacks-list");
+    if (stackList) stackList.classList.remove("hidden");
+
+    // Restore the filter bar if enough stacks
+    const filterDiv = document.getElementById("stack-filter");
+    if (filterDiv && state.stacks.length >= 6) {
+        filterDiv.classList.remove("hidden");
+        const filterInput = document.getElementById("stack-filter-input");
+        if (filterInput) filterInput.value = "";
+    }
+
+    // Re-render stacks with fresh health data
+    renderStacks(state.stacks);
+
+    // Scroll to the stacks section
+    stackSection.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function analyzeAnother() {
@@ -3041,7 +4577,7 @@ function setAnalysisForApply(data) {
 
 function applyFix() {
     if (!_lastAnalysisForApply || !_lastAnalysisForApply.original_corrected_yaml) {
-        showToast("No corrected configuration available to apply.", "error");
+        showSimpleToast("No corrected configuration available to apply.", "error");
         return;
     }
 
@@ -3084,7 +4620,7 @@ async function doApplyFix() {
             resultEl.className = "apply-result apply-result-success";
             resultEl.textContent = data.message;
             resultEl.classList.remove("hidden");
-            showToast("Fix applied successfully!", "success");
+            showSimpleToast("Fix applied successfully!", "success");
 
             // Update the apply button
             const applyBtn = document.getElementById("btn-apply-fix");
@@ -3093,26 +4629,220 @@ async function doApplyFix() {
                 applyBtn.disabled = true;
                 applyBtn.classList.add("applied");
             }
+
+            // Show "Analyze Another Stack" button for quick navigation
+            const nextBtn = document.createElement("button");
+            nextBtn.className = "btn btn-ghost btn-analyze-another";
+            nextBtn.textContent = "Analyze Another Stack";
+            nextBtn.style.marginTop = "0.75rem";
+            nextBtn.addEventListener("click", () => {
+                switchToBrowseMode();
+            });
+            resultEl.after(nextBtn);
+
+            // Re-run pipeline scan (compose changed) then re-analyze.
+            // This gives the user REAL proof the fix worked — fresh terminal,
+            // fresh result cards, genuinely green because the analyzer read
+            // the updated compose file. No cosmetic shortcuts.
+            _refreshHealthAfterFix().then(() => {
+                // Build a minimal stack object for runAnalysis
+                const stackPath = _lastAnalysisForApply.compose_file_path
+                    .replace(/\\/g, "/")
+                    .replace(/\/[^/]+$/, ""); // strip compose filename
+                const stackObj = state.stacks.find((s) =>
+                    s.path.replace(/\\/g, "/") === stackPath
+                ) || { path: stackPath, compose_file: "docker-compose.yml" };
+                runAnalysis(stackObj);
+            });
         } else {
             resultEl.className = "apply-result apply-result-error";
             resultEl.textContent = data.error || "Failed to apply fix.";
             resultEl.classList.remove("hidden");
-            showToast(data.error || "Failed to apply fix.", "error");
+            showSimpleToast(data.error || "Failed to apply fix.", "error");
         }
     } catch (err) {
-        resultEl.className = "apply-result apply-result-error";
-        resultEl.textContent = "Network error — could not reach backend.";
-        resultEl.classList.remove("hidden");
+        console.error("Apply fix error:", err, err?.message, err?.stack);
+        if (resultEl) {
+            resultEl.className = "apply-result apply-result-error";
+            resultEl.textContent = "Error: " + (err?.message || "could not reach backend");
+            resultEl.classList.remove("hidden");
+        }
     } finally {
         yesBtn.disabled = false;
         yesBtn.textContent = "Apply Fix";
     }
 }
 
+/**
+ * After Apply Fix writes a corrected compose file, re-discover stacks
+ * and re-run the pipeline scan so traffic light dots reflect the new state.
+ * Runs in the background — doesn't block the UI or interrupt the user.
+ */
+async function _refreshHealthAfterFix() {
+    try {
+        // Re-discover stacks to pick up changed compose file
+        const scanPath = state.activeScanPath || "";
+        if (!scanPath) {
+            console.warn("_refreshHealthAfterFix: no activeScanPath, skipping refresh");
+            return;
+        }
+
+        console.log("[post-fix] Refreshing stacks + pipeline for:", scanPath);
+
+        const discResp = await fetch("/api/discover-stacks");
+        if (discResp.ok) {
+            const discData = await discResp.json();
+            if (discData.stacks) {
+                state.stacks = discData.stacks;
+                console.log("[post-fix] Stacks refreshed:", discData.stacks.length);
+            }
+        } else {
+            console.warn("[post-fix] discover-stacks failed:", discResp.status);
+        }
+
+        // Re-run pipeline scan — critical for fresh cross-stack analysis.
+        // Without this, the re-analysis compares the fixed compose against
+        // stale pipeline data and still reports conflicts.
+        const pResp = await fetch("/api/pipeline-scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scan_dir: scanPath }),
+        });
+        if (pResp.ok) {
+            state.pipeline = await pResp.json();
+            console.log("[post-fix] Pipeline refreshed:",
+                state.pipeline.media_service_count, "services,",
+                (state.pipeline.conflicts || []).length, "conflicts");
+        } else {
+            console.warn("[post-fix] pipeline-scan failed:", pResp.status);
+        }
+
+        // Update any visible health dots on the page (quick-switch, current stack indicator)
+        document.querySelectorAll("[data-stack-path]").forEach((el) => {
+            const stackPath = el.getAttribute("data-stack-path");
+            const stack = state.stacks.find((s) =>
+                s.path.replace(/\\/g, "/") === stackPath.replace(/\\/g, "/")
+            );
+            if (stack) {
+                const dot = el.querySelector(".health-dot");
+                if (dot) {
+                    dot.className = "health-dot health-" + _effectiveHealth(stack);
+                }
+            }
+        });
+
+    } catch (e) {
+        console.warn("Post-fix health refresh failed:", e);
+    }
+}
+
+// ─── Quick-Switch Combobox ───
+// Shared builder for all quick-switch dropdowns (3 locations use this).
+// Supports both type-to-filter AND click-to-browse: when query is empty,
+// shows all stacks instead of hiding the dropdown.
+
+/**
+ * Populate a quick-switch dropdown with matching stacks.
+ * @param {string} query — filter text (empty = show all)
+ * @param {HTMLElement} dropdown — the results container
+ * @param {Object} opts
+ * @param {string} [opts.currentPath] — path of currently selected stack (gets .current class)
+ * @param {number} [opts.limit=12] — max items shown
+ * @param {Function} [opts.onSelect] — callback(stack) when item clicked
+ */
+function populateQuickSwitch(query, dropdown, opts) {
+    const q = (query || "").trim().toLowerCase();
+    const limit = (opts && opts.limit) || 12;
+    const currentPath = (opts && opts.currentPath) || "";
+    const onSelect = (opts && opts.onSelect) || null;
+
+    dropdown.replaceChildren();
+
+    // Filter stacks — empty query means show all
+    let matches;
+    if (!q) {
+        matches = state.stacks.slice(0, limit);
+    } else {
+        matches = state.stacks.filter((s) => {
+            const name = extractDirName(s.path).toLowerCase();
+            if (name.includes(q)) return true;
+            return (s.services || []).some((svc) => svc.toLowerCase().includes(q));
+        }).slice(0, limit);
+    }
+
+    if (matches.length === 0) {
+        const none = document.createElement("div");
+        none.className = "quick-switch-no-match";
+        none.textContent = q ? "No matching stacks" : "No stacks available";
+        dropdown.appendChild(none);
+    } else {
+        matches.forEach((matchStack) => {
+            const item = document.createElement("div");
+            item.className = "quick-switch-item";
+            if (currentPath && matchStack.path === currentPath) {
+                item.classList.add("current");
+            }
+
+            const dot = document.createElement("span");
+            dot.className = "health-dot health-" + _effectiveHealth(matchStack);
+            dot.title = _healthTooltip(matchStack.health || "unknown", matchStack.health_hint);
+            item.appendChild(dot);
+
+            const itemName = document.createElement("span");
+            itemName.className = "quick-switch-item-name";
+            itemName.textContent = extractDirName(matchStack.path);
+            item.appendChild(itemName);
+
+            const itemServices = document.createElement("span");
+            itemServices.className = "quick-switch-item-detail";
+            itemServices.textContent = (matchStack.services || []).join(", ");
+            item.appendChild(itemServices);
+
+            item.addEventListener("click", () => {
+                if (onSelect) onSelect(matchStack);
+            });
+
+            dropdown.appendChild(item);
+        });
+    }
+
+    dropdown.classList.remove("hidden");
+}
+
+/**
+ * Wire up a quick-switch input+dropdown pair with combobox behavior.
+ * Click/focus → show all. Type → filter. Blur → close.
+ * @param {HTMLInputElement} input
+ * @param {HTMLElement} dropdown
+ * @param {Object} opts — same as populateQuickSwitch opts
+ */
+function wireQuickSwitchCombobox(input, dropdown, opts) {
+    let timer = null;
+
+    // Type to filter (debounced)
+    input.addEventListener("input", () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            populateQuickSwitch(input.value, dropdown, opts);
+        }, 150);
+    });
+
+    // Click or focus → show all (combobox browse mode)
+    input.addEventListener("focus", () => {
+        populateQuickSwitch(input.value, dropdown, opts);
+    });
+
+    // Close on blur (delay lets click register first)
+    input.addEventListener("blur", () => {
+        setTimeout(() => dropdown.classList.add("hidden"), 200);
+    });
+}
+
 // ─── Helpers ───
 
-function showToast(message, type) {
-    // type: "success" or "error"
+function showSimpleToast(message, type) {
+    // type: "success" or "error" — used for Apply Fix and other simple messages.
+    // NOT the same as showToast(entry) which renders structured log entries.
     let toast = document.getElementById("maparr-toast");
     if (!toast) {
         toast = document.createElement("div");
@@ -3159,9 +4889,47 @@ function _legendDot(health, label) {
     return span;
 }
 
+/**
+ * Resolve the effective display health for a stack, factoring in pipeline conflicts.
+ *
+ * Discovery health only sees within-stack mounts. But the pipeline scan sees
+ * the full picture — this stack's mounts vs the rest of the setup. When a stack
+ * is internally healthy (ok) but pipeline-misaligned, we show "caution" (blinking
+ * yellow) instead of green. This prevents the misleading green-then-warning UX.
+ *
+ * Traffic light system:
+ *   green (solid)    — healthy internally AND pipeline-aligned
+ *   yellow (blink)   — internally fine, doesn't fit your broader pipeline
+ *   yellow (solid)   — single service / can't fully determine
+ *   red (solid)      — broken, internal conflicts
+ *   grey             — no media services, not applicable
+ */
+function _effectiveHealth(stack) {
+    const base = stack.health || "unknown";
+
+    // Only upgrade ok → caution. Don't touch warning/problem/unknown.
+    if (base !== "ok") return base;
+
+    // If this stack was analyzed or fixed this session, trust the deep result.
+    // Deep per-stack analysis is more authoritative than the broad pipeline scan.
+    const stackName = extractDirName(stack.path);
+    if (state.verifiedStacks.has(stackName)) return base;
+
+    // Check if pipeline has conflicts mentioning this stack
+    const p = state.pipeline;
+    if (!p || !p.conflicts || p.conflicts.length === 0) return base;
+
+    const hasConflict = p.conflicts.some(
+        (c) => c.stack_name === stackName
+    );
+
+    return hasConflict ? "caution" : base;
+}
+
 function _healthTooltip(health, hint) {
     const criteria = {
         ok: "GREEN: All media services share a common host mount path. Hardlinks and atomic moves should work.",
+        caution: "BLINKING YELLOW: This stack is internally healthy, but its mount paths differ from the rest of your pipeline. Click to see details.",
         warning: "YELLOW: Only one media service found, or unable to fully determine. Click to run full analysis.",
         problem: "RED: Media services mount different host directories. Hardlinks cannot work across separate bind mounts.",
         unknown: "GREY: No media services detected in this stack. Not applicable for hardlink analysis.",
@@ -3467,12 +5235,13 @@ async function changeStacksPath() {
                 const emptyP = empty.querySelector("p");
                 if (emptyP) emptyP.textContent = data.error || "Failed to scan path.";
             } else {
-                showToast(data.error || "Failed to scan path.", "error");
+                showSimpleToast(data.error || "Failed to scan path.", "error");
             }
             return;
         }
 
         state.stacks = data.stacks || [];
+        state.activeScanPath = (data.scan_path || data.path || newPath).replace(/\\/g, "/");
         const note = document.getElementById("stacks-search-note");
         if (data.search_note) note.textContent = data.search_note;
 
@@ -3486,11 +5255,12 @@ async function changeStacksPath() {
                 list.classList.remove("hidden");
             }
         } else {
-            // Not in browse mode — show toast confirmation
+            // Not in browse mode (fork page) — update mode selector and show toast
+            enrichModeSelector(state.stacks.length);
             if (state.stacks.length > 0) {
-                showToast(state.stacks.length + " stacks loaded from " + extractDirName(newPath), "success");
+                showSimpleToast(state.stacks.length + " stacks loaded from " + extractDirName(newPath), "success");
             } else {
-                showToast("No compose stacks found in " + extractDirName(newPath), "error");
+                showSimpleToast("No compose stacks found in " + extractDirName(newPath), "error");
             }
         }
 
@@ -3510,6 +5280,7 @@ async function changeStacksPath() {
         // Re-run pipeline scan on directory change — pipeline was built
         // from the old path, so it's stale. Fire and forget.
         state.pipeline = null;
+        state.verifiedStacks.clear();
         if (state.stacks.length > 0) {
             try {
                 const pResp = await fetch("/api/pipeline-scan", {
@@ -3523,6 +5294,8 @@ async function changeStacksPath() {
                     if (inBrowseMode && state.stacks.length > 0) {
                         renderStacks(state.stacks);
                     }
+                    // Update mode selector with new pipeline context (fork page)
+                    enrichModeSelector(state.stacks.length);
                 }
             } catch (e) {
                 console.warn("Pipeline re-scan failed:", e);
@@ -3653,12 +5426,12 @@ function generateDiagnosticMarkdown() {
 function copyDiagnosticSummary() {
     const md = generateDiagnosticMarkdown();
     if (!md) {
-        showToast("No analysis data to export", "error");
+        showSimpleToast("No analysis data to export", "error");
         return;
     }
 
     navigator.clipboard.writeText(md).then(() => {
-        showToast("Diagnostic copied to clipboard", "success");
+        showSimpleToast("Diagnostic copied to clipboard", "success");
     }).catch(() => {
         // Fallback for non-HTTPS
         const textarea = document.createElement("textarea");
@@ -3668,9 +5441,9 @@ function copyDiagnosticSummary() {
         textarea.select();
         try {
             document.execCommand("copy");
-            showToast("Diagnostic copied to clipboard", "success");
+            showSimpleToast("Diagnostic copied to clipboard", "success");
         } catch {
-            showToast("Copy failed \u2014 try HTTPS", "error");
+            showSimpleToast("Copy failed \u2014 try HTTPS", "error");
         }
         document.body.removeChild(textarea);
     });
@@ -4013,6 +5786,13 @@ function connectLogStream() {
         const es = new EventSource("/api/logs/stream");
         _logState.sseSource = es;
 
+        es.addEventListener("connected", () => {
+            // SSE just (re)connected — backfill any entries we missed
+            // during the disconnection gap. This handles browser tab
+            // throttling, network hiccups, and backend restarts.
+            _backfillMissedLogs();
+        });
+
         es.addEventListener("log", (event) => {
             try {
                 const entry = JSON.parse(event.data);
@@ -4033,6 +5813,54 @@ function connectLogStream() {
     }
 }
 
+/**
+ * Backfill log entries missed during SSE disconnection.
+ *
+ * When the SSE stream drops (tab throttled, network hiccup, backend restart),
+ * entries generated during the gap are lost. This fetches the server's log
+ * buffer and merges any entries newer than our last known timestamp.
+ * Deduplicates by timestamp+message to avoid showing the same entry twice.
+ */
+async function _backfillMissedLogs() {
+    try {
+        const resp = await fetch("/api/logs?limit=200");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const serverEntries = (data.entries || []).reverse(); // oldest first
+
+        if (serverEntries.length === 0) return;
+
+        // Find our latest timestamp
+        const lastTs = _logState.entries.length > 0
+            ? _logState.entries[_logState.entries.length - 1].ts
+            : 0;
+
+        // Build a quick dedup key from existing entries (last 50 for perf)
+        const existing = new Set();
+        const recentEntries = _logState.entries.slice(-50);
+        recentEntries.forEach((e) => {
+            existing.add(e.ts + "|" + (e.message || "").substring(0, 60));
+        });
+
+        // Merge entries newer than our last known timestamp
+        let added = 0;
+        serverEntries.forEach((entry) => {
+            if (entry.ts <= lastTs) return;
+            const key = entry.ts + "|" + (entry.message || "").substring(0, 60);
+            if (existing.has(key)) return;
+            existing.add(key);
+            addLogEntry(entry);
+            added++;
+        });
+
+        if (added > 0) {
+            console.log("Log backfill: recovered " + added + " missed entries");
+        }
+    } catch {
+        // Backfill is best-effort — don't break the stream
+    }
+}
+
 // ─── Add Log Entry ───
 
 function addLogEntry(entry) {
@@ -4047,18 +5875,16 @@ function addLogEntry(entry) {
         appendLogEntryToDOM(entry);
     }
 
-    // Toast for WARN/ERROR/CRITICAL
-    if (entry.level === "WARNING" || entry.level === "ERROR" || entry.level === "CRITICAL") {
-        // Increment badge counter if panel is closed
+    // Badge + toast for significant log entries.
+    // Only ERROR/CRITICAL increment the badge — WARNINGs are expected during
+    // pipeline scans (mount conflicts are informational, not failures) and
+    // would flood the badge with false urgency on every boot.
+    if (entry.level === "ERROR" || entry.level === "CRITICAL") {
         if (!_logState.panelOpen) {
             _logState.errorCount++;
             updateLogBadge();
         }
-
-        // Only toast for ERROR and CRITICAL (WARN would be too noisy)
-        if (entry.level === "ERROR" || entry.level === "CRITICAL") {
-            showToast(entry);
-        }
+        showToast(entry);
     }
 }
 

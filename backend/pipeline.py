@@ -44,6 +44,7 @@ class PipelineService:
     role: str                # "arr", "download_client", "media_server"
     host_sources: Set[str]   # Normalized host data paths (config/utility mounts filtered)
     compose_file: str        # Path to the compose file
+    volume_mounts: List[dict] = field(default_factory=list)  # [{source, target}] for RPM calc
 
     def to_dict(self) -> dict:
         return {
@@ -53,6 +54,7 @@ class PipelineService:
             "role": self.role,
             "host_sources": sorted(self.host_sources),
             "compose_file": os.path.basename(self.compose_file),
+            "volume_mounts": self.volume_mounts,
         }
 
 
@@ -150,15 +152,18 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
         result.steps = steps
         return result
 
+    dirs_checked = 0
     for entry in entries:
         if not entry.is_dir() or entry.name.startswith("."):
             continue
 
         compose_file = _find_compose_file(str(entry))
         if not compose_file:
+            dirs_checked += 1
             continue
 
         stacks_scanned += 1
+        dirs_checked += 1
 
         # Parse this stack's media services (lightweight YAML only)
         parsed = _parse_sibling_services(compose_file)
@@ -170,13 +175,18 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
                 role=svc_info["role"],
                 host_sources=svc_info["host_sources"],
                 compose_file=compose_file,
+                volume_mounts=svc_info.get("volume_mounts", []),
             ))
+            logger.debug("Pipeline: %s/%s → role=%s, mounts=%s",
+                        entry.name, svc_name, svc_info["role"],
+                        sorted(svc_info["host_sources"]) if svc_info["host_sources"] else "none")
 
     result.stacks_scanned = stacks_scanned
     result.media_services = all_services
 
-    logger.info("Pipeline scan: %d stacks, %d media services found",
-                stacks_scanned, len(all_services))
+    scan_elapsed = time.time() - result.scanned_at
+    logger.info("Pipeline scan: %d dirs checked, %d stacks with compose, %d media services (%.2fs)",
+                dirs_checked, stacks_scanned, len(all_services), scan_elapsed)
 
     if not all_services:
         result.health = "ok"
