@@ -320,14 +320,8 @@ class TestAnalyzerIntegration:
             "_compose_file": "docker-compose.yml",
             "_warnings": [],
         }
-        import sys
-        if sys.platform == "win32":
-            # On Windows, UNC paths cause ValueError in os.path.commonpath
-            with pytest.raises(ValueError, match="same drive"):
-                analyze_stack(compose, "/tmp/test", "docker-compose.yml", "manual")
-        else:
-            result = analyze_stack(compose, "/tmp/test", "docker-compose.yml", "manual")
-            assert len(result.mount_warnings) > 0
+        result = analyze_stack(compose, "/tmp/test", "docker-compose.yml", "manual")
+        assert len(result.mount_warnings) > 0
 
     def test_remote_mount_adds_conflict(self):
         compose = {
@@ -345,16 +339,10 @@ class TestAnalyzerIntegration:
             "_compose_file": "docker-compose.yml",
             "_warnings": [],
         }
-        import sys
-        if sys.platform == "win32":
-            # On Windows, UNC paths cause ValueError in os.path.commonpath
-            with pytest.raises(ValueError, match="same drive"):
-                analyze_stack(compose, "/tmp/test", "docker-compose.yml", "manual")
-        else:
-            result = analyze_stack(compose, "/tmp/test", "docker-compose.yml", "manual")
-            remote_conflicts = [c for c in result.conflicts if c.conflict_type == "remote_filesystem"]
-            assert len(remote_conflicts) > 0
-            assert remote_conflicts[0].severity == "high"
+        result = analyze_stack(compose, "/tmp/test", "docker-compose.yml", "manual")
+        remote_conflicts = [c for c in result.conflicts if c.conflict_type == "remote_filesystem"]
+        assert len(remote_conflicts) > 0
+        assert remote_conflicts[0].severity == "high"
 
     def test_mount_info_in_result(self):
         compose = {
@@ -419,16 +407,10 @@ class TestAPIResponse:
         })
         resp = client.post("/api/analyze", json={"stack_path": stack})
         data = resp.json()
-        import sys
-        if sys.platform == "win32":
-            # On Windows, UNC paths cause os.path.commonpath to fail;
-            # API catches this and returns an error response
-            assert data["status"] == "error"
-        else:
-            assert len(data["mount_warnings"]) > 0
-            # Should have mount_info with CIFS entries
-            cifs_mounts = [m for m in data["mount_info"] if m["mount_type"] == "cifs"]
-            assert len(cifs_mounts) > 0
+        assert len(data["mount_warnings"]) > 0
+        # Should have mount_info with CIFS entries
+        cifs_mounts = [m for m in data["mount_info"] if m["mount_type"] == "cifs"]
+        assert len(cifs_mounts) > 0
 
 
 # ═══════════════════════════════════════════

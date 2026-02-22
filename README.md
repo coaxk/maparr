@@ -1,3 +1,7 @@
+![Version](https://img.shields.io/badge/version-1.5.0--beta-blue)
+![Python](https://img.shields.io/badge/python-3.11%2B-green)
+![License](https://img.shields.io/badge/license-MIT-brightgreen)
+
 # MapArr
 
 **Path Mapping Problem Solver for Docker *arr apps**
@@ -27,9 +31,16 @@ MapArr scans your entire root directory on boot and builds a unified map of all 
 - **Mount intelligence** — Detects NFS, CIFS/SMB, WSL2, and local mounts with hardlink compatibility warnings
 - **Category advisory** — Warns about the download client category trap that catches everyone
 - **Quick-switch** — Type-to-search for instant stack switching without navigating back
+- **RPM Wizard** — Guided Remote Path Mapping setup when mount restructuring isn't an option
+- **Two-track solutions** — Quick Fix (RPM) or Proper Fix (restructure) for every conflict
 - **Real-time logging** — Full log panel with SSE streaming, level filtering, and download
 - **Diagnostic export** — One-click markdown export of your analysis for sharing/debugging
 - **Update checker** — Checks GitHub releases for newer versions
+
+## Screenshots
+
+![Landing](screenshots/landing.png)
+![Analysis](screenshots/after_click_start.png)
 
 ## Quick Start
 
@@ -149,11 +160,11 @@ All services mount the same parent: `/host/data:/data`. Subdirectories handle se
 
 ## Architecture
 
-- **Backend:** Python 3.11 + FastAPI (9 endpoints, ~600 lines)
-- **Frontend:** Vanilla HTML/CSS/JS (no framework, no build step, ~4100 lines)
-- **Analysis Engine:** Volume mount classification, conflict detection, TRaSH Guides pattern matching, fix generation
+- **Backend:** Python 3.11 + FastAPI (11 endpoints)
+- **Frontend:** Vanilla HTML/CSS/JS (no framework, no build step)
+- **Analysis Engine:** Volume mount classification, conflict detection, RPM calculation, TRaSH Guides pattern matching
 - **Pipeline:** Full directory scanning with role detection, mount consistency checking across all stacks
-- **Tests:** 360+ tests covering pipeline, analysis, smart-match, cross-stack, and edge cases
+- **Tests:** 426 tests covering RPM, pipeline, analysis, smart-match, cross-stack, and edge cases
 
 ## The *arr Ecosystem
 

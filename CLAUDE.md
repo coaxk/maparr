@@ -28,7 +28,7 @@ and generates specific fixes following the TRaSH Guides pattern.
 
 ### Frontend (`frontend/`)
 - `index.html` — Single-page app with all sections
-- `app.js` — ~4200 lines, entire frontend logic
+- `app.js` — ~6500 lines, entire frontend logic
 - `styles.css` — Full CSS with dark theme
 
 ### API Endpoints
@@ -73,9 +73,52 @@ Invalidated when stacks path changes.
 - `cross_stack_conflict` — Legacy: siblings have conflicting mounts
 - `incomplete` — Single-service stack, no siblings found
 
+### RPM Wizard (v1.5.0)
+5-gate guided wizard for Remote Path Mapping as a "Quick Fix" alternative to
+mount restructuring. Lives entirely in frontend `app.js` (`renderRpmWizard()`).
+- Gate 1: Auto-detected mounts + overlap check (informational)
+- Gate 2: User verifies DC category paths (gated on input)
+- Gate 3: Calculated RPM entries displayed (review)
+- Gate 4: Step-by-step apply instructions per *arr app (gated on checkboxes)
+- Gate 5: Test verification (works/broken outcome)
+Backend provides `rpm_mappings` in analysis response via `_calculate_rpm_mappings()`.
+
+### Solution Track Selector
+Cross-stack conflicts show two tracks: Quick Fix (RPM Wizard) and Proper Fix
+(mount restructure). Track selector in `showCrossStackConflict()`. Defaults to
+Quick Fix when RPM is possible, Proper Fix when host paths don't overlap.
+
+### Pre-flight Override & Source of Truth
+When user pastes an error, overrides pre-flight warning on a healthy stack:
+- `state.preflightOverridden` flag tracks the override
+- If ALL conflicts are `path_unreachable` type → stack is actually healthy
+- Terminal lines retroactively modified: yellow `!` lines get strikethrough + dimmed
+- Green `RESULT` banner dominates visual hierarchy
+- Result card shows "This Stack Is Healthy" with context about the pasted error
+- Key principle: NEVER report false issues, even if user did something dumb
+
+### Apply Fix Pipeline Refresh
+After Apply Fix writes corrected YAML:
+1. Frontend calls `/api/pipeline-scan` to refresh cache
+2. Backend safety net: if compose mtime > pipeline scanned_at, forces inline rescan
+3. Pipeline majority root captured regardless of within-stack conflicts
+4. All media services expanded as affected when pipeline override active
+
 ### Service Classification
 Hardcoded sets in `analyzer.py`: `ARR_APPS`, `DOWNLOAD_CLIENTS`, `MEDIA_SERVERS`.
 Classification checks both service name and image name (case-insensitive substring match).
+Download clients include: qbittorrent, sabnzbd, nzbget, transmission, deluge,
+rtorrent, jdownloader, aria2, flood, rdtclient.
+
+### Quick-Switch Combobox
+All 3 stack search inputs (fix mode filter, browse collapsed bar, bottom-of-card)
+use shared `populateQuickSwitch()` + `wireQuickSwitchCombobox()` helpers.
+Click to browse all stacks, type to filter. Shows health dots + service counts.
+
+### Navigation
+- `backToStackList()` — returns to full stack grid from analysis results
+- "Show all stacks" link in collapsed bar uses same function
+- Browse mode bottom actions include "Back to Stack List" button
 
 ## Gotchas
 - **Windows pytest:** Always use `-p no:capture` to avoid Rich/capture conflicts
@@ -85,11 +128,18 @@ Classification checks both service name and image name (case-insensitive substri
 - **Frontend XSS safety:** All user-derived content uses `textContent`, never `innerHTML`
 - **UNC paths on Windows:** `os.path.commonpath` raises `ValueError` for UNC paths — tests guard with `sys.platform == "win32"`
 
+## Session Discipline
+**Before every commit and at end of session**, update knowledge files:
+1. `CLAUDE.md` (this file) — architecture, patterns, gotchas, key functions
+2. `MEMORY.md` (global at `~/.claude/projects/C--DockerContainers/memory/MEMORY.md`) — cross-project state, user prefs, ecosystem strategy
+Do this proactively. Don't wait to be asked. If you built it, document it.
+
 ## Ecosystem Strategy
 Part of a 4-tool ecosystem: MapArr, ComposeArr, SubBrainArr, Apart.
 Shared code extraction planned for Phase 15+ into a `shared/` directory.
 Extraction targets: compose discovery, parsing, analysis, models, styles.
 Cross-Claude communication via CLAUDE.md files and comprehensive code comments.
+**Rumplestiltskin** — banked framework concept: extract ethos + methodology into pluggable analysis engine with domain plugins + ethos engine + output depth ladder.
 
 ## Running
 ```bash

@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.title="MapArr" \
-      org.opencontainers.image.version="1.3.0" \
+      org.opencontainers.image.version="1.5.0" \
       org.opencontainers.image.description="Path Mapping Problem Solver for Docker *arr apps"
 
 # Install curl (healthcheck) and Docker CLI + compose plugin.
@@ -51,8 +51,14 @@ COPY --from=deps /usr/local/bin/uvicorn /usr/local/bin/uvicorn
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
 
-# Create stacks mount point
-RUN mkdir -p /stacks
+# Create stacks mount point and non-root user.
+# The maparr user owns /app and /stacks. For Apply Fix (writing corrected YAML),
+# the stacks volume must be mounted without :ro.
+RUN mkdir -p /stacks \
+    && useradd -r -s /bin/false maparr \
+    && chown -R maparr:maparr /app /stacks
+
+USER maparr
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

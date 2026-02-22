@@ -473,6 +473,7 @@ def analyze_stack(
             "shared_mount": shared_mount,
             "mount_root": mount_root,
             "services_by_role": services_by_role,
+            "conflicts": pipeline_conflicts,
         }
 
         logger.info("Pipeline-aware analysis: role=%s, %d total media, health=%s",

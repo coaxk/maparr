@@ -1,0 +1,4 @@
+# MapArr — Development / Testing dependencies
+-r requirements.txt
+pytest==7.4.3
+httpx==0.25.2

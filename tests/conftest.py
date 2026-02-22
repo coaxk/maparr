@@ -14,6 +14,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+# ─── Session Cleanup ───
+
+@pytest.fixture(autouse=True)
+def _clear_session_pipeline():
+    """Reset the in-memory pipeline cache between tests.
+
+    Without this, tests that call /api/pipeline-scan pollute the shared
+    _session dict, causing later tests to see 'healthy_pipeline' instead
+    of 'healthy' status.
+    """
+    from backend.main import _session
+    _session["pipeline"] = None
+    yield
+    _session["pipeline"] = None
+
+
 # ─── App Client ───
 
 @pytest.fixture
@@ -164,4 +180,58 @@ services:
     volumes:
       - ./config:/config
       - /different/path:/data
+"""
+
+# ─── v1.5.0 Download Client YAML Constants ───
+
+# aria2 download client
+ARIA2_YAML = """\
+services:
+  aria2:
+    image: p3terx/aria2-pro:latest
+    volumes:
+      - ./config:/config
+      - /mnt/nas/data:/data
+"""
+
+# Flood (rTorrent frontend)
+FLOOD_YAML = """\
+services:
+  flood:
+    image: jesec/flood:latest
+    volumes:
+      - ./config:/config
+      - /mnt/nas/data:/data
+"""
+
+# rdtclient (Real-Debrid)
+RDTCLIENT_YAML = """\
+services:
+  rdtclient:
+    image: rogerfar/rdtclient:latest
+    volumes:
+      - ./config:/config
+      - /mnt/nas/data:/data
+"""
+
+# ─── RPM Test YAML Constants ───
+
+# qBittorrent with DIFFERENT host path (for RPM overlap tests)
+QBIT_SEPARATE_YAML = """\
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    volumes:
+      - ./config:/config
+      - /mnt/nas/downloads:/downloads
+"""
+
+# SABnzbd with DIFFERENT host path (for RPM impossible tests)
+SABNZBD_DISJOINT_YAML = """\
+services:
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    volumes:
+      - ./config:/config
+      - /opt/usenet:/downloads
 """

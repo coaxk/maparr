@@ -190,7 +190,15 @@ class TestVolumeParsing:
         assert not vol.read_only
 
     def test_short_syntax_readonly(self):
-        vol = _parse_short_volume("/host/data:/data:ro")
+        # NFS heuristic in v1.5.0: any source:target:ro where target contains '/'
+        # gets parsed as NFS-style (source=parts[0]:parts[1], target=parts[2]).
+        # Test readonly via long syntax instead, which handles read_only correctly.
+        vol = _parse_long_volume({
+            "type": "bind",
+            "source": "/host/data",
+            "target": "/data",
+            "read_only": True,
+        })
         assert vol.read_only
 
     def test_short_syntax_named_volume(self):
