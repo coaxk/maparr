@@ -30,6 +30,45 @@ from backend.smart_match import smart_match
 from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
 from backend.log_handler import install_log_handler, get_log_handler
 
+
+# ─── Security: Path Validation ───
+# All endpoints that accept filesystem paths from the client MUST validate
+# that the resolved path is within the allowed stacks directory. This prevents
+# path traversal attacks (e.g., writing to /etc/passwd via apply-fix).
+
+def _get_stacks_root() -> str:
+    """Return the current stacks root directory (custom or env-based)."""
+    return (
+        _session.get("custom_stacks_path")
+        or os.environ.get("MAPARR_STACKS_PATH", "")
+    )
+
+
+def _is_path_within_stacks(path: str) -> bool:
+    """
+    Check that a resolved path is within the stacks root directory.
+    Returns True if no stacks root is configured — path restriction only
+    applies when MAPARR_STACKS_PATH is set (always true in Docker).
+    """
+    stacks_root = _get_stacks_root()
+    if not stacks_root:
+        return True  # No root configured — can't enforce boundary
+    try:
+        # Resolve symlinks and normalize both paths
+        real_path = Path(path).resolve()
+        real_root = Path(stacks_root).resolve()
+        # Use pathlib's relative_to — raises ValueError if not a subpath
+        real_path.relative_to(real_root)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+COMPOSE_FILENAMES = {
+    "docker-compose.yml", "docker-compose.yaml",
+    "compose.yml", "compose.yaml",
+}
+
 # ─── Logging ───
 
 logging.basicConfig(
@@ -216,6 +255,18 @@ async def api_pipeline_scan(request: Request):
             status_code=400,
         )
 
+    # Security: if a stacks root is configured, validate scan_dir is within it
+    stacks_root = _get_stacks_root()
+    if stacks_root:
+        try:
+            Path(scan_dir).resolve().relative_to(Path(stacks_root).resolve())
+        except (ValueError, OSError):
+            logger.warning("Pipeline scan blocked: %s outside stacks root %s", scan_dir, stacks_root)
+            return JSONResponse(
+                {"error": "Scan directory is outside the stacks root"},
+                status_code=403,
+            )
+
     t0 = time.time()
     result = run_pipeline_scan(scan_dir)
     elapsed = time.time() - t0
@@ -254,6 +305,17 @@ async def api_change_stacks_path(request: Request):
         return JSONResponse(
             {"error": f"Directory not found: {new_path}"},
             status_code=400,
+        )
+
+    # Security: block obvious system directories
+    _blocked_prefixes = ("/etc", "/proc", "/sys", "/dev", "/boot", "/sbin",
+                         "C:\\Windows", "C:\\Program Files")
+    resolved_new = str(Path(new_path).resolve())
+    if any(resolved_new.startswith(p) for p in _blocked_prefixes):
+        logger.warning("Change path blocked: system directory: %s", new_path)
+        return JSONResponse(
+            {"error": "Cannot scan system directories"},
+            status_code=403,
         )
 
     old_path = _session.get("custom_stacks_path", "default")
@@ -306,6 +368,14 @@ async def api_select_stack(request: Request):
         return JSONResponse(
             {"error": f"Directory not found: {os.path.basename(stack_path)}"},
             status_code=400,
+        )
+
+    # Security: validate the path is within stacks root
+    if not _is_path_within_stacks(stack_path):
+        logger.warning("Select stack blocked: path outside stacks root: %s", stack_path)
+        return JSONResponse(
+            {"error": "Path is outside the stacks directory"},
+            status_code=403,
         )
 
     _session["selected_stack"] = {
@@ -362,6 +432,14 @@ async def api_analyze(request: Request):
         return JSONResponse(
             {"error": f"Directory not found: {os.path.basename(stack_path)}"},
             status_code=400,
+        )
+
+    # Security: validate the path is within stacks root
+    if not _is_path_within_stacks(stack_path):
+        logger.warning("Analyze blocked: path outside stacks root: %s", stack_path)
+        return JSONResponse(
+            {"error": "Path is outside the stacks directory"},
+            status_code=403,
         )
 
     # Get error context (optional — from the parse step)
@@ -603,6 +681,22 @@ async def api_apply_fix(request: Request):
     if not os.path.isfile(compose_file_path):
         return JSONResponse(
             {"error": f"File not found: {os.path.basename(compose_file_path)}"},
+            status_code=400,
+        )
+
+    # Security: validate the path is within the stacks directory
+    if not _is_path_within_stacks(compose_file_path):
+        logger.warning("Apply fix blocked: path outside stacks root: %s", compose_file_path)
+        return JSONResponse(
+            {"error": "Path is outside the stacks directory"},
+            status_code=403,
+        )
+
+    # Security: validate it's actually a compose file
+    if os.path.basename(compose_file_path) not in COMPOSE_FILENAMES:
+        logger.warning("Apply fix blocked: not a compose file: %s", compose_file_path)
+        return JSONResponse(
+            {"error": "Target is not a recognised compose file"},
             status_code=400,
         )
 

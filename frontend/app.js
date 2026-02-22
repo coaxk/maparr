@@ -5037,11 +5037,23 @@ function toggleHeaderPathDropdown() {
         const normDir = dir.replace(/\\/g, "/");
         const isActive = normActive === normDir;
         btn.className = "dropdown-dir-btn" + (isActive ? " dropdown-dir-active" : "");
-        btn.innerHTML = '<span class="dropdown-dir-path">' + dir + '</span>' +
-            '<span class="dropdown-dir-meta">' +
-                (isActive ? '<span class="dropdown-dir-current">current</span>' : '') +
-                '<span class="dropdown-dir-count">' + count + ' stacks</span>' +
-            '</span>';
+        const pathSpan = document.createElement("span");
+        pathSpan.className = "dropdown-dir-path";
+        pathSpan.textContent = dir;
+        const metaSpan = document.createElement("span");
+        metaSpan.className = "dropdown-dir-meta";
+        if (isActive) {
+            const curSpan = document.createElement("span");
+            curSpan.className = "dropdown-dir-current";
+            curSpan.textContent = "current";
+            metaSpan.appendChild(curSpan);
+        }
+        const countSpan = document.createElement("span");
+        countSpan.className = "dropdown-dir-count";
+        countSpan.textContent = count + " stacks";
+        metaSpan.appendChild(countSpan);
+        btn.appendChild(pathSpan);
+        btn.appendChild(metaSpan);
         btn.addEventListener("click", () => {
             document.getElementById("custom-path-input").value = dir;
             dropdown.classList.add("hidden");
