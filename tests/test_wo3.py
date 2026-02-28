@@ -76,10 +76,12 @@ class TestSolutionYaml:
             "services": {
                 "sonarr": {
                     "image": "linuxserver/sonarr",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data", "./config:/config"],
                 },
                 "qbittorrent": {
                     "image": "linuxserver/qbittorrent",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data", "./config:/config"],
                 },
             },
@@ -202,8 +204,8 @@ class TestAPIResponseShape:
     def test_healthy_stack_has_null_solution_yaml(self):
         stack = make_stack({
             "services": {
-                "sonarr": {"image": "linuxserver/sonarr", "volumes": ["/data:/data"]},
-                "qbittorrent": {"image": "linuxserver/qbittorrent", "volumes": ["/data:/data"]},
+                "sonarr": {"image": "linuxserver/sonarr", "environment": {"PUID": "1000", "PGID": "1000"}, "volumes": ["/data:/data"]},
+                "qbittorrent": {"image": "linuxserver/qbittorrent", "environment": {"PUID": "1000", "PGID": "1000"}, "volumes": ["/data:/data"]},
             }
         })
         resp = client.post("/api/analyze", json={"stack_path": stack})
@@ -214,7 +216,7 @@ class TestAPIResponseShape:
     def test_services_have_role_field(self):
         stack = make_stack({
             "services": {
-                "sonarr": {"image": "linuxserver/sonarr", "volumes": ["/data:/data"]},
+                "sonarr": {"image": "linuxserver/sonarr", "environment": {"PUID": "1000", "PGID": "1000"}, "volumes": ["/data:/data"]},
                 "plex": {"image": "plexinc/pms-docker", "volumes": ["/data:/data"]},
             }
         })
@@ -286,10 +288,12 @@ class TestFullFlow:
             "services": {
                 "sonarr": {
                     "image": "linuxserver/sonarr",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data", "./config:/config"],
                 },
                 "qbittorrent": {
                     "image": "linuxserver/qbittorrent",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data", "./config:/config"],
                 },
             }

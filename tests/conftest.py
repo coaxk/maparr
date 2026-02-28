@@ -88,6 +88,9 @@ SONARR_YAML = """\
 services:
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config:/config
       - /mnt/nas/data:/data
@@ -98,6 +101,9 @@ QBITTORRENT_YAML = """\
 services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config:/config
       - /mnt/nas/data:/data
@@ -108,6 +114,9 @@ PLEX_YAML = """\
 services:
   plex:
     image: lscr.io/linuxserver/plex:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config:/config
       - /mnt/nas/data:/data
@@ -118,11 +127,17 @@ HEALTHY_MULTI_YAML = """\
 services:
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config/sonarr:/config
       - /mnt/nas/data:/data
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config/qbit:/config
       - /mnt/nas/data:/data
@@ -133,11 +148,17 @@ BROKEN_MULTI_YAML = """\
 services:
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config/sonarr:/config
       - /host/tv:/data/tv
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config/qbit:/config
       - /host/downloads:/downloads
@@ -157,6 +178,9 @@ RADARR_YAML = """\
 services:
   radarr:
     image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config:/config
       - /mnt/nas/data:/data
@@ -167,6 +191,9 @@ SABNZBD_YAML = """\
 services:
   sabnzbd:
     image: lscr.io/linuxserver/sabnzbd:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config:/config
       - /mnt/nas/data:/data
@@ -177,6 +204,9 @@ SONARR_CONFLICT_YAML = """\
 services:
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config:/config
       - /different/path:/data
@@ -221,6 +251,9 @@ QBIT_SEPARATE_YAML = """\
 services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config:/config
       - /mnt/nas/downloads:/downloads
@@ -231,7 +264,140 @@ SABNZBD_DISJOINT_YAML = """\
 services:
   sabnzbd:
     image: lscr.io/linuxserver/sabnzbd:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
     volumes:
       - ./config:/config
       - /opt/usenet:/downloads
+"""
+
+# ─── Permissions Test YAML Constants ───
+
+# Healthy permissions: all services share the same PUID/PGID
+HEALTHY_PERMS_YAML = """\
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=002
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/nas/data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=002
+    volumes:
+      - ./config/qbit:/config
+      - /mnt/nas/data:/data
+"""
+
+# PUID/PGID mismatch: sonarr=1000, qbittorrent missing (defaults to 911)
+PUID_MISMATCH_YAML = """\
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=022
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/nas/data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - UMASK=002
+    volumes:
+      - ./config/qbit:/config
+      - /mnt/nas/data:/data
+"""
+
+# Root execution: service runs as UID 0
+ROOT_EXECUTION_YAML = """\
+services:
+  huntarr:
+    image: lscr.io/linuxserver/huntarr:latest
+    environment:
+      - PUID=0
+      - PGID=0
+    volumes:
+      - ./config:/config
+      - /mnt/nas/data:/data
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/nas/data:/data
+"""
+
+# UMASK mismatch: sonarr=022, qbittorrent=002
+UMASK_MISMATCH_YAML = """\
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=022
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/nas/data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=002
+    volumes:
+      - ./config/qbit:/config
+      - /mnt/nas/data:/data
+"""
+
+# Mixed image families: LSIO sonarr + jlesage jdownloader
+MIXED_FAMILIES_YAML = """\
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/nas/data:/data
+  jdownloader2:
+    image: jlesage/jdownloader-2:latest
+    environment:
+      - USER_ID=568
+      - GROUP_ID=568
+    volumes:
+      - ./config/jd2:/config
+      - /mnt/nas/data:/data
+"""
+
+# Compose user: directive instead of env vars
+COMPOSE_USER_YAML = """\
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/nas/data:/data
+  seerr:
+    image: sctx/overseerr:latest
+    user: "1000:1000"
+    volumes:
+      - ./config/seerr:/config
+      - /mnt/nas/data:/data
 """

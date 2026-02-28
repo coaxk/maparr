@@ -387,10 +387,26 @@ def _parse_sibling_services(compose_file: str) -> Dict[str, dict]:
             host_sources, _ = _extract_host_sources(volumes)
             volume_mounts = _extract_volume_mounts(volumes)
 
+            # Extract environment and user identity for permissions analysis
+            env_raw = config.get("environment", {})
+            environment = {}
+            if isinstance(env_raw, dict):
+                environment = {k: str(v) for k, v in env_raw.items()}
+            elif isinstance(env_raw, list):
+                for item in env_raw:
+                    if "=" in str(item):
+                        key, _, val = str(item).partition("=")
+                        environment[key] = val
+
+            compose_user = str(config["user"]) if "user" in config else None
+
             result[name] = {
                 "role": role,
                 "host_sources": host_sources,
                 "volume_mounts": volume_mounts,
+                "environment": environment,
+                "compose_user": compose_user,
+                "image": image,
             }
 
         return result

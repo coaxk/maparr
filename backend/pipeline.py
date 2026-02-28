@@ -45,6 +45,10 @@ class PipelineService:
     host_sources: Set[str]   # Normalized host data paths (config/utility mounts filtered)
     compose_file: str        # Path to the compose file
     volume_mounts: List[dict] = field(default_factory=list)  # [{source, target}] for RPM calc
+    # Permissions analysis fields — populated from compose environment/user
+    image: str = ""
+    environment: Dict[str, str] = field(default_factory=dict)
+    compose_user: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -55,6 +59,9 @@ class PipelineService:
             "host_sources": sorted(self.host_sources),
             "compose_file": os.path.basename(self.compose_file),
             "volume_mounts": self.volume_mounts,
+            "image": self.image,
+            "environment": self.environment,
+            "compose_user": self.compose_user,
         }
 
 
@@ -176,6 +183,9 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
                 host_sources=svc_info["host_sources"],
                 compose_file=compose_file,
                 volume_mounts=svc_info.get("volume_mounts", []),
+                image=svc_info.get("image", ""),
+                environment=svc_info.get("environment", {}),
+                compose_user=svc_info.get("compose_user"),
             ))
             logger.debug("Pipeline: %s/%s → role=%s, mounts=%s",
                         entry.name, svc_name, svc_info["role"],

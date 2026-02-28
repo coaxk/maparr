@@ -399,10 +399,12 @@ class TestFullAnalysis:
             "services": {
                 "sonarr": {
                     "image": "linuxserver/sonarr",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data", "./config/sonarr:/config"],
                 },
                 "qbittorrent": {
                     "image": "linuxserver/qbittorrent",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data", "./config/qbit:/config"],
                 },
             },
@@ -509,10 +511,12 @@ class TestEndToEnd:
             "services": {
                 "sonarr": {
                     "image": "linuxserver/sonarr",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data"],
                 },
                 "qbittorrent": {
                     "image": "linuxserver/qbittorrent",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data"],
                 },
             }
@@ -552,10 +556,12 @@ class TestEndToEnd:
                 "services": {
                     "sonarr": {
                         "image": "linuxserver/sonarr",
+                        "environment": {"PUID": "1000", "PGID": "1000"},
                         "volumes": ["${MEDIA_ROOT}:/data"],
                     },
                     "qbittorrent": {
                         "image": "linuxserver/qbittorrent",
+                        "environment": {"PUID": "1000", "PGID": "1000"},
                         "volumes": ["${MEDIA_ROOT}:/data"],
                     },
                 }
@@ -582,10 +588,12 @@ class TestAnalyzeAPI:
             "services": {
                 "sonarr": {
                     "image": "linuxserver/sonarr",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data"],
                 },
                 "qbittorrent": {
                     "image": "linuxserver/qbittorrent",
+                    "environment": {"PUID": "1000", "PGID": "1000"},
                     "volumes": ["/data:/data"],
                 },
             }

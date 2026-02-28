@@ -26,7 +26,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
 
@@ -65,6 +65,116 @@ REQUEST_APPS = {
 HARDLINK_PARTICIPANTS = ARR_APPS | DOWNLOAD_CLIENTS | MEDIA_SERVERS
 
 
+# ─── Image Family Intelligence ───
+#
+# Docker image families handle user identity differently. LinuxServer.io uses
+# PUID/PGID env vars (defaulting to internal UID 911), Hotio uses the same
+# names but defaults to 1000, jlesage uses USER_ID/GROUP_ID, and official
+# images often use their own conventions or the compose `user:` directive.
+#
+# This registry lets the permissions analysis understand each family's
+# mechanism without hardcoding image-specific logic in every check function.
+
+@dataclass
+class ImageFamily:
+    """Intelligence about a Docker image family's user identity mechanism."""
+    name: str                                   # Human-readable family name
+    image_patterns: List[str]                   # Substrings to match in image string
+    uid_env: Optional[str] = None               # Env var for UID (e.g., "PUID")
+    gid_env: Optional[str] = None               # Env var for GID (e.g., "PGID")
+    umask_env: Optional[str] = None             # Env var for UMASK
+    default_uid: Optional[str] = None           # Default UID if env var not set
+    default_gid: Optional[str] = None           # Default GID if env var not set
+    needs_puid: bool = True                     # Whether this image expects explicit UID/GID
+
+
+IMAGE_FAMILIES: List[ImageFamily] = [
+    ImageFamily(
+        name="LinuxServer.io",
+        image_patterns=["lscr.io/linuxserver/", "linuxserver/", "ghcr.io/linuxserver/"],
+        uid_env="PUID", gid_env="PGID", umask_env="UMASK",
+        default_uid="911", default_gid="911",
+        needs_puid=True,
+    ),
+    ImageFamily(
+        name="Hotio",
+        image_patterns=["hotio/", "cr.hotio.dev/hotio/", "ghcr.io/hotio/"],
+        uid_env="PUID", gid_env="PGID", umask_env="UMASK",
+        default_uid="1000", default_gid="1000",
+        needs_puid=True,
+    ),
+    ImageFamily(
+        name="jlesage",
+        image_patterns=["jlesage/"],
+        uid_env="USER_ID", gid_env="GROUP_ID", umask_env="UMASK",
+        default_uid="1000", default_gid="1000",
+        needs_puid=True,
+    ),
+    ImageFamily(
+        name="Binhex",
+        image_patterns=["binhex/"],
+        uid_env="PUID", gid_env="PGID", umask_env="UMASK",
+        default_uid="99", default_gid="100",
+        needs_puid=True,
+    ),
+    ImageFamily(
+        name="Official Plex",
+        image_patterns=["plexinc/pms-docker"],
+        uid_env="PLEX_UID", gid_env="PLEX_GID", umask_env=None,
+        default_uid=None, default_gid=None,
+        needs_puid=True,
+    ),
+    ImageFamily(
+        name="Official Jellyfin",
+        image_patterns=["jellyfin/jellyfin"],
+        uid_env=None, gid_env=None, umask_env=None,
+        default_uid=None, default_gid=None,
+        needs_puid=False,  # Typically uses compose user: directive
+    ),
+    ImageFamily(
+        name="Seerr",
+        image_patterns=["sctx/overseerr", "fallenbagel/jellyseerr"],
+        uid_env=None, gid_env=None, umask_env=None,
+        default_uid=None, default_gid=None,
+        needs_puid=False,  # Uses compose user: directive
+    ),
+]
+
+
+@dataclass
+class PermissionProfile:
+    """Unified permission configuration for a single service.
+
+    Resolves UID/GID from multiple possible sources (compose user: directive,
+    image-family-specific env vars, family defaults) into a single profile
+    that the permission checks can compare uniformly.
+    """
+    service_name: str
+    image: str
+    image_family: Optional[str] = None      # Matched family name or None
+    uid: Optional[str] = None               # Resolved UID
+    gid: Optional[str] = None               # Resolved GID
+    umask: Optional[str] = None             # Resolved UMASK value
+    uid_source: str = "unset"               # "env_PUID", "env_USER_ID", "compose_user", "default", "unset"
+    gid_source: str = "unset"               # Same source types
+    compose_user: Optional[str] = None      # Raw value of compose user: directive
+    needs_explicit_id: bool = False         # Whether this image family expects explicit UID/GID
+    is_root: bool = False                   # True if effective UID is 0
+
+    def to_dict(self) -> dict:
+        return {
+            "service_name": self.service_name,
+            "image": self.image,
+            "image_family": self.image_family,
+            "uid": self.uid,
+            "gid": self.gid,
+            "umask": self.umask,
+            "uid_source": self.uid_source,
+            "gid_source": self.gid_source,
+            "is_root": self.is_root,
+        }
+
+
 # ─── Data Structures ───
 
 @dataclass
@@ -97,6 +207,7 @@ class ServiceInfo:
     volumes: List[VolumeMount] = field(default_factory=list)
     environment: Dict[str, str] = field(default_factory=dict)
     data_paths: List[str] = field(default_factory=list)  # Container paths used for media/downloads
+    compose_user: Optional[str] = None  # Compose `user:` directive (e.g., "1000:1000")
 
     def to_dict(self) -> dict:
         return {
@@ -105,6 +216,7 @@ class ServiceInfo:
             "role": self.role,
             "volumes": [v.to_dict() for v in self.volumes],
             "data_paths": self.data_paths,
+            "compose_user": self.compose_user,
         }
 
 
@@ -216,6 +328,11 @@ class AnalysisResult:
             "cross_stack": self.cross_stack,
             "pipeline": self.pipeline,
             "rpm_mappings": self.rpm_mappings,
+            "permission_profiles": [
+                _build_permission_profile(s).to_dict()
+                for s in self.services
+                if s.role in ("arr", "download_client", "media_server")
+            ],
         }
 
 
@@ -296,6 +413,17 @@ def analyze_stack(
         steps.append({"icon": "warn", "text": f"Detected {len(conflicts)} path conflict{'s' if len(conflicts) != 1 else ''}"})
     else:
         steps.append({"icon": "ok", "text": "No path conflicts detected"})
+
+    # Step 4b: Permissions analysis
+    perm_conflicts = _check_permissions(services, pipeline_context)
+    for c in perm_conflicts:
+        logger.warning("Permission [%s/%s]: %s — %s",
+                       c.conflict_type, c.severity, ", ".join(c.services), c.description)
+    conflicts.extend(perm_conflicts)
+    if perm_conflicts:
+        steps.append({"icon": "warn", "text": f"Detected {len(perm_conflicts)} permission issue{'s' if len(perm_conflicts) != 1 else ''}"})
+    else:
+        steps.append({"icon": "ok", "text": "Permissions check passed"})
 
     # Step 5: Mount intelligence
     mount_classifications, mount_warnings = _analyze_mounts(services)
@@ -564,6 +692,7 @@ def _extract_services(compose: Dict[str, Any]) -> List[ServiceInfo]:
         info.role = _classify_service(name, info.image)
         info.volumes = _parse_volumes(config.get("volumes", []))
         info.environment = _extract_env(config.get("environment", {}))
+        info.compose_user = str(config["user"]) if "user" in config else None
         info.data_paths = _identify_data_paths(info)
 
         services.append(info)
@@ -1140,6 +1269,445 @@ def _get_path_root(path: str) -> Optional[str]:
     return parts[0] if parts else None
 
 
+# ─── Step 2b: Permissions Analysis ───
+#
+# Pass 3 of the analysis engine. Detects UID/GID/UMASK issues across services
+# that share data volumes. Complements the mount topology checks in
+# _detect_conflicts() which handle path mapping (Passes 1-2).
+#
+# Resolution priority for user identity:
+#   1. compose `user:` directive — Docker enforces this regardless of env vars
+#   2. Image-family env vars (PUID, USER_ID, PLEX_UID, etc.)
+#   3. Image family defaults (e.g., LinuxServer.io → UID 911)
+#   4. Unknown (unrecognized image, no user: directive)
+
+
+def _identify_image_family(image: str) -> Optional[ImageFamily]:
+    """Identify which image family a Docker image belongs to.
+
+    Matches the image string against known patterns in IMAGE_FAMILIES.
+    Returns the first matching family, or None for unrecognized images.
+    """
+    image_lower = image.lower()
+    for family in IMAGE_FAMILIES:
+        for pattern in family.image_patterns:
+            if pattern.lower() in image_lower:
+                return family
+    return None
+
+
+def _build_permission_profile(service: ServiceInfo) -> PermissionProfile:
+    """Build a unified permission profile from a service's configuration.
+
+    Resolves UID/GID from multiple possible sources into a single profile,
+    following the resolution priority: compose user: > env vars > defaults.
+    """
+    family = _identify_image_family(service.image)
+    profile = PermissionProfile(
+        service_name=service.name,
+        image=service.image,
+        image_family=family.name if family else None,
+    )
+
+    # Source 1: compose user: directive (takes precedence — Docker enforces it)
+    if service.compose_user:
+        profile.compose_user = service.compose_user
+        user_str = str(service.compose_user).strip()
+        parts = user_str.split(":")
+        profile.uid = parts[0].strip()
+        profile.gid = parts[1].strip() if len(parts) > 1 else parts[0].strip()
+        profile.uid_source = "compose_user"
+        profile.gid_source = "compose_user"
+
+    # Source 2: image-family-specific env vars
+    if family:
+        profile.needs_explicit_id = family.needs_puid
+
+        # UID from env var (only if compose user: didn't already set it)
+        if family.uid_env and family.uid_env in service.environment:
+            env_uid = service.environment[family.uid_env].strip()
+            if not profile.uid:
+                profile.uid = env_uid
+                profile.uid_source = f"env_{family.uid_env}"
+
+        # GID from env var
+        if family.gid_env and family.gid_env in service.environment:
+            env_gid = service.environment[family.gid_env].strip()
+            if not profile.gid:
+                profile.gid = env_gid
+                profile.gid_source = f"env_{family.gid_env}"
+
+        # UMASK from env var
+        if family.umask_env and family.umask_env in service.environment:
+            profile.umask = service.environment[family.umask_env].strip()
+
+        # Source 3: fall back to family defaults if env vars not set
+        if not profile.uid and family.default_uid:
+            profile.uid = family.default_uid
+            profile.uid_source = "default"
+        if not profile.gid and family.default_gid:
+            profile.gid = family.default_gid
+            profile.gid_source = "default"
+
+    # Detect root execution
+    if profile.uid in ("0", "root"):
+        profile.is_root = True
+
+    return profile
+
+
+def _normalize_umask(value: str) -> str:
+    """Normalize UMASK to 3-digit octal string.
+
+    '0002' → '002', '002' → '002', '22' → '022'.
+    Handles quoted values and leading zeros.
+    """
+    value = value.strip().strip("'\"")
+    try:
+        as_int = int(value, 8)
+        return format(as_int, "03o")
+    except ValueError:
+        return value  # Can't parse — return as-is for error reporting
+
+
+def _check_permissions(
+    services: List[ServiceInfo],
+    pipeline_context: Optional[Dict] = None,
+) -> List[Conflict]:
+    """Permissions analysis pass — detect UID/GID/UMASK issues.
+
+    This is Pass 3 of the analysis engine. It checks:
+      1. PUID/PGID mismatch across services sharing data (high)
+      2. Missing PUID/PGID on images that need it (medium)
+      3. Root execution warning (medium)
+      4. UMASK inconsistency / restrictive values (low)
+      5. Cross-stack PUID/PGID mismatch via pipeline (high)
+    """
+    conflicts: List[Conflict] = []
+
+    # Only analyze hardlink participants — they share data volumes
+    participants = [
+        s for s in services
+        if s.role in ("arr", "download_client", "media_server")
+    ]
+
+    if not participants:
+        return conflicts
+
+    # Check 1: PUID/PGID mismatch (high — causes real file access failures)
+    conflicts.extend(_check_puid_pgid_mismatch(participants))
+
+    # Check 2: Missing PUID/PGID on images that need it (medium)
+    conflicts.extend(_check_missing_puid_pgid(participants))
+
+    # Check 3: Root execution (medium — security + ownership concerns)
+    conflicts.extend(_check_root_execution(participants))
+
+    # Check 4: UMASK inconsistency (low — hygiene / best practice)
+    conflicts.extend(_check_umask_consistency(participants))
+
+    # Check 5: Cross-stack PUID/PGID mismatch (when pipeline available)
+    if pipeline_context:
+        conflicts.extend(
+            _check_cross_stack_permissions(participants, pipeline_context)
+        )
+
+    return conflicts
+
+
+def _check_puid_pgid_mismatch(participants: List[ServiceInfo]) -> List[Conflict]:
+    """Detect PUID/PGID mismatches across services sharing data volumes.
+
+    The #1 permissions issue: Sonarr writes files as UID 1000 but Plex reads
+    them as UID 911 and gets 'permission denied'. All services sharing the
+    same data directory must run as the same UID:GID.
+    """
+    profiles = [_build_permission_profile(svc) for svc in participants]
+
+    # Only consider profiles where we actually know the UID
+    known_profiles = [p for p in profiles if p.uid is not None]
+    if len(known_profiles) < 2:
+        return []
+
+    # Group by (uid, gid) pair
+    identity_groups: Dict[Tuple[str, str], List[PermissionProfile]] = {}
+    for p in known_profiles:
+        key = (p.uid, p.gid or p.uid)  # If no GID, assume same as UID
+        identity_groups.setdefault(key, []).append(p)
+
+    if len(identity_groups) <= 1:
+        return []  # All consistent
+
+    # Find the majority identity for fix recommendations
+    majority_key = max(identity_groups, key=lambda k: len(identity_groups[k]))
+    majority_uid, majority_gid = majority_key
+
+    outlier_names = []
+    for key, group_profiles in identity_groups.items():
+        if key != majority_key:
+            for p in group_profiles:
+                outlier_names.append(p.service_name)
+
+    majority_names = [p.service_name for p in identity_groups[majority_key]]
+
+    detail_lines = []
+    for p in known_profiles:
+        source_label = p.uid_source
+        if source_label.startswith("env_"):
+            source_label = source_label[4:]  # "env_PUID" → "PUID"
+        detail_lines.append(
+            f"  {p.service_name}: UID={p.uid} GID={p.gid or '?'} (via {source_label})"
+        )
+
+    return [Conflict(
+        conflict_type="puid_pgid_mismatch",
+        severity="high",
+        services=outlier_names + majority_names,
+        description=(
+            f"Services run as different users — "
+            f"{', '.join(majority_names)} use UID:GID {majority_uid}:{majority_gid}, "
+            f"but {', '.join(outlier_names)} {'use' if len(outlier_names) > 1 else 'uses'} "
+            f"different values. Files created by one service may be unreadable by others."
+        ),
+        detail="User identity per service:\n" + "\n".join(detail_lines),
+    )]
+
+
+def _check_missing_puid_pgid(participants: List[ServiceInfo]) -> List[Conflict]:
+    """Detect services that should have PUID/PGID set but don't.
+
+    LinuxServer.io images default to UID 911 if PUID is not set. This is
+    almost never what the user wants — their arr apps and download clients
+    should all run as the same user.
+    """
+    missing_services = []
+
+    for svc in participants:
+        family = _identify_image_family(svc.image)
+        if not family or not family.needs_puid:
+            continue  # Unknown image or doesn't need explicit UID
+        if svc.compose_user:
+            continue  # Has user: directive — identity is set
+
+        has_uid = family.uid_env and family.uid_env in svc.environment
+        has_gid = family.gid_env and family.gid_env in svc.environment
+
+        if not has_uid or not has_gid:
+            missing_parts = []
+            if not has_uid and family.uid_env:
+                missing_parts.append(f"{family.uid_env} (defaults to {family.default_uid})")
+            if not has_gid and family.gid_env:
+                missing_parts.append(f"{family.gid_env} (defaults to {family.default_gid})")
+            missing_services.append((svc.name, family.name, missing_parts))
+
+    if not missing_services:
+        return []
+
+    svc_names = [name for name, _, _ in missing_services]
+    detail_lines = [
+        f"  {name} ({family}): missing {', '.join(parts)}"
+        for name, family, parts in missing_services
+    ]
+
+    return [Conflict(
+        conflict_type="missing_puid_pgid",
+        severity="medium",
+        services=svc_names,
+        description=(
+            f"{len(svc_names)} service{'s' if len(svc_names) != 1 else ''} "
+            f"{'are' if len(svc_names) != 1 else 'is'} missing explicit user identity. "
+            f"Without PUID/PGID, the container falls back to internal defaults "
+            f"that may not match your other services."
+        ),
+        detail="Missing configuration:\n" + "\n".join(detail_lines),
+    )]
+
+
+def _check_root_execution(participants: List[ServiceInfo]) -> List[Conflict]:
+    """Warn when media services run as root (PUID=0 or user: 0).
+
+    Running as root means all files are owned by root. Other services
+    running as non-root may not be able to modify those files. It's also
+    a security concern — container breakouts as root are more dangerous.
+    """
+    root_services = []
+
+    for svc in participants:
+        profile = _build_permission_profile(svc)
+        if profile.is_root:
+            root_services.append((svc.name, profile.uid_source))
+
+    if not root_services:
+        return []
+
+    svc_names = [name for name, _ in root_services]
+    detail_lines = [f"  {name} (via {source})" for name, source in root_services]
+
+    return [Conflict(
+        conflict_type="root_execution",
+        severity="medium",
+        services=svc_names,
+        description=(
+            f"{', '.join(svc_names)} {'run' if len(svc_names) > 1 else 'runs'} "
+            f"as root (UID 0). Files will be owned by root — other non-root "
+            f"services may not be able to modify them, and container breakouts "
+            f"as root are a security risk."
+        ),
+        detail="Root services:\n" + "\n".join(detail_lines),
+    )]
+
+
+def _check_umask_consistency(participants: List[ServiceInfo]) -> List[Conflict]:
+    """Detect inconsistent or problematic UMASK values across services."""
+    conflicts: List[Conflict] = []
+    umask_map: Dict[str, List[str]] = {}  # normalized_umask → [service_names]
+
+    for svc in participants:
+        profile = _build_permission_profile(svc)
+        if profile.umask:
+            norm = _normalize_umask(profile.umask)
+            umask_map.setdefault(norm, []).append(svc.name)
+
+    if not umask_map:
+        return conflicts  # No UMASK set anywhere — nothing to compare
+
+    # Check for inconsistency across services
+    if len(umask_map) > 1:
+        detail_lines = [
+            f"  {svc}: UMASK={umask}"
+            for umask, svcs in umask_map.items() for svc in svcs
+        ]
+        all_names = [svc for svcs in umask_map.values() for svc in svcs]
+
+        conflicts.append(Conflict(
+            conflict_type="umask_inconsistent",
+            severity="low",
+            services=all_names,
+            description=(
+                "Services use different UMASK values. Files created by each "
+                "service will have different permissions, which can cause "
+                "access issues between services."
+            ),
+            detail="UMASK values:\n" + "\n".join(detail_lines),
+        ))
+
+    # Check for overly restrictive UMASK (077+ blocks group/other access)
+    for umask_val, svc_names in umask_map.items():
+        try:
+            umask_int = int(umask_val, 8)
+            if umask_int >= 0o070:
+                conflicts.append(Conflict(
+                    conflict_type="umask_restrictive",
+                    severity="low",
+                    services=svc_names,
+                    description=(
+                        f"UMASK {umask_val} is very restrictive — group and other "
+                        f"users get no access to new files. If services run as "
+                        f"different users, they won't be able to read each other's files."
+                    ),
+                    detail=f"Services with restrictive UMASK: {', '.join(svc_names)}",
+                ))
+        except ValueError:
+            pass
+
+    return conflicts
+
+
+def _check_cross_stack_permissions(
+    current_participants: List[ServiceInfo],
+    pipeline_context: Dict,
+) -> List[Conflict]:
+    """Check for PUID/PGID mismatches between this stack and pipeline siblings.
+
+    When services live in separate stacks (common with Komodo/Portainer),
+    the within-stack check won't catch cross-stack UID mismatches. This
+    check uses pipeline data to compare UIDs across the entire media pipeline.
+    """
+    # Build profiles for current stack's participants
+    current_profiles = {}
+    for svc in current_participants:
+        profile = _build_permission_profile(svc)
+        if profile.uid is not None:
+            current_profiles[svc.name] = profile
+
+    if not current_profiles:
+        return []
+
+    # Find this stack's majority UID:GID
+    uid_counts: Dict[Tuple[str, str], int] = {}
+    for profile in current_profiles.values():
+        key = (profile.uid, profile.gid or profile.uid)
+        uid_counts[key] = uid_counts.get(key, 0) + 1
+
+    current_majority = max(uid_counts, key=uid_counts.get)
+    current_uid, current_gid = current_majority
+
+    # Build profiles for pipeline siblings
+    sibling_services = pipeline_context.get("media_services", [])
+    if not sibling_services:
+        return []
+
+    # Get current stack name for filtering
+    stack_path = pipeline_context.get("scan_dir", "")
+    mismatched_siblings = []
+
+    for sib in sibling_services:
+        sib_image = sib.get("image", "")
+        sib_env = sib.get("environment", {})
+        sib_user = sib.get("compose_user")
+        sib_name = sib.get("service_name", "")
+        sib_stack = sib.get("stack_name", "")
+
+        # Skip services in the current stack (already checked within-stack)
+        if sib_name in current_profiles:
+            continue
+
+        # Resolve sibling's UID
+        sib_uid = None
+        sib_gid = None
+
+        if sib_user:
+            parts = str(sib_user).split(":")
+            sib_uid = parts[0].strip()
+            sib_gid = parts[1].strip() if len(parts) > 1 else sib_uid
+        else:
+            family = _identify_image_family(sib_image)
+            if family:
+                if family.uid_env and family.uid_env in sib_env:
+                    sib_uid = sib_env[family.uid_env]
+                elif family.default_uid:
+                    sib_uid = family.default_uid
+                if family.gid_env and family.gid_env in sib_env:
+                    sib_gid = sib_env[family.gid_env]
+                elif family.default_gid:
+                    sib_gid = family.default_gid
+
+        if sib_uid and (sib_uid, sib_gid or sib_uid) != current_majority:
+            mismatched_siblings.append(
+                f"  {sib_name} ({sib_stack}): UID={sib_uid} GID={sib_gid or '?'}"
+            )
+
+    if not mismatched_siblings:
+        return []
+
+    return [Conflict(
+        conflict_type="cross_stack_puid_mismatch",
+        severity="high",
+        services=[name for name in current_profiles],
+        description=(
+            f"Cross-stack permission mismatch: this stack's services run as "
+            f"UID:GID {current_uid}:{current_gid}, but "
+            f"{len(mismatched_siblings)} sibling "
+            f"service{'s' if len(mismatched_siblings) != 1 else ''} "
+            f"in your pipeline use different values."
+        ),
+        detail=(
+            f"This stack: UID:GID {current_uid}:{current_gid}\n"
+            f"Mismatched siblings:\n" + "\n".join(mismatched_siblings)
+        ),
+    )]
+
+
 # ─── Step 3: Fix Generation ───
 
 def _generate_fixes(
@@ -1164,6 +1732,21 @@ def _generate_fixes(
 
         elif conflict.conflict_type == "path_unreachable":
             conflict.fix = _fix_path_unreachable(conflict, services)
+
+        elif conflict.conflict_type == "puid_pgid_mismatch":
+            conflict.fix = _fix_puid_pgid_mismatch(conflict, participants)
+
+        elif conflict.conflict_type == "missing_puid_pgid":
+            conflict.fix = _fix_missing_puid_pgid(conflict, participants)
+
+        elif conflict.conflict_type == "root_execution":
+            conflict.fix = _fix_root_execution(conflict, participants)
+
+        elif conflict.conflict_type in ("umask_inconsistent", "umask_restrictive"):
+            conflict.fix = _fix_umask(conflict)
+
+        elif conflict.conflict_type == "cross_stack_puid_mismatch":
+            conflict.fix = _fix_cross_stack_puid(conflict, participants)
 
 
 def _fix_no_shared_mount(
@@ -1292,6 +1875,188 @@ def _fix_path_unreachable(
         f"  2. Change your app config to use a path that IS mounted",
         "",
         "Check your compose file's volumes section for this service.",
+    ]
+
+    return "\n".join(lines)
+
+
+def _fix_puid_pgid_mismatch(
+    conflict: Conflict, participants: List[ServiceInfo]
+) -> str:
+    """Fix for services running as different UIDs.
+
+    Identifies the majority UID:GID and tells the user to align all
+    services to that value.
+    """
+    # Find the majority UID across participants
+    uid_counts: Dict[Tuple[str, str], int] = {}
+    for svc in participants:
+        profile = _build_permission_profile(svc)
+        if profile.uid:
+            key = (profile.uid, profile.gid or profile.uid)
+            uid_counts[key] = uid_counts.get(key, 0) + 1
+
+    if not uid_counts:
+        return "Set the same PUID and PGID on all media services."
+
+    majority = max(uid_counts, key=uid_counts.get)
+    rec_uid, rec_gid = majority
+
+    lines = [
+        "RECOMMENDED FIX: Align all services to the same UID:GID.",
+        "",
+        "All services that share data volumes must run as the same user.",
+        f"Your most common identity is UID={rec_uid} GID={rec_gid}.",
+        "",
+        "Set these environment variables in every media service's compose:",
+    ]
+
+    for svc in participants:
+        profile = _build_permission_profile(svc)
+        current = f"UID={profile.uid or '?'} GID={profile.gid or '?'}"
+        if profile.uid == rec_uid and (profile.gid or profile.uid) == rec_gid:
+            lines.append(f"  {svc.name}: ✓ already {current}")
+        else:
+            family = _identify_image_family(svc.image)
+            if family and family.uid_env:
+                lines.append(f"  {svc.name}: set {family.uid_env}={rec_uid} {family.gid_env}={rec_gid}  (currently {current})")
+            elif svc.compose_user:
+                lines.append(f"  {svc.name}: set user: \"{rec_uid}:{rec_gid}\"  (currently user: \"{svc.compose_user}\")")
+            else:
+                lines.append(f"  {svc.name}: set PUID={rec_uid} PGID={rec_gid}  (currently {current})")
+
+    lines.extend([
+        "",
+        "After changing, fix existing file ownership on your host:",
+        f"  sudo chown -R {rec_uid}:{rec_gid} /path/to/your/data",
+    ])
+
+    return "\n".join(lines)
+
+
+def _fix_missing_puid_pgid(
+    conflict: Conflict, participants: List[ServiceInfo]
+) -> str:
+    """Fix for services missing PUID/PGID environment variables.
+
+    Recommends the majority UID from the stack so the user sets a
+    consistent value.
+    """
+    # Determine recommended UID from other services in the stack
+    rec_uid, rec_gid = "1000", "1000"
+    for svc in participants:
+        profile = _build_permission_profile(svc)
+        if profile.uid and profile.uid_source != "default":
+            rec_uid = profile.uid
+            rec_gid = profile.gid or profile.uid
+            break
+
+    lines = [
+        "RECOMMENDED FIX: Add user identity to services missing PUID/PGID.",
+        "",
+    ]
+
+    for svc_name in conflict.services:
+        svc = next((s for s in participants if s.name == svc_name), None)
+        if not svc:
+            continue
+        family = _identify_image_family(svc.image)
+        if not family:
+            continue
+
+        lines.append(f"{svc.name} ({family.name} image):")
+        lines.append(f"  Without {family.uid_env}/{family.gid_env}, defaults to UID {family.default_uid}")
+        lines.append(f"  Add to your compose environment:")
+        if family.uid_env:
+            lines.append(f"    - {family.uid_env}={rec_uid}")
+        if family.gid_env:
+            lines.append(f"    - {family.gid_env}={rec_gid}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _fix_root_execution(
+    conflict: Conflict, participants: List[ServiceInfo]
+) -> str:
+    """Fix for services running as root (UID 0)."""
+    # Find a non-root UID from other services
+    rec_uid = "1000"
+    for svc in participants:
+        profile = _build_permission_profile(svc)
+        if profile.uid and not profile.is_root and profile.uid_source != "default":
+            rec_uid = profile.uid
+            break
+
+    lines = [
+        "RECOMMENDED FIX: Run these services as a non-root user.",
+        "",
+        "Running as root (UID 0) causes files to be owned by root.",
+        "Other non-root services won't be able to modify those files.",
+        "",
+    ]
+
+    for svc_name in conflict.services:
+        svc = next((s for s in participants if s.name == svc_name), None)
+        if not svc:
+            continue
+        family = _identify_image_family(svc.image)
+        if family and family.uid_env:
+            lines.append(f"  {svc.name}: change {family.uid_env} from 0 to {rec_uid}")
+        else:
+            lines.append(f"  {svc.name}: set user: \"{rec_uid}:{rec_uid}\" in compose")
+
+    lines.extend([
+        "",
+        "After changing, fix existing file ownership:",
+        f"  sudo chown -R {rec_uid}:{rec_uid} /path/to/your/data",
+    ])
+
+    return "\n".join(lines)
+
+
+def _fix_umask(conflict: Conflict) -> str:
+    """Fix for inconsistent or restrictive UMASK values."""
+    lines = [
+        "RECOMMENDED FIX: Use UMASK=002 across all services.",
+        "",
+        "UMASK 002 means: owner=rwx, group=rwx, others=r-x",
+        "This is the TRaSH Guides recommended value — it allows",
+        "group members full access while keeping others read-only.",
+        "",
+    ]
+
+    for svc_name in conflict.services:
+        lines.append(f"  {svc_name}: set UMASK=002")
+
+    return "\n".join(lines)
+
+
+def _fix_cross_stack_puid(
+    conflict: Conflict, participants: List[ServiceInfo]
+) -> str:
+    """Fix for cross-stack PUID/PGID mismatches."""
+    # Find this stack's UID
+    rec_uid, rec_gid = "1000", "1000"
+    for svc in participants:
+        profile = _build_permission_profile(svc)
+        if profile.uid and profile.uid_source != "default":
+            rec_uid = profile.uid
+            rec_gid = profile.gid or profile.uid
+            break
+
+    lines = [
+        "RECOMMENDED FIX: All services across your pipeline must share the same UID:GID.",
+        "",
+        f"This stack uses UID:GID {rec_uid}:{rec_gid}.",
+        "The sibling services listed above use different values.",
+        "",
+        "Update each sibling stack's compose to match:",
+        f"  PUID={rec_uid}",
+        f"  PGID={rec_gid}",
+        "",
+        "After changing, fix file ownership on your shared data:",
+        f"  sudo chown -R {rec_uid}:{rec_gid} /path/to/your/data",
     ]
 
     return "\n".join(lines)

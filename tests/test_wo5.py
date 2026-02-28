@@ -672,6 +672,7 @@ class TestAnalyzerStress:
             "services": {
                 "sonarr": {
                     "image": "linuxserver/sonarr",
+                    "environment": ["PUID=1000", "PGID=1000"],
                     "volumes": ["/data:/data", "./config:/config"],
                 },
             },
@@ -714,18 +715,22 @@ class TestAnalyzerStress:
             "services": {
                 "sonarr": {
                     "image": "linuxserver/sonarr",
+                    "environment": ["PUID=1000", "PGID=1000"],
                     "volumes": ["/data:/data", "./config/sonarr:/config"],
                 },
                 "radarr": {
                     "image": "linuxserver/radarr",
+                    "environment": ["PUID=1000", "PGID=1000"],
                     "volumes": ["/data:/data", "./config/radarr:/config"],
                 },
                 "qbittorrent": {
                     "image": "linuxserver/qbittorrent",
+                    "environment": ["PUID=1000", "PGID=1000"],
                     "volumes": ["/data:/data", "./config/qbit:/config"],
                 },
                 "plex": {
                     "image": "plexinc/pms-docker",
+                    "environment": ["PLEX_UID=1000", "PLEX_GID=1000"],
                     "volumes": ["/data:/data", "./config/plex:/config"],
                 },
             },
@@ -934,10 +939,12 @@ class TestE2EFlows:
             "services": {
                 "sonarr": {
                     "image": "linuxserver/sonarr",
+                    "environment": ["PUID=1000", "PGID=1000"],
                     "volumes": ["/data:/data", "./config/sonarr:/config"],
                 },
                 "qbittorrent": {
                     "image": "linuxserver/qbittorrent",
+                    "environment": ["PUID=1000", "PGID=1000"],
                     "volumes": ["/data:/data", "./config/qbit:/config"],
                 },
             }
@@ -970,11 +977,17 @@ class TestE2EFlows:
             "services:\n"
             "  sonarr:\n"
             "    image: linuxserver/sonarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
             "    volumes:\n"
             "      - ${DATA_DIR}:/data\n"
             "      - ./config/sonarr:/config\n"
             "  qbittorrent:\n"
             "    image: linuxserver/qbittorrent\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
             "    volumes:\n"
             "      - ${DATA_DIR}:/data\n"
             "      - ./config/qbit:/config\n",

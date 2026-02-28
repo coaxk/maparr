@@ -2147,6 +2147,47 @@ function renderMountWarningsInto(container, data) {
     });
 }
 
+/**
+ * Render a one-line permission summary when all services have matching UID:GID.
+ * Shows nothing when profiles are absent or when there are permission conflicts
+ * (those are already rendered in the conflicts section).
+ */
+function renderPermissionSummaryInto(container, data) {
+    const profiles = data.permission_profiles || [];
+    if (profiles.length === 0) return;
+
+    // Check if any permission conflicts exist — if so, skip the summary
+    // (the conflicts section already shows the detailed issues)
+    const permTypes = new Set([
+        "puid_pgid_mismatch", "missing_puid_pgid", "root_execution",
+        "umask_inconsistent", "umask_restrictive", "cross_stack_puid_mismatch",
+    ]);
+    const hasPermConflict = (data.conflicts || []).some((c) => permTypes.has(c.type));
+    if (hasPermConflict) return;
+
+    // Build a summary of UIDs found
+    const knownProfiles = profiles.filter((p) => p.uid);
+    if (knownProfiles.length === 0) return;
+
+    const uids = new Set(knownProfiles.map((p) => p.uid + ":" + (p.gid || p.uid)));
+    const badge = document.createElement("div");
+    badge.className = "callout callout-success";
+    badge.style.marginTop = "0.75rem";
+
+    if (uids.size === 1) {
+        const pair = [...uids][0];
+        badge.textContent =
+            "\u2713 Permissions: all " + knownProfiles.length + " media service" +
+            (knownProfiles.length !== 1 ? "s" : "") + " running as UID:GID " + pair;
+    } else {
+        badge.textContent =
+            "\u2713 Permissions: " + knownProfiles.length + " media services profiled";
+    }
+
+    container.appendChild(badge);
+}
+
+
 // ─── Solution ───
 
 function showSolution(data) {
@@ -2717,6 +2758,9 @@ function showHealthyResult(data) {
 
     // ─── Mount warnings inline (compact) ───
     renderMountWarningsInto(details, data);
+
+    // ─── Permissions summary (one line when healthy) ───
+    renderPermissionSummaryInto(details, data);
 
     // ─── TRaSH compliance badge (one line) ───
     const compliance = detectTrashCompliance(data);
