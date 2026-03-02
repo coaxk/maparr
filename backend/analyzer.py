@@ -442,6 +442,17 @@ def analyze_stack(
     # Promote remote-FS warnings to conflicts
     _add_mount_conflicts(conflicts, mount_classifications, services)
 
+    # Step 5b: Platform recommendations
+    platform_conflicts = _check_platform(services, mount_classifications, pipeline_context)
+    for c in platform_conflicts:
+        logger.warning("Platform [%s/%s]: %s — %s",
+                       c.conflict_type, c.severity, ", ".join(c.services), c.description)
+    conflicts.extend(platform_conflicts)
+    if platform_conflicts:
+        steps.append({"icon": "warn", "text": f"Detected {len(platform_conflicts)} platform recommendation{'s' if len(platform_conflicts) != 1 else ''}"})
+    else:
+        steps.append({"icon": "ok", "text": "Platform check passed"})
+
     # Inject pipeline mount mismatch as a real conflict so fix generation picks it up.
     # The pipeline knows this stack's mounts differ from the majority — e.g. this stack
     # uses /host/data but 6 other services use /srv/data.  Without this, the intra-stack
@@ -1708,6 +1719,202 @@ def _check_cross_stack_permissions(
     )]
 
 
+# ─── Pass 4: Platform Recommendations ───
+
+def _check_platform(
+    services: List[ServiceInfo],
+    mount_classifications: List["MountClassification"],
+    pipeline_context: Optional[Dict] = None,
+) -> List[Conflict]:
+    """Platform recommendations pass — detect platform-specific issues.
+
+    This is Pass 4 of the analysis engine. It checks:
+      1. WSL2 cross-filesystem performance (medium)
+      2. Mixed mount types across hardlink participants (medium)
+      3. Windows drive letter paths in compose (low/info)
+
+    Note: remote_filesystem conflicts (NFS/CIFS on hardlink participants) are
+    already created by _add_mount_conflicts(). This pass covers the remaining
+    platform scenarios.
+    """
+    conflicts: List[Conflict] = []
+
+    participants = [
+        s for s in services
+        if s.role in ("arr", "download_client", "media_server")
+    ]
+
+    if not participants:
+        return conflicts
+
+    # Map each participant to its mount classifications (reuses already-computed list)
+    svc_mounts = _collect_participant_mount_types(participants, mount_classifications)
+
+    conflicts.extend(_check_wsl2_performance(participants, svc_mounts))
+    conflicts.extend(_check_mixed_mount_types(participants, svc_mounts))
+    conflicts.extend(_check_windows_paths(participants, svc_mounts))
+
+    return conflicts
+
+
+def _collect_participant_mount_types(
+    participants: List[ServiceInfo],
+    mount_classifications: List["MountClassification"],
+) -> Dict[str, List["MountClassification"]]:
+    """Map each participant service to its mount classifications (data volumes only)."""
+    class_by_path = {mc.path: mc for mc in mount_classifications}
+
+    result: Dict[str, List["MountClassification"]] = {}
+    for svc in participants:
+        svc_class = []
+        for vol in svc.volumes:
+            if vol.is_bind_mount and vol.source and not _is_config_mount(vol.target):
+                mc = class_by_path.get(vol.source)
+                if mc:
+                    svc_class.append(mc)
+        result[svc.name] = svc_class
+
+    return result
+
+
+def _check_wsl2_performance(
+    participants: List[ServiceInfo],
+    svc_mounts: Dict[str, List["MountClassification"]],
+) -> List[Conflict]:
+    """Detect WSL2 cross-filesystem mounts on data paths.
+
+    When Docker Desktop on Windows runs containers, volumes through /mnt/c/
+    or /mnt/d/ traverse the 9P protocol between WSL2 and Windows NTFS.
+    This is significantly slower than native Linux ext4 paths for I/O-heavy
+    media operations.
+    """
+    wsl2_services = []
+    wsl2_paths = set()
+
+    for svc_name, mounts in svc_mounts.items():
+        for mc in mounts:
+            if mc.mount_type == "wsl2":
+                wsl2_services.append(svc_name)
+                wsl2_paths.add(mc.path)
+                break  # One WSL2 mount is enough to flag the service
+
+    if not wsl2_services:
+        return []
+
+    path_list = ", ".join(sorted(wsl2_paths))
+
+    return [Conflict(
+        conflict_type="wsl2_performance",
+        severity="medium",
+        services=sorted(set(wsl2_services)),
+        description=(
+            "Media data paths go through WSL2's Windows filesystem bridge. "
+            "I/O performance will be significantly slower than native Linux paths."
+        ),
+        detail=(
+            f"WSL2 translated paths: {path_list}\n\n"
+            f"These paths use the 9P protocol to access Windows NTFS from "
+            f"within WSL2. For media libraries with thousands of files, this "
+            f"causes noticeable slowdowns in scanning, importing, and hardlinking."
+        ),
+    )]
+
+
+def _check_mixed_mount_types(
+    participants: List[ServiceInfo],
+    svc_mounts: Dict[str, List["MountClassification"]],
+) -> List[Conflict]:
+    """Detect mixed mount types across hardlink participants.
+
+    If Sonarr's data is on local storage but qBittorrent's downloads land
+    on an NFS share, hardlinks between them are impossible — they're
+    different filesystems. All participants need the same mount type.
+
+    Note: All-remote scenarios (all NFS or all CIFS) are handled by
+    _add_mount_conflicts() as remote_filesystem conflicts. This catches
+    the MIXED case specifically.
+    """
+    types_per_service: Dict[str, Set[str]] = {}
+    for svc_name, mounts in svc_mounts.items():
+        types = set()
+        for mc in mounts:
+            if mc.mount_type in ("nfs", "cifs"):
+                types.add("remote")
+            elif mc.mount_type in ("local", "wsl2", "windows"):
+                types.add("local")
+            elif mc.mount_type == "named_volume":
+                types.add("named_volume")
+        if types:
+            types_per_service[svc_name] = types
+
+    if len(types_per_service) < 2:
+        return []
+
+    all_types = set()
+    for types in types_per_service.values():
+        all_types.update(types)
+
+    if len(all_types) <= 1:
+        return []  # All same broad type — no mixed issue
+
+    detail_lines = []
+    for svc_name, types in sorted(types_per_service.items()):
+        for mc in svc_mounts[svc_name]:
+            detail_lines.append(f"  {svc_name}: {mc.path} ({mc.mount_type})")
+
+    return [Conflict(
+        conflict_type="mixed_mount_types",
+        severity="medium",
+        services=sorted(types_per_service.keys()),
+        description=(
+            "Hardlink participants use a mix of local and remote storage. "
+            "Hardlinks cannot cross filesystem boundaries."
+        ),
+        detail="\n".join(detail_lines),
+    )]
+
+
+def _check_windows_paths(
+    participants: List[ServiceInfo],
+    svc_mounts: Dict[str, List["MountClassification"]],
+) -> List[Conflict]:
+    """Detect Windows drive letter paths in compose files.
+
+    Docker Desktop translates C:\\path to /c/path internally, but using
+    native Linux paths gives better I/O performance. Informational only.
+    """
+    win_services = []
+    win_paths = set()
+
+    for svc_name, mounts in svc_mounts.items():
+        for mc in mounts:
+            if mc.mount_type == "windows":
+                win_services.append(svc_name)
+                win_paths.add(mc.path)
+                break
+
+    if not win_services:
+        return []
+
+    path_list = ", ".join(sorted(win_paths))
+
+    return [Conflict(
+        conflict_type="windows_path_in_compose",
+        severity="low",
+        services=sorted(set(win_services)),
+        description=(
+            "Windows drive letter paths detected in compose volumes. "
+            "Consider using WSL2 native paths for better performance."
+        ),
+        detail=(
+            f"Windows paths found: {path_list}\n\n"
+            f"Docker Desktop handles the translation, but storing media "
+            f"data on native Linux paths (e.g., /home/user/data or an "
+            f"ext4 mount) gives significantly better I/O performance."
+        ),
+    )]
+
+
 # ─── Step 3: Fix Generation ───
 
 def _generate_fixes(
@@ -1747,6 +1954,22 @@ def _generate_fixes(
 
         elif conflict.conflict_type == "cross_stack_puid_mismatch":
             conflict.fix = _fix_cross_stack_puid(conflict, participants)
+
+        # Pass 4: Platform recommendations
+        elif conflict.conflict_type == "remote_filesystem":
+            # Defensive: _add_mount_conflicts() sets fix inline, but if
+            # it's ever cleared, this provides the fallback.
+            if not conflict.fix:
+                conflict.fix = _fix_remote_filesystem(conflict)
+
+        elif conflict.conflict_type == "wsl2_performance":
+            conflict.fix = _fix_wsl2_performance(conflict)
+
+        elif conflict.conflict_type == "mixed_mount_types":
+            conflict.fix = _fix_mixed_mount_types(conflict, participants)
+
+        elif conflict.conflict_type == "windows_path_in_compose":
+            conflict.fix = _fix_windows_paths(conflict)
 
 
 def _fix_no_shared_mount(
@@ -2060,6 +2283,90 @@ def _fix_cross_stack_puid(
     ]
 
     return "\n".join(lines)
+
+
+# ─── Pass 4: Platform Fix Functions ───
+
+def _fix_remote_filesystem(conflict: Conflict) -> str:
+    """Defensive fallback fix for remote filesystem conflicts."""
+    return "\n".join([
+        "RECOMMENDED FIX: Use local storage for media data.",
+        "",
+        "Hardlinks do not work over network shares (NFS/CIFS/SMB).",
+        "Either:",
+        "  1. Move media data to local storage on the Docker host",
+        "  2. Ensure ALL services access the exact same NFS export",
+        "     (hardlinks work within a single NFS export)",
+        "",
+        "See: https://trash-guides.info/Hardlinks/How-to-setup-for/Docker/",
+    ])
+
+
+def _fix_wsl2_performance(conflict: Conflict) -> str:
+    """Fix for WSL2 cross-filesystem performance."""
+    return "\n".join([
+        "RECOMMENDED FIX: Store media data on native Linux paths.",
+        "",
+        "Your data is on Windows drives accessed through WSL2's 9P bridge.",
+        "This works but is significantly slower than native Linux I/O for",
+        "large media libraries.",
+        "",
+        "Options (best to worst):",
+        "  1. Use a dedicated ext4 partition or virtual disk mounted in WSL2",
+        "     (e.g., /mnt/wsl/data or /home/user/data)",
+        "  2. Use Docker volumes with a local driver for bulk data",
+        "  3. Accept the performance penalty (functional, just slower)",
+        "",
+        "If you use option 1, update your compose volumes to point to the",
+        "native Linux path instead of /mnt/c/ or /mnt/d/ paths.",
+        "",
+        "See: https://trash-guides.info/Hardlinks/How-to-setup-for/Docker/",
+    ])
+
+
+def _fix_mixed_mount_types(
+    conflict: Conflict, participants: List[ServiceInfo]
+) -> str:
+    """Fix for mixed local/remote mount types across participants."""
+    lines = [
+        "RECOMMENDED FIX: Standardize all media services to the same storage type.",
+        "",
+        "Your services use a mix of local and remote storage. Hardlinks",
+        "cannot cross filesystem boundaries, so services on different",
+        "storage types cannot hardlink files between each other.",
+        "",
+        "Options:",
+        "  1. Move ALL media data to local storage (best for hardlinks)",
+        "  2. Move ALL media data to a single NFS export (hardlinks work",
+        "     within one export, but not between exports or local+NFS)",
+        "",
+        "Affected services:",
+    ]
+    for svc in participants:
+        if svc.name in conflict.services:
+            lines.append(f"  - {svc.name}")
+
+    lines.extend([
+        "",
+        "See: https://trash-guides.info/Hardlinks/How-to-setup-for/Docker/",
+    ])
+    return "\n".join(lines)
+
+
+def _fix_windows_paths(conflict: Conflict) -> str:
+    """Fix for Windows paths in Linux container compose files."""
+    return "\n".join([
+        "RECOMMENDATION: Use forward slashes and consider native Linux paths.",
+        "",
+        "Docker Desktop translates Windows paths automatically, so this is",
+        "not broken. However, for consistency and better performance, consider:",
+        "",
+        "  1. Use forward slashes: C:/Users/you/data:/data",
+        "  2. Better: Use WSL2 native paths: /home/user/data:/data",
+        "  3. Best: Use a dedicated Linux partition for media data",
+        "",
+        "This is informational — your setup works as-is.",
+    ])
 
 
 # ─── Step 4: Summary ───

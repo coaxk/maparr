@@ -401,3 +401,68 @@ services:
       - ./config/seerr:/config
       - /mnt/nas/data:/data
 """
+
+# ─── Platform Recommendation Test YAML Constants ───
+
+# WSL2 cross-filesystem paths (data through /mnt/c/)
+WSL2_MOUNT_YAML = """\
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/c/media/data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - /mnt/c/media/data:/data
+"""
+
+# Mixed mount types: sonarr on local, qbittorrent on NFS
+MIXED_MOUNTS_YAML = """\
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/nas/data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - 192.168.1.10:/exports/data:/downloads
+"""
+
+# Windows drive letter paths in compose
+WINDOWS_PATH_YAML = """\
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - C:\\Users\\media\\data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - C:\\Users\\media\\data:/data
+"""
