@@ -154,5 +154,5 @@ docker compose up --build
 ```
 
 ## Branch
-`v1.0-web-pivot` — all web development happens here.
-The `charm-tui-alpha` branch has a separate Go/Charm TUI at `maparr_charm/`.
+`main` — all development happens here (merged from v1.0-web-pivot, 2026-03-04).
+The Go/Charm TUI lives at `maparr_charm/` (embedded repo, separate Go module).

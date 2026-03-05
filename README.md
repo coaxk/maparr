@@ -166,6 +166,18 @@ All services mount the same parent: `/host/data:/data`. Subdirectories handle se
 - **Pipeline:** Full directory scanning with role detection, mount consistency checking across all stacks
 - **Tests:** 426 tests covering RPM, pipeline, analysis, smart-match, cross-stack, and edge cases
 
+## Security
+
+MapArr handles filesystem paths and Docker socket access, so it enforces strict boundaries at every layer.
+
+- **Path traversal prevention** — All user-supplied paths are resolved via `Path.resolve()` and verified against the stacks root using `relative_to()`. Requests targeting paths outside the stacks directory are rejected before any read or write occurs.
+- **Compose filename whitelist** — The apply-fix endpoint only writes to files named `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, or `compose.yaml`. Arbitrary filenames are blocked.
+- **System directory blocking** — The stacks path configuration rejects system-critical directories (`/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/sbin`, `C:\Windows`, `C:\Program Files`).
+- **XSS prevention** — The frontend renders all user-derived content via `textContent` assignments. `innerHTML` is never used with untrusted data.
+- **Safe YAML loading** — All YAML parsing uses `yaml.safe_load()`. No arbitrary Python object deserialization.
+- **Read-only analysis** — No Docker containers are started, stopped, or modified. The auto-apply feature writes only to compose files, only when explicitly confirmed, and always creates a `.bak` backup first.
+- **No outbound connections** — MapArr makes zero external API calls. No telemetry, no update pings, no data leaves your machine. (The update checker compares a local version string against GitHub releases — initiated by the user, not automatic.)
+
 ## The *arr Ecosystem
 
 MapArr is part of a planned 4-tool ecosystem for Docker media stack management:
