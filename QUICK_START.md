@@ -173,6 +173,46 @@ curl http://localhost:9494/api/health
 # {"status":"ok","version":"1.5.0"}
 ```
 
+## Custom Image Recognition
+
+MapArr ships with a database of 200+ Docker images it recognizes automatically. If you run a custom or self-built image that MapArr doesn't classify correctly, you can add a custom override file.
+
+Create a `custom-images.json` file and mount it into the container:
+
+```yaml
+volumes:
+  - ./custom-images.json:/data/custom-images.json:ro
+```
+
+Example `custom-images.json`:
+
+```json
+{
+  "version": 1,
+  "families": {},
+  "images": {
+    "my-custom-arr": {
+      "name": "My Custom Arr App",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": ["myregistry/my-custom-arr"],
+      "keywords": ["my-custom-arr"],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/me/my-custom-arr"
+    }
+  }
+}
+```
+
+**Fields:**
+- `role`: `"arr"`, `"download_client"`, `"media_server"`, `"request"`, or `"other"`
+- `family`: `"linuxserver"`, `"hotio"`, `"jlesage"`, `"binhex"`, or `null` for independent images
+- `patterns`: substrings to match against the Docker image string
+- `keywords`: substrings to match against the service name
+- `hardlink_capable`: whether this service participates in hardlink analysis
+
+Your custom file persists across MapArr updates — it's your file, not ours.
+
 ## Troubleshooting
 
 **Permission denied on /stacks:**
