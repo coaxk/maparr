@@ -2317,8 +2317,45 @@ function showSolution(data) {
     const originalBlock = document.getElementById("solution-block-original");
     const recommendedBlock = document.getElementById("solution-block-recommended");
 
-    // Clean up any previously injected track elements from a prior render
-    section.querySelectorAll(".solution-tracks, .track-content-quick, .track-content-proper").forEach((el) => el.remove());
+    // Clean up any previously injected elements from a prior render
+    section.querySelectorAll(".solution-tracks, .track-content-quick, .track-content-proper, .infra-warning").forEach((el) => el.remove());
+
+    // Detect infrastructure-level conflicts that YAML changes alone cannot fix.
+    // Remote filesystem (SMB/CIFS/NFS) and mixed mount types require the user
+    // to change their actual storage setup, not just edit compose files.
+    const infraTypes = ["remote_filesystem", "mixed_mount_types", "wsl2_cross_fs"];
+    const conflicts = data.conflicts || [];
+    const infraConflicts = conflicts.filter((c) => infraTypes.includes(c.type));
+    const hasOnlyInfra = infraConflicts.length > 0 && conflicts.every((c) => infraTypes.includes(c.type));
+
+    if (infraConflicts.length > 0) {
+        const warning = document.createElement("div");
+        warning.className = "infra-warning callout callout-warning";
+
+        const title = document.createElement("strong");
+        title.textContent = hasOnlyInfra
+            ? "This issue requires infrastructure changes — not just YAML edits"
+            : "Some issues require infrastructure changes beyond YAML edits";
+        warning.appendChild(title);
+
+        const explain = document.createElement("p");
+        explain.style.cssText = "margin: 0.4rem 0 0; font-size: 0.85rem;";
+        if (infraConflicts.some((c) => c.type === "remote_filesystem")) {
+            explain.textContent =
+                "Your media paths are on network shares (SMB/CIFS/NFS). Hardlinks do not work across network filesystems " +
+                "regardless of how your volumes are configured. You need to either move your data to local storage, or ensure ALL " +
+                "services access the exact same NFS export. The YAML fix below restructures your volume paths, but the hardlink " +
+                "issue will persist until the underlying storage is changed.";
+        } else {
+            explain.textContent =
+                "Some of your services use different storage types (local vs remote). Hardlinks cannot cross filesystem " +
+                "boundaries. The YAML fix below helps with path alignment, but full hardlink support requires all services " +
+                "to share the same storage type.";
+        }
+        warning.appendChild(explain);
+
+        summaryEl.after(warning);
+    }
 
     // Ensure YAML blocks are back in the section (they may have been moved into properContent)
     const solutionTabs = document.getElementById("solution-tabs");
