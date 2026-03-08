@@ -946,6 +946,10 @@ function showMultiErrorPicker(errors) {
 }
 
 async function selectError(err) {
+    // Update textarea to selected error so re-clicking "Analyze" is consistent
+    const textarea = document.getElementById("error-input");
+    if (textarea && err.raw_input) textarea.value = err.raw_input;
+
     state.parsedError = err;
     showParseResult(err);
     await autoMatchStacks(err);

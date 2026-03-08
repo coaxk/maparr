@@ -890,7 +890,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 .multi-error-item:hover {
     border-color: var(--accent);
-    background: rgba(var(--accent-rgb, 99, 102, 241), 0.06);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .multi-error-num {

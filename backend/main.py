@@ -154,12 +154,14 @@ async def api_parse_error(request: Request):
             status_code=400,
         )
 
-    # Parse — check for multiple errors first
+    # Parse — check for multiple errors
     all_results = parse_errors(error_text)
 
-    # Primary result is the first (or only) error
-    result = parse_error(error_text)
-    primary = result.to_dict()
+    # Primary result from first chunk (avoids redundant re-parse of full text)
+    if all_results:
+        primary = all_results[0].copy()
+    else:
+        primary = parse_error(error_text).to_dict()
     _session["parsed_error"] = primary
 
     # Include multi-error data when >1 error detected
@@ -168,8 +170,8 @@ async def api_parse_error(request: Request):
         primary["error_count"] = len(all_results)
 
     logger.info("Parse error: service=%s path=%s type=%s confidence=%s",
-                result.service or "?", result.path or "?",
-                result.error_type or "?", result.confidence)
+                primary.get("service", "?"), primary.get("path", "?"),
+                primary.get("error_type", "?"), primary.get("confidence", "?"))
 
     return primary
 
