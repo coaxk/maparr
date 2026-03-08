@@ -16,3 +16,4 @@ test-stacks/
 screenshots/
 .venv/
 .claude/
+.worktrees/
