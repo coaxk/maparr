@@ -1,9 +1,8 @@
 /**
- * MapArr v1.5 — Frontend Application
+ * MapArr v2.0 — Pipeline Dashboard
  *
- * Two-mode UI:
- *   FIX MODE  — paste error → auto-match stack → focused analysis
- *   BROWSE MODE — browse all stacks → pick one → analyze
+ * Service-first UI: scans entire stacks directory, groups services by role,
+ * shows conflicts with multi-file fix plans, supports Docker redeploy.
  *
  * XSS safety: All user-derived content uses textContent, never innerHTML.
  * Container clearing uses replaceChildren() instead of innerHTML.
@@ -14,20 +13,42 @@
 // ─── State ───
 
 const state = {
-    mode: null,          // "fix" or "browse"
-    parsedError: null,   // Result from /api/parse-error
-    stacks: [],          // Result from /api/discover-stacks
-    selectedStack: null, // User's chosen stack path
-    allDetectedDirs: [], // Original detected dirs [{path, count}] — persists across rescans
-    customDirs: [],      // User-added dirs via manual entry — persisted to localStorage
-    activeScanPath: "",  // Currently active scan path
-    bootComplete: false, // Has boot sequence finished?
-    bootPhase: "idle",   // "idle" | "scanning" | "done" | "failed"
-    pipeline: null,      // Cached PipelineResult from /api/pipeline-scan
-    verifiedStacks: new Set(), // Stacks analyzed/fixed this session — skip caution override
-    preflightOverridden: false, // User bypassed a pre-flight warning for this analysis
-    _analysisInFlight: false,    // Guard against concurrent analysis requests
-    lastAnalyzed: {},            // stackPath → timestamp (Date.now()) of last analysis
+    // Directory
+    stacksPath: "",              // Current stacks root
+    pathConfigured: false,       // Whether a path is set
+
+    // Pipeline (primary data source)
+    pipeline: null,              // Full pipeline scan result
+    services: [],                // Flattened media services from pipeline
+    servicesByRole: {},          // {arr: [...], download_client: [...], ...}
+
+    // Interaction
+    expandedService: null,       // Currently expanded service name
+    expandedConflict: null,      // Currently expanded conflict index
+    fixProgress: {},             // {compose_file_path: "pending"|"applied"|"failed"}
+    fixPlans: {},                // stack_path → analysis result with corrected YAML
+
+    // Error paste
+    pastedError: null,           // Parsed error result
+    highlightedServices: [],     // Service names to highlight
+
+    // Scan state
+    scanning: false,
+    bootComplete: false,
+    bootPhase: "idle",           // "idle" | "scanning" | "done" | "failed"
+
+    // Legacy (carried forward for analysis detail cards)
+    mode: null,
+    parsedError: null,
+    stacks: [],
+    selectedStack: null,
+    allDetectedDirs: [],
+    customDirs: [],
+    activeScanPath: "",
+    verifiedStacks: new Set(),
+    preflightOverridden: false,
+    _analysisInFlight: false,
+    lastAnalyzed: {},
 };
 
 // Load persisted custom dirs from localStorage
@@ -231,26 +252,36 @@ function countMediaServicesInDir(stacks, dirPath) {
  */
 function transitionBootToFork(stackCount) {
     const bootScreen = document.getElementById("boot-screen");
-    const modeSelector = document.getElementById("step-mode");
-    if (!bootScreen || !modeSelector) return;
+    if (!bootScreen) return;
 
     // Don't transition twice
     if (state.bootComplete) return;
-
-    if (stackCount > 0) enrichModeSelector(stackCount);
 
     bootScreen.classList.add("boot-done");
     bootScreen.addEventListener("animationend", () => {
         bootScreen.classList.add("hidden");
         bootScreen.classList.remove("boot-done");
-        modeSelector.classList.remove("hidden");
-        modeSelector.classList.add("boot-reveal");
-        modeSelector.addEventListener("animationend", () => {
-            modeSelector.classList.remove("boot-reveal");
-        }, { once: true });
-        // Delayed nudge — let users land on the fork page and orient before
-        // the header scanner catches their eye in the periphery
-        setTimeout(nudgeHeaderScanner, 1200);
+
+        if (stackCount > 0 && state.activeScanPath) {
+            // Pipeline Dashboard flow — scan and render
+            state.stacksPath = state.activeScanPath;
+            state.pathConfigured = true;
+            updateHeaderPath(state.stacksPath);
+            runPipelineScan();
+        } else if (stackCount > 0) {
+            // Stacks found but no explicit path — show dashboard with discovery
+            state.stacksPath = state.allDetectedDirs[0]?.path || "";
+            state.pathConfigured = !!state.stacksPath;
+            if (state.pathConfigured) {
+                updateHeaderPath(state.stacksPath);
+                runPipelineScan();
+            } else {
+                showFirstLaunch();
+            }
+        } else {
+            // No stacks — first launch or no-stacks
+            showFirstLaunch();
+        }
     }, { once: true });
 
     state.bootComplete = true;
@@ -261,20 +292,13 @@ function transitionBootToFork(stackCount) {
  */
 function transitionBootToNoStacks() {
     const bootScreen = document.getElementById("boot-screen");
-    const noStacks = document.getElementById("boot-no-stacks");
-    if (!bootScreen || !noStacks) return;
+    if (!bootScreen) return;
 
     bootScreen.classList.add("boot-done");
     bootScreen.addEventListener("animationend", () => {
         bootScreen.classList.add("hidden");
         bootScreen.classList.remove("boot-done");
-        noStacks.classList.remove("hidden");
-        noStacks.classList.add("boot-reveal");
-        noStacks.addEventListener("animationend", () => {
-            noStacks.classList.remove("boot-reveal");
-        }, { once: true });
-        const input = document.getElementById("boot-path-input");
-        if (input) input.focus();
+        showFirstLaunch();
     }, { once: true });
 
     state.bootComplete = true;
@@ -329,6 +353,1067 @@ function nudgeHeaderScanner() {
     // Fallback removal in case animationend doesn't fire (no scan path visible)
     setTimeout(() => header.classList.remove("header-nudge"), 3500);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// PIPELINE DASHBOARD — service-first rendering
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Visibility helpers ───
+
+function show(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove("hidden");
+}
+
+function hide(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.add("hidden");
+}
+
+// ─── First Launch ───
+
+function showFirstLaunch() {
+    hide("pipeline-dashboard");
+    hide("boot-no-stacks");
+    show("first-launch");
+
+    const input = document.getElementById("first-launch-path");
+    const btn = document.getElementById("first-launch-scan");
+    if (!input || !btn) return;
+
+    // Prefill with preferred path if available
+    const preferred = getPreferredPath();
+    if (preferred) input.value = preferred;
+
+    btn.addEventListener("click", async () => {
+        const path = input.value.trim();
+        if (!path) { input.focus(); return; }
+        await changeStacksPathTo(path);
+    }, { once: true });
+
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            btn.click();
+        }
+    });
+
+    setTimeout(() => input.focus(), 100);
+}
+
+// ─── Pipeline Scan ───
+
+async function runPipelineScan() {
+    state.scanning = true;
+    show("pipeline-dashboard");
+    hide("first-launch");
+    hide("boot-no-stacks");
+
+    // Show scanning state in health banner
+    const bannerText = document.getElementById("health-banner-text");
+    const bannerIcon = document.getElementById("health-banner-icon");
+    if (bannerText) bannerText.textContent = "Scanning...";
+    if (bannerIcon) bannerIcon.className = "health-banner-icon";
+
+    // Disable paste bar during scan
+    const pasteInput = document.getElementById("paste-error-input");
+    if (pasteInput) {
+        pasteInput.disabled = true;
+        pasteInput.placeholder = "Scanning...";
+    }
+
+    try {
+        const resp = await fetch("/api/pipeline-scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scan_dir: state.stacksPath }),
+            signal: AbortSignal.timeout(30000),
+        });
+        const data = await resp.json();
+        state.pipeline = data;
+        state.services = data.media_services || [];
+
+        // Group services by role
+        state.servicesByRole = {};
+        for (const svc of state.services) {
+            const role = svc.role || "other";
+            if (!state.servicesByRole[role]) state.servicesByRole[role] = [];
+            state.servicesByRole[role].push(svc);
+        }
+
+        state.scanning = false;
+        renderDashboard();
+
+    } catch (err) {
+        state.scanning = false;
+        if (bannerText) bannerText.textContent = "Scan failed: " + (err.message || "unknown error");
+        if (bannerIcon) bannerIcon.className = "health-banner-icon health-problem";
+    }
+}
+
+// ─── Dashboard Rendering ───
+
+function renderDashboard() {
+    // Update header
+    updateHeaderPath(state.stacksPath);
+    updateServiceCount(state.services.length);
+
+    // Health banner
+    renderHealthBanner(state.pipeline);
+
+    // Service groups by role
+    renderServiceGroups(state.servicesByRole);
+
+    // Conflict cards (if any)
+    renderConflictCards(state.pipeline.conflicts || []);
+
+    // Enable paste bar
+    enablePasteBar();
+
+    // Show dashboard, hide analysis detail cards
+    show("pipeline-dashboard");
+    hideAnalysisCards();
+}
+
+function updateHeaderPath(path) {
+    const el = document.getElementById("header-path-text");
+    if (el) {
+        const display = path.length > 40 ? "..." + path.slice(-37) : path;
+        el.textContent = display || "No directory selected";
+    }
+}
+
+function updateServiceCount(count) {
+    const el = document.getElementById("service-count");
+    if (el) {
+        el.textContent = count > 0 ? count + " services" : "";
+    }
+}
+
+function renderHealthBanner(pipeline) {
+    const icon = document.getElementById("health-banner-icon");
+    const text = document.getElementById("health-banner-text");
+    const actions = document.getElementById("health-banner-actions");
+    if (!icon || !text || !actions) return;
+    actions.replaceChildren();
+
+    const conflicts = pipeline.conflicts || [];
+    const svcCount = pipeline.media_service_count || state.services.length;
+
+    if (conflicts.length === 0) {
+        icon.className = "health-banner-icon health-ok";
+        text.textContent = "All " + svcCount + " services healthy";
+    } else {
+        icon.className = "health-banner-icon health-problem";
+        text.textContent = conflicts.length + " issue" + (conflicts.length !== 1 ? "s" : "") + " found across " + svcCount + " services";
+        const fixAll = document.createElement("button");
+        fixAll.className = "btn btn-primary btn-sm";
+        fixAll.textContent = "Fix All";
+        fixAll.addEventListener("click", () => scrollToConflicts());
+        actions.appendChild(fixAll);
+    }
+}
+
+function renderServiceGroups(servicesByRole) {
+    const container = document.getElementById("service-groups");
+    if (!container) return;
+    container.replaceChildren();
+
+    const roleOrder = [
+        { key: "arr", label: "Arr Apps", cssClass: "service-group-arr" },
+        { key: "download_client", label: "Download Clients", cssClass: "service-group-download" },
+        { key: "media_server", label: "Media Servers", cssClass: "service-group-media" },
+        { key: "request", label: "Request Apps", cssClass: "service-group-request" },
+        { key: "other", label: "Other Services", cssClass: "service-group-other" },
+    ];
+
+    for (const { key, label, cssClass } of roleOrder) {
+        const services = servicesByRole[key] || [];
+        if (services.length === 0) continue;
+
+        const group = document.createElement("div");
+        group.className = "service-group " + cssClass;
+
+        const header = document.createElement("div");
+        header.className = "service-group-header";
+        header.textContent = label + " (" + services.length + ")";
+        group.appendChild(header);
+
+        const list = document.createElement("div");
+        list.className = "service-group-items";
+
+        for (const svc of services) {
+            list.appendChild(renderServiceRow(svc));
+        }
+
+        group.appendChild(list);
+        container.appendChild(group);
+    }
+}
+
+function renderServiceRow(svc) {
+    const row = document.createElement("div");
+    row.className = "service-row";
+    row.setAttribute("data-service", svc.service_name);
+
+    // Health dot
+    const dot = document.createElement("span");
+    dot.className = "health-dot " + getServiceHealth(svc);
+    row.appendChild(dot);
+
+    // Service info
+    const info = document.createElement("div");
+    info.className = "service-info";
+
+    const name = document.createElement("span");
+    name.className = "service-name";
+    name.textContent = svc.service_name;
+    info.appendChild(name);
+
+    const meta = document.createElement("span");
+    meta.className = "service-meta";
+    const family = svc.family_name || "Unknown";
+    const sources = (svc.host_sources || []).slice(0, 2).join(", ") || "no data mounts";
+    meta.textContent = family + " \u00B7 " + sources;
+    info.appendChild(meta);
+
+    row.appendChild(info);
+
+    // File location
+    const file = document.createElement("span");
+    file.className = "service-file";
+    file.textContent = (svc.stack_name || "") + "/";
+    row.appendChild(file);
+
+    // Click to expand
+    row.addEventListener("click", () => toggleServiceDetail(svc));
+
+    return row;
+}
+
+function getServiceHealth(svc) {
+    // Check if fix has been applied for this service's compose file
+    const composePath = svc.compose_file || "";
+    if (state.fixProgress[composePath] === "applied") return "awaiting";
+
+    // Check if service is involved in any conflict
+    const conflicts = (state.pipeline && state.pipeline.conflicts) || [];
+    for (const c of conflicts) {
+        if ((c.services || []).includes(svc.service_name)) return "issue";
+    }
+
+    return "healthy";
+}
+
+function toggleServiceDetail(svc) {
+    const existing = document.querySelector(".service-detail-panel");
+    const row = document.querySelector('[data-service="' + svc.service_name + '"]');
+
+    // Collapse if already expanded
+    if (state.expandedService === svc.service_name) {
+        if (existing) existing.remove();
+        if (row) row.classList.remove("expanded");
+        state.expandedService = null;
+        return;
+    }
+
+    // Collapse previous
+    if (existing) existing.remove();
+    document.querySelectorAll(".service-row.expanded").forEach(r => r.classList.remove("expanded"));
+
+    // Build detail panel
+    const panel = document.createElement("div");
+    panel.className = "service-detail-panel";
+
+    // Image
+    addDetailRow(panel, "Image", svc.image || "unknown");
+    addDetailRow(panel, "Family", svc.family_name || "Unknown");
+
+    // Permissions
+    if (svc.environment) {
+        const uid = svc.environment.PUID || svc.environment.USER_ID || "\u2014";
+        const gid = svc.environment.PGID || svc.environment.GROUP_ID || "\u2014";
+        addDetailRow(panel, "UID:GID", uid + ":" + gid);
+    }
+
+    // Compose file
+    addDetailRow(panel, "File", svc.compose_file || (svc.stack_name + "/docker-compose.yml"));
+
+    // Volumes
+    if (svc.volume_mounts && svc.volume_mounts.length > 0) {
+        const volHeader = document.createElement("div");
+        volHeader.className = "detail-section-header";
+        volHeader.textContent = "Volumes";
+        panel.appendChild(volHeader);
+
+        for (const mount of svc.volume_mounts) {
+            const line = document.createElement("div");
+            line.className = "detail-volume";
+            line.textContent = (mount.source || mount.host || "") + " : " + (mount.target || mount.container || "");
+            panel.appendChild(line);
+        }
+    }
+
+    // Pipeline context
+    if (svc.host_sources && svc.host_sources.length > 0) {
+        const ctxHeader = document.createElement("div");
+        ctxHeader.className = "detail-section-header";
+        ctxHeader.textContent = "Pipeline";
+        panel.appendChild(ctxHeader);
+
+        const siblings = state.services.filter(s =>
+            s.service_name !== svc.service_name &&
+            s.host_sources && svc.host_sources &&
+            s.host_sources.some(h => svc.host_sources.includes(h))
+        );
+        const ctxLine = document.createElement("div");
+        ctxLine.className = "detail-volume";
+        ctxLine.textContent = siblings.length > 0
+            ? "Shares mount root with " + siblings.length + " sibling" + (siblings.length !== 1 ? "s" : "")
+            : "Isolated from pipeline";
+        panel.appendChild(ctxLine);
+    }
+
+    // Insert after the row
+    if (row) {
+        row.after(panel);
+        row.classList.add("expanded");
+    }
+    state.expandedService = svc.service_name;
+}
+
+function addDetailRow(panel, label, value) {
+    const row = document.createElement("div");
+    row.className = "detail-row";
+    const lbl = document.createElement("span");
+    lbl.className = "detail-label";
+    lbl.textContent = label;
+    const val = document.createElement("span");
+    val.className = "detail-value";
+    val.textContent = value;
+    row.appendChild(lbl);
+    row.appendChild(val);
+    panel.appendChild(row);
+}
+
+// ─── Conflict Cards ───
+
+function renderConflictCards(conflicts) {
+    const container = document.getElementById("conflict-cards");
+    if (!container) return;
+    container.replaceChildren();
+
+    if (conflicts.length === 0) return;
+
+    for (let i = 0; i < conflicts.length; i++) {
+        container.appendChild(renderConflictCard(conflicts[i], i));
+    }
+
+    // Generate fix plans for all conflicts
+    generateFixPlans(conflicts);
+}
+
+function renderConflictCard(conflict, index) {
+    const card = document.createElement("div");
+    card.className = "conflict-card conflict-" + (conflict.severity || "high");
+
+    // Header: severity badge + description
+    const header = document.createElement("div");
+    header.className = "conflict-card-header";
+
+    const badge = document.createElement("span");
+    badge.className = "conflict-severity severity-" + (conflict.severity || "high");
+    badge.textContent = (conflict.severity || "HIGH").toUpperCase();
+    header.appendChild(badge);
+
+    const desc = document.createElement("span");
+    desc.className = "conflict-card-desc";
+    desc.textContent = conflict.description || conflict.type || "Mount conflict";
+    header.appendChild(desc);
+
+    card.appendChild(header);
+
+    // Affected services
+    if (conflict.services && conflict.services.length > 0) {
+        const affected = document.createElement("div");
+        affected.className = "conflict-affected";
+        affected.textContent = "Affects: " + conflict.services.join(", ");
+        card.appendChild(affected);
+    }
+
+    // Fix plan container (populated async by generateFixPlans)
+    const fixPlan = document.createElement("div");
+    fixPlan.className = "fix-plan";
+    fixPlan.id = "fix-plan-" + index;
+    card.appendChild(fixPlan);
+
+    return card;
+}
+
+function scrollToConflicts() {
+    const container = document.getElementById("conflict-cards");
+    if (container && container.firstChild) {
+        container.firstChild.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+}
+
+function scrollToConflict(index) {
+    const card = document.querySelector("#conflict-cards .conflict-card:nth-child(" + (index + 1) + ")");
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// ─── Fix Plans ───
+
+async function generateFixPlans(conflicts) {
+    // Collect unique stack paths from conflicts
+    const stackPaths = new Set();
+    for (const conflict of conflicts) {
+        for (const svc of state.services) {
+            if ((conflict.services || []).includes(svc.service_name)) {
+                stackPaths.add(svc.stack_path || "");
+            }
+        }
+    }
+
+    const plans = {};
+    for (const stackPath of stackPaths) {
+        if (!stackPath) continue;
+        try {
+            const resp = await fetch("/api/analyze", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ stack_path: stackPath }),
+                signal: AbortSignal.timeout(15000),
+            });
+            const result = await resp.json();
+            if (result && result.original_corrected_yaml) {
+                plans[stackPath] = {
+                    compose_file_path: result.compose_file_path || "",
+                    original_corrected_yaml: result.original_corrected_yaml,
+                    original_changed_lines: result.original_changed_lines || [],
+                    stack_name: (stackPath.replace(/\\/g, "/").split("/").pop()) || "",
+                };
+            }
+        } catch (e) {
+            // Analysis failed for this stack — skip
+        }
+    }
+
+    state.fixPlans = plans;
+
+    // Render fix plans in each conflict card
+    for (let i = 0; i < conflicts.length; i++) {
+        const conflict = conflicts[i];
+        const relevantPlans = {};
+        for (const svc of state.services) {
+            if ((conflict.services || []).includes(svc.service_name)) {
+                const sp = svc.stack_path || "";
+                if (plans[sp]) relevantPlans[sp] = plans[sp];
+            }
+        }
+        renderFixPlan(i, relevantPlans);
+    }
+}
+
+function renderFixPlan(conflictIndex, plans) {
+    const container = document.getElementById("fix-plan-" + conflictIndex);
+    if (!container) return;
+    container.replaceChildren();
+
+    const entries = Object.entries(plans);
+    if (entries.length === 0) return;
+
+    for (const [stackPath, plan] of entries) {
+        const row = document.createElement("div");
+        row.className = "fix-plan-row";
+        row.setAttribute("data-stack-path", plan.compose_file_path || stackPath);
+
+        const checkbox = document.createElement("span");
+        checkbox.className = "fix-plan-check";
+        checkbox.textContent = "\u2610"; // empty ballot box
+        row.appendChild(checkbox);
+
+        const label = document.createElement("span");
+        label.className = "fix-plan-label";
+        label.textContent = plan.stack_name + "/docker-compose.yml";
+        row.appendChild(label);
+
+        if (plan.original_changed_lines.length > 0) {
+            const changes = document.createElement("span");
+            changes.className = "fix-plan-changes";
+            changes.textContent = plan.original_changed_lines.length + " lines";
+            row.appendChild(changes);
+
+            const applyBtn = document.createElement("button");
+            applyBtn.className = "btn btn-primary btn-sm";
+            applyBtn.textContent = "Apply";
+            applyBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                applySingleFix(plan);
+            });
+            row.appendChild(applyBtn);
+        } else {
+            const noChange = document.createElement("span");
+            noChange.className = "fix-plan-no-change";
+            noChange.textContent = "no change needed";
+            row.appendChild(noChange);
+        }
+
+        // Click row to toggle preview
+        row.addEventListener("click", () => toggleFixPreview(row, plan));
+
+        container.appendChild(row);
+    }
+
+    // Apply All button
+    const fixableCount = entries.filter(([_, p]) => p.original_changed_lines.length > 0).length;
+    if (fixableCount > 1) {
+        const applyAll = document.createElement("button");
+        applyAll.className = "btn btn-primary fix-plan-apply-all";
+        applyAll.textContent = "Apply All Changes (" + fixableCount + " files)";
+        applyAll.addEventListener("click", () => applyAllFixes(plans));
+        container.appendChild(applyAll);
+    }
+}
+
+function toggleFixPreview(row, plan) {
+    const existing = row.nextElementSibling;
+    if (existing && existing.classList.contains("fix-preview")) {
+        existing.remove();
+        return;
+    }
+
+    if (!plan.original_corrected_yaml) return;
+
+    const preview = document.createElement("pre");
+    preview.className = "fix-preview";
+
+    // Show the corrected YAML with changed lines highlighted
+    const lines = plan.original_corrected_yaml.split("\n");
+    const changedSet = new Set(plan.original_changed_lines || []);
+    for (let i = 0; i < lines.length; i++) {
+        const span = document.createElement("span");
+        if (changedSet.has(i + 1)) {
+            span.className = "line-added";
+        }
+        span.textContent = lines[i] + "\n";
+        preview.appendChild(span);
+    }
+
+    row.after(preview);
+}
+
+// ─── Apply Fixes ───
+
+async function applySingleFix(plan) {
+    try {
+        const resp = await fetch("/api/apply-fix", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                compose_file_path: plan.compose_file_path,
+                corrected_yaml: plan.original_corrected_yaml,
+            }),
+        });
+        const data = await resp.json();
+        if (data.status === "applied") {
+            markFixApplied(plan.compose_file_path);
+            showSimpleToast("Fixed " + plan.stack_name + "/docker-compose.yml", "success");
+        } else {
+            showSimpleToast("Failed: " + (data.error || "unknown error"), "error");
+        }
+    } catch (e) {
+        showSimpleToast("Apply failed: " + e.message, "error");
+    }
+}
+
+async function applyAllFixes(plans) {
+    const fixes = Object.entries(plans)
+        .filter(([_, p]) => p.original_changed_lines.length > 0)
+        .map(([_, p]) => ({
+            compose_file_path: p.compose_file_path,
+            corrected_yaml: p.original_corrected_yaml,
+        }));
+
+    if (fixes.length === 0) return;
+
+    try {
+        const resp = await fetch("/api/apply-fixes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fixes }),
+        });
+        const data = await resp.json();
+
+        if (data.status === "applied") {
+            for (const r of data.results) {
+                markFixApplied(r.compose_file_path);
+            }
+            showSimpleToast("All " + data.applied_count + " files fixed", "success");
+            showRedeployPrompt(fixes);
+        } else if (data.status === "partial") {
+            for (const r of (data.results || [])) {
+                if (r.status === "applied") markFixApplied(r.compose_file_path);
+            }
+            showSimpleToast(data.applied_count + " applied, " + data.failed_count + " failed", "warning");
+        } else {
+            const errMsg = (data.errors && data.errors[0]) ? data.errors[0].error : "unknown error";
+            showSimpleToast("Fix failed: " + errMsg, "error");
+        }
+    } catch (e) {
+        showSimpleToast("Apply failed: " + e.message, "error");
+    }
+}
+
+function markFixApplied(composePath) {
+    state.fixProgress[composePath] = "applied";
+    // Update checkbox in fix plan
+    const row = document.querySelector('[data-stack-path="' + composePath + '"]');
+    if (row) {
+        const check = row.querySelector(".fix-plan-check");
+        if (check) check.textContent = "\u2611"; // checked ballot box
+        row.classList.add("fix-applied");
+        // Disable apply button
+        const btn = row.querySelector(".btn");
+        if (btn) { btn.disabled = true; btn.textContent = "Applied"; }
+    }
+    // Update service health dots
+    updateHealthDotsAfterFix();
+    updateHealthBannerAfterFix();
+}
+
+function updateHealthDotsAfterFix() {
+    for (const svc of state.services) {
+        const row = document.querySelector('[data-service="' + svc.service_name + '"]');
+        if (!row) continue;
+        const dot = row.querySelector(".health-dot");
+        if (!dot) continue;
+        dot.className = "health-dot " + getServiceHealth(svc);
+    }
+}
+
+function updateHealthBannerAfterFix() {
+    const conflicts = (state.pipeline && state.pipeline.conflicts) || [];
+    // Count unfixed conflicts
+    let unfixed = 0;
+    for (const c of conflicts) {
+        const allFixed = (c.services || []).every(svcName => {
+            const svc = state.services.find(s => s.service_name === svcName);
+            const composePath = svc ? (svc.compose_file || "") : "";
+            return state.fixProgress[composePath] === "applied";
+        });
+        if (!allFixed) unfixed++;
+    }
+
+    const icon = document.getElementById("health-banner-icon");
+    const text = document.getElementById("health-banner-text");
+    if (!icon || !text) return;
+
+    if (unfixed === 0 && conflicts.length > 0) {
+        icon.className = "health-banner-icon health-ok";
+        text.textContent = "All fixes applied \u2014 rescan to verify";
+    }
+}
+
+// ─── Redeploy ───
+
+const ROLE_WARNINGS = {
+    "arr": "will stop monitoring and importing",
+    "download_client": "active downloads will be interrupted",
+    "media_server": "active streams will disconnect",
+    "request": "request UI will be briefly unavailable",
+    "other": "service will restart",
+};
+
+function showRedeployPrompt(appliedFixes) {
+    const stacks = [];
+    for (const fix of appliedFixes) {
+        const svc = state.services.find(s =>
+            fix.compose_file_path && fix.compose_file_path.includes(s.stack_name)
+        );
+        if (svc) {
+            stacks.push({
+                stack_path: svc.stack_path || "",
+                stack_name: svc.stack_name || "",
+                service_name: svc.service_name,
+                role: svc.role || "other",
+                warning: ROLE_WARNINGS[svc.role] || ROLE_WARNINGS.other,
+            });
+        }
+    }
+
+    if (stacks.length === 0) return;
+
+    const container = document.getElementById("conflict-cards");
+    if (!container) return;
+
+    const prompt = document.createElement("div");
+    prompt.className = "card redeploy-prompt";
+
+    // Header
+    const header = document.createElement("div");
+    header.className = "step-header";
+    const icon = document.createElement("span");
+    icon.className = "step-number info-icon";
+    icon.textContent = "\u21BB";
+    header.appendChild(icon);
+    const h2 = document.createElement("h2");
+    h2.textContent = "Redeploy";
+    header.appendChild(h2);
+    prompt.appendChild(header);
+
+    // Backup reminder
+    const backup = document.createElement("p");
+    backup.className = "step-desc";
+    backup.textContent = "Backups saved alongside each file (.bak). To undo: rename .bak back to docker-compose.yml.";
+    prompt.appendChild(backup);
+
+    // Warnings per service
+    const warnings = document.createElement("div");
+    warnings.className = "redeploy-warnings";
+    for (const s of stacks) {
+        const line = document.createElement("div");
+        line.className = "redeploy-warning-line";
+        line.textContent = "\u2022 " + s.service_name + " \u2014 " + s.warning;
+        warnings.appendChild(line);
+    }
+    prompt.appendChild(warnings);
+
+    // Reassurance
+    const reassure = document.createElement("p");
+    reassure.className = "step-desc";
+    reassure.textContent = "Services restart in seconds. No data is lost.";
+    prompt.appendChild(reassure);
+
+    // Action buttons
+    const actions = document.createElement("div");
+    actions.className = "redeploy-actions";
+
+    const deployBtn = document.createElement("button");
+    deployBtn.className = "btn btn-primary";
+    deployBtn.textContent = "Redeploy " + stacks.length + " Service" + (stacks.length !== 1 ? "s" : "");
+    deployBtn.addEventListener("click", () => doRedeploy(stacks, prompt));
+    actions.appendChild(deployBtn);
+
+    const manualBtn = document.createElement("button");
+    manualBtn.className = "btn btn-secondary";
+    manualBtn.textContent = "I'll do it myself";
+    manualBtn.addEventListener("click", () => showManualRedeploy(stacks, prompt));
+    actions.appendChild(manualBtn);
+
+    prompt.appendChild(actions);
+    container.appendChild(prompt);
+    prompt.scrollIntoView({ behavior: "smooth" });
+}
+
+async function doRedeploy(stacks, promptEl) {
+    const body = {
+        stacks: stacks.map(s => ({ stack_path: s.stack_path, action: "up" })),
+    };
+
+    showSimpleToast("Redeploying...", "info");
+
+    // Replace buttons with spinner
+    const actions = promptEl.querySelector(".redeploy-actions");
+    if (actions) {
+        actions.replaceChildren();
+        const spinner = document.createElement("span");
+        spinner.textContent = "Redeploying...";
+        spinner.className = "step-desc";
+        actions.appendChild(spinner);
+    }
+
+    try {
+        const resp = await fetch("/api/redeploy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(120000),
+        });
+        const data = await resp.json();
+
+        if (data.status === "success") {
+            showSimpleToast("All " + stacks.length + " services redeployed", "success");
+            // Show result in prompt
+            if (actions) {
+                actions.replaceChildren();
+                const result = document.createElement("p");
+                result.className = "step-desc";
+                result.textContent = "All services redeployed successfully. Rescanning pipeline...";
+                actions.appendChild(result);
+            }
+            // Auto-rescan
+            await runPipelineScan();
+        } else if (data.status === "partial") {
+            showSimpleToast(data.summary || "Some services failed", "warning");
+            await runPipelineScan();
+        } else {
+            const firstErr = (data.results || []).find(r => r.status === "error");
+            showSimpleToast("Redeploy failed: " + (firstErr ? firstErr.error : "unknown"), "error");
+            showManualRedeploy(stacks, promptEl);
+        }
+    } catch (e) {
+        showSimpleToast("Redeploy failed: " + e.message, "error");
+        showManualRedeploy(stacks, promptEl);
+    }
+}
+
+function showManualRedeploy(stacks, promptEl) {
+    const actions = promptEl.querySelector(".redeploy-actions");
+    if (!actions) return;
+    actions.replaceChildren();
+
+    const label = document.createElement("p");
+    label.className = "step-desc";
+    label.textContent = "Run these commands to restart your services:";
+    actions.appendChild(label);
+
+    const commands = document.createElement("div");
+    commands.className = "manual-commands";
+
+    const cmdText = stacks.map(s =>
+        "cd " + s.stack_name + " && docker compose up -d"
+    ).join("\n");
+    commands.textContent = cmdText;
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "copy-btn";
+    copyBtn.textContent = "Copy";
+    copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(cmdText).then(() => {
+            copyBtn.textContent = "Copied!";
+            setTimeout(() => { copyBtn.textContent = "Copy"; }, 2000);
+        });
+    });
+    commands.appendChild(copyBtn);
+
+    actions.appendChild(commands);
+}
+
+// ─── Error Paste Bar ───
+
+function enablePasteBar() {
+    const input = document.getElementById("paste-error-input");
+    const btn = document.getElementById("paste-error-go");
+    if (!input || !btn) return;
+
+    input.disabled = false;
+    input.placeholder = "Paste an error from your *arr app...";
+    btn.disabled = false;
+
+    // Wire up Go button (remove old listeners by cloning)
+    const newBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn, btn);
+    newBtn.addEventListener("click", handlePasteError);
+
+    // Enter to submit
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            handlePasteError();
+        }
+    });
+
+    // Wire example pills
+    document.querySelectorAll(".paste-pill").forEach(pill => {
+        pill.addEventListener("click", () => {
+            const type = pill.getAttribute("data-example");
+            input.value = getPasteExample(type);
+            input.focus();
+        });
+    });
+}
+
+function getPasteExample(type) {
+    const examples = {
+        import: "Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01/Episode.mkv",
+        hardlink: "Couldn't create hardlink for /data/downloads/movie.mkv, copying instead",
+        permission: "Permission denied: '/data/media/tv/show.mkv'",
+        remote: "Remote path mapping required for Sonarr/Radarr to access download client files",
+    };
+    return examples[type] || "";
+}
+
+async function handlePasteError() {
+    const input = document.getElementById("paste-error-input");
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return;
+
+    // Parse the error via API
+    try {
+        const resp = await fetch("/api/parse-error", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ error_text: text }),
+        });
+        const parsed = await resp.json();
+
+        if (!parsed || !parsed.service) {
+            showPasteResult("Could not identify a service in this error.", "error");
+            return;
+        }
+
+        state.pastedError = parsed;
+
+        // Find matching service(s) in pipeline
+        const matched = state.services.filter(s =>
+            s.service_name.toLowerCase().includes(parsed.service.toLowerCase()) ||
+            parsed.service.toLowerCase().includes(s.service_name.toLowerCase())
+        );
+
+        if (matched.length > 0) {
+            // Highlight matched services
+            highlightServices(matched.map(s => s.service_name));
+
+            // Find relevant conflict
+            const relevantIdx = findConflictForService(parsed.service);
+            if (relevantIdx !== null) {
+                scrollToConflict(relevantIdx);
+                showPasteResult(parsed.service + " \u2014 " + (parsed.error_type || "mount conflict") + " detected");
+            } else {
+                showPasteResult(parsed.service + " \u2014 no conflicts found. Your setup looks correct.", "healthy");
+            }
+        } else {
+            showPasteResult('Service "' + parsed.service + '" not found in your pipeline. Check the stacks directory.', "error");
+        }
+    } catch (e) {
+        showPasteResult("Parse failed: " + e.message, "error");
+    }
+}
+
+function findConflictForService(serviceName) {
+    const conflicts = (state.pipeline && state.pipeline.conflicts) || [];
+    for (let i = 0; i < conflicts.length; i++) {
+        if ((conflicts[i].services || []).some(s =>
+            s.toLowerCase().includes(serviceName.toLowerCase()) ||
+            serviceName.toLowerCase().includes(s.toLowerCase())
+        )) {
+            return i;
+        }
+    }
+    return null;
+}
+
+function highlightServices(serviceNames) {
+    // Remove previous highlights
+    document.querySelectorAll(".service-row.highlighted").forEach(el =>
+        el.classList.remove("highlighted")
+    );
+
+    // Add highlights with animation
+    for (const name of serviceNames) {
+        const row = document.querySelector('[data-service="' + name + '"]');
+        if (row) {
+            row.classList.add("highlighted");
+            row.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+    }
+
+    state.highlightedServices = serviceNames;
+}
+
+function showPasteResult(message, type) {
+    const el = document.getElementById("paste-bar-result");
+    if (!el) return;
+    el.textContent = message;
+    el.className = "paste-bar-result" + (type ? " paste-" + type : "");
+    el.classList.remove("hidden");
+}
+
+// ─── Directory Selection ───
+
+function setupHeaderPath() {
+    const btn = document.getElementById("header-path");
+    const editor = document.getElementById("path-editor");
+    const input = document.getElementById("header-path-input");
+    const goBtn = document.getElementById("header-path-go");
+
+    if (!btn || !editor || !input || !goBtn) return;
+
+    btn.addEventListener("click", () => {
+        editor.classList.toggle("hidden");
+        if (!editor.classList.contains("hidden")) {
+            input.value = state.stacksPath;
+            input.focus();
+            input.select();
+        }
+    });
+
+    goBtn.addEventListener("click", async () => {
+        const newPath = input.value.trim();
+        if (newPath && newPath !== state.stacksPath) {
+            await changeStacksPathTo(newPath);
+        }
+        editor.classList.add("hidden");
+    });
+
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            goBtn.click();
+        } else if (e.key === "Escape") {
+            editor.classList.add("hidden");
+        }
+    });
+}
+
+async function changeStacksPathTo(newPath) {
+    try {
+        const resp = await fetch("/api/change-stacks-path", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: newPath }),
+        });
+        const data = await resp.json();
+
+        if (data.error) {
+            showSimpleToast("Invalid path: " + data.error, "error");
+            return;
+        }
+
+        state.stacksPath = newPath;
+        state.pathConfigured = true;
+        state.pipeline = null;
+        state.services = [];
+        state.servicesByRole = {};
+        state.pastedError = null;
+        state.fixProgress = {};
+        state.fixPlans = {};
+        state.expandedService = null;
+
+        // Save as preferred path
+        setPreferredPath(newPath);
+
+        // Clear paste bar result
+        const pasteResult = document.getElementById("paste-bar-result");
+        if (pasteResult) pasteResult.classList.add("hidden");
+
+        await runPipelineScan();
+    } catch (e) {
+        showSimpleToast("Path change failed: " + e.message, "error");
+    }
+}
+
+// ─── Analysis Detail Cards (for service drill-down) ───
+
+function hideAnalysisCards() {
+    const cards = [
+        "step-analyzing", "step-problem", "step-current-setup", "step-solution",
+        "step-why", "step-next", "step-trash", "step-healthy",
+        "step-analysis-error", "step-again",
+    ];
+    for (const id of cards) hide(id);
+}
+
+function backToDashboard() {
+    hideAnalysisCards();
+    show("pipeline-dashboard");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// END PIPELINE DASHBOARD
+// ═══════════════════════════════════════════════════════════════
 
 /**
  * Zero-stacks: user typed a custom path and hit Scan.
@@ -404,27 +1489,25 @@ document.addEventListener("DOMContentLoaded", () => {
     checkHealth();
     initLogSystem(); // Connect SSE immediately so logs flow during boot
 
-    // Ctrl+Enter in textarea triggers parse
-    const textarea = document.getElementById("error-input");
-    if (textarea) {
-        textarea.addEventListener("keydown", (e) => {
-            if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                parseError();
-            }
-        });
+    // ─── Pipeline Dashboard wiring ───
+    setupHeaderPath();
 
-        // Live preview — debounced client-side pattern detection
-        let previewTimer = null;
-        textarea.addEventListener("input", () => {
-            clearTimeout(previewTimer);
-            previewTimer = setTimeout(() => {
-                updateLivePreview(textarea.value.trim());
-            }, 300);
+    // Header brand — back to dashboard
+    const brandLink = document.getElementById("header-brand-link");
+    if (brandLink) {
+        brandLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            if (state.pathConfigured) {
+                backToDashboard();
+            }
         });
     }
 
-    // Enter in boot path input triggers scan (zero-stacks fallback)
+    // Boot — zero-stacks scan
+    const bootScanBtn = document.getElementById("btn-boot-scan");
+    if (bootScanBtn) bootScanBtn.addEventListener("click", () => bootScanCustomPath());
+
+    // Enter in boot path input triggers scan
     const bootPathInput = document.getElementById("boot-path-input");
     if (bootPathInput) {
         bootPathInput.addEventListener("keydown", (e) => {
@@ -432,75 +1515,25 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // Enter in path input triggers scan
-    const pathInput = document.getElementById("custom-path-input");
-    if (pathInput) {
-        pathInput.addEventListener("keydown", (e) => {
-            if (e.key === "Enter") {
-                e.preventDefault();
-                changeStacksPath();
-            }
-        });
-    }
-
-    // ─── Click handlers (migrated from inline onclick attributes) ───
-
-    // Header
-    document.getElementById("header-brand-link").addEventListener("click", (e) => {
-        e.preventDefault();
-        startOver();
-    });
-
-    // Boot — zero-stacks scan
-    document.getElementById("btn-boot-scan").addEventListener("click", () => bootScanCustomPath());
-
-    // Mode selector
-    document.getElementById("mode-fix").addEventListener("click", () => enterFixMode());
-    document.getElementById("mode-browse").addEventListener("click", () => enterBrowseMode());
-
-    // Example error pills — wire up all 14 conflict type examples
-    document.getElementById("example-import").addEventListener("click", () => fillExample("import"));
-    document.getElementById("example-remote").addEventListener("click", () => fillExample("remote"));
-    document.getElementById("example-hardlink").addEventListener("click", () => fillExample("hardlink"));
-    document.getElementById("example-permission").addEventListener("click", () => fillExample("permission"));
-    document.getElementById("example-path-not-found").addEventListener("click", () => fillExample("path-not-found"));
-    document.getElementById("example-named-volume").addEventListener("click", () => fillExample("named-volume"));
-    document.getElementById("example-puid-mismatch").addEventListener("click", () => fillExample("puid-mismatch"));
-    document.getElementById("example-missing-puid").addEventListener("click", () => fillExample("missing-puid"));
-    document.getElementById("example-root").addEventListener("click", () => fillExample("root"));
-    document.getElementById("example-umask").addEventListener("click", () => fillExample("umask"));
-    document.getElementById("example-cross-stack").addEventListener("click", () => fillExample("cross-stack"));
-    document.getElementById("example-nfs").addEventListener("click", () => fillExample("nfs"));
-    document.getElementById("example-wsl2").addEventListener("click", () => fillExample("wsl2"));
-    document.getElementById("example-mixed-mounts").addEventListener("click", () => fillExample("mixed-mounts"));
-    document.getElementById("example-windows-path").addEventListener("click", () => fillExample("windows-path"));
-    document.getElementById("example-disk-space").addEventListener("click", () => fillExample("disk-space"));
-
-    // Error input actions
-    document.getElementById("btn-parse").addEventListener("click", () => parseError());
-    document.getElementById("btn-skip-to-browse").addEventListener("click", () => switchToBrowseMode());
-
-    // Fix-match fallback
-    document.getElementById("btn-browse-fallback").addEventListener("click", () => switchToBrowseMode());
-
-    // Stack browser — path controls
-    document.getElementById("btn-change-path").addEventListener("click", () => togglePathInput());
-    document.getElementById("btn-switch-to-fix").addEventListener("click", () => switchToFixMode());
-    document.getElementById("btn-change-path-scan").addEventListener("click", () => changeStacksPath());
-    document.getElementById("btn-reset-path").addEventListener("click", () => resetStacksPath());
-
-    // Solution tabs and actions
-    document.getElementById("tab-recommended").addEventListener("click", () => switchSolutionTab("recommended"));
-    document.getElementById("tab-original").addEventListener("click", () => switchSolutionTab("original"));
-    document.getElementById("btn-copy").addEventListener("click", () => copySolutionYaml());
-    document.getElementById("btn-copy-original").addEventListener("click", () => copySolutionYaml());
-    document.getElementById("btn-apply-fix").addEventListener("click", () => applyFix());
-    document.getElementById("btn-cancel-apply").addEventListener("click", () => cancelApplyFix());
+    // Solution tabs and actions (carried forward for analysis detail cards)
+    const tabRec = document.getElementById("tab-recommended");
+    if (tabRec) tabRec.addEventListener("click", () => switchSolutionTab("recommended"));
+    const tabOrig = document.getElementById("tab-original");
+    if (tabOrig) tabOrig.addEventListener("click", () => switchSolutionTab("original"));
+    const btnCopy = document.getElementById("btn-copy");
+    if (btnCopy) btnCopy.addEventListener("click", () => copySolutionYaml());
+    const btnCopyOrig = document.getElementById("btn-copy-original");
+    if (btnCopyOrig) btnCopyOrig.addEventListener("click", () => copySolutionYaml());
+    const btnApply = document.getElementById("btn-apply-fix");
+    if (btnApply) btnApply.addEventListener("click", () => applyFix());
+    const btnCancel = document.getElementById("btn-cancel-apply");
+    if (btnCancel) btnCancel.addEventListener("click", () => cancelApplyFix());
 
     // Bottom actions
-    document.getElementById("btn-analyze-another").addEventListener("click", () => analyzeAnother());
-    document.getElementById("btn-copy-diagnostic").addEventListener("click", () => copyDiagnosticSummary());
-    document.getElementById("btn-start-over").addEventListener("click", () => startOver());
+    const btnBack = document.getElementById("btn-back-to-dashboard");
+    if (btnBack) btnBack.addEventListener("click", () => backToDashboard());
+    const btnDiag = document.getElementById("btn-copy-diagnostic");
+    if (btnDiag) btnDiag.addEventListener("click", () => copyDiagnosticSummary());
 });
 
 // ─── Mode Management ───
