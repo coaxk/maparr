@@ -1230,6 +1230,19 @@ function renderStacks(stacks) {
             return sum + stacks.size;
         }, 0)) + " stacks";
         header.appendChild(headerText);
+        // Explain what the pipeline health means
+        const explain = document.createElement("p");
+        explain.className = "pipeline-explain";
+        if (p.health === "ok") {
+            explain.textContent = "All your media services share a common mount root — hardlinks and atomic moves will work correctly across services.";
+        } else if (p.health === "warning") {
+            explain.textContent = "Some mount configurations may cause issues. Select a stack below to see specific recommendations.";
+        } else if (p.health === "problem") {
+            explain.textContent = "Your services use different mount roots, which prevents hardlinks and atomic moves. Select a stack below for a detailed diagnosis and fix.";
+        } else {
+            explain.textContent = "Select a stack below to run a detailed analysis of its volume mount configuration.";
+        }
+        banner.appendChild(explain);
         banner.appendChild(header);
 
         // Role breakdown
@@ -2329,7 +2342,7 @@ function showSolution(data) {
     if (hasPossibleRpm || hasRpmHint) {
         // Show track selector: Quick Fix (RPM) vs Proper Fix (YAML restructure)
         // The RPM wizard goes above the existing YAML solution
-        summaryEl.textContent = "Two fix options available. Choose the approach that works best for your setup.";
+        summaryEl.textContent = "Two fix approaches available — Quick Fix keeps your current mounts and bridges the gaps with Remote Path Mappings. Proper Fix restructures your volumes to eliminate the problem permanently.";
 
         const trackWrap = document.createElement("div");
         trackWrap.className = "solution-tracks";
@@ -2422,8 +2435,8 @@ function showSolution(data) {
     } else {
         // No RPM available — show standard YAML solution only
         summaryEl.textContent =
-            "Replace the services section in your docker-compose.yml with the corrected configuration below. " +
-            "This includes all services with corrected volume mounts.";
+            "The Recommended Fix tab shows the ideal volume mount snippet for your services. " +
+            "Switch to Your Config (Corrected) to see your full docker-compose.yml with the fixes applied — that's the version you can apply directly to your stack.";
 
         if (data.solution_yaml) {
             renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
@@ -2827,6 +2840,40 @@ function showTrashAdvisory(data) {
     linkNote.style.marginTop = "0.5rem";
     callout.appendChild(linkNote);
     details.appendChild(callout);
+
+    // Implementation steps
+    const implSection = document.createElement("div");
+    implSection.className = "trash-implementation";
+
+    const implTitle = document.createElement("h4");
+    implTitle.textContent = "How to migrate to this structure:";
+    implTitle.style.cssText = "margin: 0.75rem 0 0.5rem; font-size: 0.88rem; color: var(--text);";
+    implSection.appendChild(implTitle);
+
+    const steps = [
+        "Create the /data directory structure on your host (media/, torrents/, usenet/ subdirectories)",
+        "Move your existing media files into the new /data/media/ subfolders",
+        "Update each container's volume mounts to point to /data instead of separate paths",
+        "Update download client category/save paths to use /data/torrents/ or /data/usenet/",
+        "Update *arr app Root Folders (Settings > Media Management) to /data/media/tv, /data/media/movies, etc.",
+        "Restart all containers and verify imports work with a test grab",
+    ];
+
+    const ol = document.createElement("ol");
+    ol.style.cssText = "margin: 0; padding-left: 1.5rem; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.7;";
+    steps.forEach((step) => {
+        const li = document.createElement("li");
+        li.textContent = step;
+        ol.appendChild(li);
+    });
+    implSection.appendChild(ol);
+
+    const implNote = document.createElement("p");
+    implNote.style.cssText = "font-size: 0.82rem; color: var(--text-muted); margin-top: 0.5rem; font-style: italic;";
+    implNote.textContent = "After migrating, re-analyze your stacks in MapArr to confirm everything is aligned.";
+    implSection.appendChild(implNote);
+
+    details.appendChild(implSection);
 
     section.classList.remove("hidden");
 }
@@ -4767,7 +4814,7 @@ async function doApplyFix() {
 
         if (resp.ok && data.status === "applied") {
             resultEl.className = "apply-result apply-result-success";
-            resultEl.textContent = data.message;
+            resultEl.textContent = (data.message || "Fix applied.") + " Your compose file has been updated but your stack has NOT been restarted. Run 'docker compose up -d' in your stack directory (or restart via your Docker manager) to apply the changes.";
             resultEl.classList.remove("hidden");
             showSimpleToast("Fix applied successfully!", "success");
 
@@ -4787,7 +4834,12 @@ async function doApplyFix() {
             nextBtn.addEventListener("click", () => {
                 switchToBrowseMode();
             });
-            resultEl.after(nextBtn);
+            // Restart guidance
+            const restartNote = document.createElement("p");
+            restartNote.className = "apply-restart-note";
+            restartNote.textContent = "Remember: restart your stack to apply the new configuration. Re-scanning will verify the YAML is correct, but the fix only takes effect after a restart.";
+            resultEl.after(restartNote);
+            restartNote.after(nextBtn);
 
             // Re-run pipeline scan (compose changed) then re-analyze.
             // This gives the user REAL proof the fix worked — fresh terminal,

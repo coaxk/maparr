@@ -64,16 +64,21 @@
             <h2>What would you like to do?</h2>
             <p class="boot-context-line hidden" id="mode-context"></p>
         </div>
+        <p class="step-desc">
+            MapArr analyzes your Docker Compose volume mounts to find path conflicts that break
+            hardlinks, imports, and atomic moves. Paste an error to get a targeted fix, or browse
+            your stacks for a full health check.
+        </p>
         <div class="mode-selector">
             <button class="mode-btn" id="mode-fix" onclick="enterFixMode()">
                 <span class="mode-icon">&#128295;</span>
                 <span class="mode-title" id="mode-fix-title">Fix an Error</span>
-                <span class="mode-desc">Paste an error from your *arr app and get a targeted fix</span>
+                <span class="mode-desc">Paste an error from Sonarr, Radarr, or any *arr app and MapArr will diagnose the root cause and generate corrected YAML</span>
             </button>
             <button class="mode-btn" id="mode-browse" onclick="enterBrowseMode()">
                 <span class="mode-icon">&#128269;</span>
                 <span class="mode-title" id="mode-browse-title">Analyze Your Stacks</span>
-                <span class="mode-desc">Browse your Docker stacks and check for path issues</span>
+                <span class="mode-desc">Scan all your Docker stacks for mount conflicts, permission issues, and hardlink compatibility</span>
             </button>
         </div>
     </section>
@@ -284,7 +289,7 @@
             <div class="apply-confirm-content">
                 <p class="apply-confirm-title">Apply fix to your compose file?</p>
                 <p class="apply-confirm-detail" id="apply-confirm-file"></p>
-                <p class="apply-confirm-note">A backup (.bak) will be created before any changes are made.</p>
+                <p class="apply-confirm-note">This will overwrite your compose file with the corrected version from the "Your Config" tab. A backup (.bak) will be created first. Your stack will NOT be restarted automatically — you'll need to restart it yourself after applying.</p>
                 <div class="apply-confirm-buttons">
                     <button class="apply-confirm-yes" id="apply-confirm-yes">Apply Fix</button>
                     <button class="apply-confirm-no" onclick="cancelApplyFix()">Cancel</button>

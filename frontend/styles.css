@@ -2889,6 +2889,24 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     color: var(--error);
 }
 
+.pipeline-explain {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    margin: 0.25rem 0 0;
+    line-height: 1.4;
+}
+
+.apply-restart-note {
+    font-size: 0.85rem;
+    color: var(--warning);
+    margin-top: 0.5rem;
+    line-height: 1.5;
+}
+
+.trash-implementation ol {
+    line-height: 1.7;
+}
+
 .cross-stack-banner {
     display: flex;
     flex-wrap: wrap;
