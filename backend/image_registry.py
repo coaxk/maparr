@@ -196,8 +196,10 @@ class ImageRegistry:
                 if hardlink:
                     self._hardlink_keywords.add(kw_lower)
 
-        # Sort patterns longest-first so more specific patterns match first
+        # Sort longest-first so more specific entries match first.
+        # Prevents "nzb" from matching before "nzbget", etc.
         self._by_pattern.sort(key=lambda x: -len(x[0]))
+        self._by_keyword.sort(key=lambda x: -len(x[0]))
 
     def classify(self, service_name: str, image: str) -> dict:
         """Classify a Docker service by its role in the media stack.
