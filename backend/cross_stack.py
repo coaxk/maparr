@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Set
 
 import yaml
 
-from backend.analyzer import _classify_service, ARR_APPS, DOWNLOAD_CLIENTS, MEDIA_SERVERS
+from backend.analyzer import _classify_service
 from backend.discovery import (
     COMPOSE_FILENAMES, _extract_host_sources, MAX_COMPOSE_FILE_SIZE,
     _CONFIG_TARGETS,

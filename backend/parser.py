@@ -23,23 +23,23 @@ from typing import Optional
 logger = logging.getLogger("maparr.parser")
 
 
-# Known *arr apps and download clients, ordered by frequency in support requests.
-# Used for both exact match and fuzzy detection.
-ARR_APPS = [
-    "sonarr", "radarr", "lidarr", "readarr", "whisparr",
-    "prowlarr", "bazarr", "overseerr", "jellyseerr",
-]
+def _get_known_services() -> list[str]:
+    """Get all known service keywords from the Image Registry.
 
-DOWNLOAD_CLIENTS = [
-    "qbittorrent", "sabnzbd", "nzbget", "transmission",
-    "deluge", "rtorrent", "jdownloader",
-]
-
-MEDIA_SERVERS = [
-    "plex", "jellyfin", "emby",
-]
-
-ALL_KNOWN_SERVICES = ARR_APPS + DOWNLOAD_CLIENTS + MEDIA_SERVERS
+    Lazy import to avoid circular dependency (registry initialized in main.py).
+    Falls back to a minimal hardcoded list if the registry isn't loaded yet
+    (e.g., during unit tests that import parser directly).
+    """
+    try:
+        from backend.image_registry import get_registry
+        return sorted(get_registry().known_keywords())
+    except (ImportError, AttributeError):
+        return [
+            "sonarr", "radarr", "lidarr", "readarr", "whisparr",
+            "prowlarr", "bazarr", "overseerr", "jellyseerr",
+            "qbittorrent", "sabnzbd", "nzbget", "transmission",
+            "deluge", "rtorrent", "jdownloader", "plex", "jellyfin", "emby",
+        ]
 
 
 @dataclass
@@ -206,30 +206,37 @@ def _extract_service(text: str) -> Optional[str]:
     """
     Extract a known service name from error text.
 
-    Checks exact matches first, then common variations (e.g., "qbit" for
-    qbittorrent). Case-insensitive.
+    Checks service names longest-first (so "nzbget" matches before "nzb"),
+    then returns the earliest match position (so "sonarr and radarr" returns
+    "sonarr"). Case-insensitive.
     """
     text_lower = text.lower()
 
-    # Exact match against known services
-    for service in ALL_KNOWN_SERVICES:
-        if service in text_lower:
-            return service
-
-    # Common abbreviations and typos
-    abbreviations = {
+    # Abbreviation → canonical service name.
+    # These are checked alongside primary keywords but map to the canonical name.
+    _CANONICAL = {
         "qbit": "qbittorrent",
         "sab": "sabnzbd",
         "nzb": "sabnzbd",
-        "rtorrent": "rtorrent",
         "jdown": "jdownloader",
         "jd2": "jdownloader",
     }
-    for abbrev, full_name in abbreviations.items():
-        if abbrev in text_lower:
-            return full_name
 
-    return None
+    # Sort longest-first so "nzbget" matches before "nzb", "qbittorrent"
+    # before "qbit", etc. This prevents short abbreviations from stealing
+    # matches from full service names.
+    services = sorted(_get_known_services(), key=len, reverse=True)
+
+    # Find the earliest match by position in the text
+    best_match = None
+    best_pos = len(text_lower)
+    for service in services:
+        pos = text_lower.find(service)
+        if pos != -1 and pos < best_pos:
+            best_pos = pos
+            best_match = _CANONICAL.get(service, service)
+
+    return best_match
 
 
 def _extract_path(text: str) -> Optional[str]:

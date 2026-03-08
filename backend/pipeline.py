@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from backend.analyzer import _classify_service, ARR_APPS, DOWNLOAD_CLIENTS, MEDIA_SERVERS
+from backend.analyzer import _classify_service
 from backend.cross_stack import (
     _find_compose_file,
     _parse_sibling_services,
