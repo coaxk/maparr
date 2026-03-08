@@ -972,6 +972,17 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     border-color: var(--border-focus);
 }
 
+.stack-item:focus {
+    background: var(--bg-card-hover);
+    border-color: var(--border-focus);
+    outline: 2px solid var(--border-focus);
+    outline-offset: -2px;
+}
+
+.stack-item:focus:not(:focus-visible) {
+    outline: none;
+}
+
 .stack-item.selected {
     background: var(--bg-selected);
     border-color: var(--border-selected);
@@ -1008,6 +1019,21 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     color: var(--text-muted);
     opacity: 0.6;
     margin-top: 0.15rem;
+}
+
+.stack-last-scanned--stale {
+    color: var(--warning);
+    opacity: 0.8;
+}
+
+/* Subtle pulse on healthy dots when analysis results are stale */
+.health-dot--stale {
+    animation: pulse-stale 3s ease-in-out infinite;
+}
+
+@keyframes pulse-stale {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
 }
 
 .stack-services {

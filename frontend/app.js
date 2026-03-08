@@ -1304,9 +1304,71 @@ function classifyStack(stack) {
     return "other";
 }
 
+// ─── Stack List Keyboard Navigation ───
+// Module-level map from normalized path → stack object, rebuilt on each render.
+// The keyboard handler uses this to look up the stack data for the focused item
+// so it can call selectStack() with the correct stack object.
+const _stackItemMap = new Map();
+
+// Named handler reference so we can remove/re-add without duplicates.
+function _stackListKeydownHandler(e) {
+    const list = e.currentTarget;
+    const items = Array.from(list.querySelectorAll('.stack-item:not(.hidden)'));
+    if (items.length === 0) return;
+
+    const focused = document.activeElement;
+    const currentIdx = items.indexOf(focused);
+
+    switch (e.key) {
+        case "ArrowDown": {
+            e.preventDefault();
+            const next = currentIdx < items.length - 1 ? currentIdx + 1 : 0;
+            items[next].focus();
+            break;
+        }
+        case "ArrowUp": {
+            e.preventDefault();
+            const prev = currentIdx > 0 ? currentIdx - 1 : items.length - 1;
+            items[prev].focus();
+            break;
+        }
+        case "Home": {
+            e.preventDefault();
+            items[0].focus();
+            break;
+        }
+        case "End": {
+            e.preventDefault();
+            items[items.length - 1].focus();
+            break;
+        }
+        case "Enter":
+        case " ": {
+            if (currentIdx === -1) return;
+            e.preventDefault();
+            const path = focused.getAttribute("data-stack-path");
+            const stack = _stackItemMap.get(path);
+            if (stack) selectStack(stack, null);
+            break;
+        }
+    }
+}
+
 function renderStacks(stacks) {
     const list = document.getElementById("stacks-list");
     list.replaceChildren();
+
+    // ARIA semantics — the stack list acts as a listbox with keyboard navigation
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", "Stack list \u2014 use arrow keys to navigate");
+
+    // Rebuild the path→stack lookup for keyboard selection
+    _stackItemMap.clear();
+    stacks.forEach((s) => _stackItemMap.set(s.path.replace(/\\/g, "/"), s));
+
+    // Remove previous listener (idempotent) then attach fresh one
+    list.removeEventListener("keydown", _stackListKeydownHandler);
+    list.addEventListener("keydown", _stackListKeydownHandler);
 
     const detectedService = state.parsedError?.service?.toLowerCase() || "";
 
@@ -1589,6 +1651,8 @@ function renderStackItem(stack, detectedService) {
     const item = document.createElement("div");
     item.className = "stack-item";
     item.setAttribute("data-stack-path", stack.path.replace(/\\/g, "/"));
+    item.setAttribute("role", "option");
+    item.tabIndex = 0;
     item.addEventListener("click", (e) => selectStack(stack, e));
 
     // Health indicator (traffic light) — uses effective health which factors
@@ -1645,14 +1709,24 @@ function renderStackItem(stack, detectedService) {
         info.appendChild(err);
     }
 
-    // Last-scanned timestamp — helps users spot stale results
+    // Last-scanned timestamp — helps users spot stale results.
+    // Results older than 10 minutes get a visual staleness hint.
     const normalizedPath = stack.path.replace(/\\/g, "/");
     const lastTs = state.lastAnalyzed[normalizedPath];
     if (lastTs) {
+        const STALE_THRESHOLD_MS = 600000; // 10 minutes
+        const isStale = (Date.now() - lastTs) > STALE_THRESHOLD_MS;
         const scanned = document.createElement("div");
-        scanned.className = "stack-last-scanned";
-        scanned.textContent = "analyzed " + formatRelativeTime(lastTs);
+        scanned.className = "stack-last-scanned" + (isStale ? " stack-last-scanned--stale" : "");
+        const relTime = formatRelativeTime(lastTs);
+        scanned.textContent = "analyzed " + relTime + (isStale ? " \u2014 may be stale" : "");
         info.appendChild(scanned);
+
+        // When a healthy stack has stale results, pulse the dot to
+        // hint that re-analysis might be worthwhile.
+        if (isStale && effectiveH === "ok") {
+            dot.classList.add("health-dot--stale");
+        }
     }
 
     item.appendChild(info);
@@ -5860,14 +5934,6 @@ function generateDiagnosticMarkdown() {
     lines.push("## MapArr Diagnostic \u2014 " + stackName);
     lines.push("");
 
-    // Pipeline context in diagnostic
-    if (data.pipeline) {
-        const p = data.pipeline;
-        lines.push("**Pipeline:** " + p.total_media + " media services | health: " + p.health +
-            (p.shared_mount && p.mount_root ? " | shared mount: " + p.mount_root : ""));
-        lines.push("");
-    }
-
     if (isHealthy) {
         lines.push("**Status:** \u2705 Healthy | **Services:** " + serviceCount);
         lines.push("");
@@ -5904,6 +5970,85 @@ function generateDiagnosticMarkdown() {
             lines.push(data.solution_yaml);
             lines.push("```");
         }
+    }
+
+    // ── Full pipeline context ──
+    const pipe = state.pipeline || data.pipeline;
+    if (pipe) {
+        lines.push("");
+        lines.push("### Pipeline Overview");
+        lines.push("");
+        lines.push("| Field | Value |");
+        lines.push("|-------|-------|");
+        if (pipe.scan_dir) lines.push("| Scan directory | `" + pipe.scan_dir + "` |");
+        if (pipe.stacks_scanned != null) lines.push("| Stacks scanned | " + pipe.stacks_scanned + " |");
+        const mediaCount = pipe.media_service_count || pipe.total_media || 0;
+        lines.push("| Media services | " + mediaCount + " |");
+        lines.push("| Health | " + pipe.health + " |");
+        lines.push("| Shared mount | " + (pipe.shared_mount ? "Yes" + (pipe.mount_root ? " (`" + pipe.mount_root + "`)" : "") : "No") + " |");
+        lines.push("");
+
+        // Role breakdown table — all media services grouped by role
+        const svcByRole = pipe.services_by_role;
+        if (svcByRole && Object.keys(svcByRole).length > 0) {
+            lines.push("### Pipeline \u2014 Media Services");
+            lines.push("");
+            lines.push("| Service | Stack | Role | Host Mounts |");
+            lines.push("|---------|-------|------|-------------|");
+            for (const [role, svcs] of Object.entries(svcByRole)) {
+                (svcs || []).forEach((s) => {
+                    const mounts = (s.host_sources || s.volume_mounts || [])
+                        .map((m) => typeof m === "string" ? "`" + m + "`" : "`" + (m.source || m) + "`")
+                        .join(", ") || "(none)";
+                    lines.push("| " + (s.service_name || s.name || "?") + " | " + (s.stack_name || "?") + " | " + role + " | " + mounts + " |");
+                });
+            }
+            lines.push("");
+        }
+
+        // Roles present and missing
+        if (pipe.roles_present && pipe.roles_present.length > 0) {
+            lines.push("**Roles present:** " + pipe.roles_present.join(", "));
+        }
+        if (pipe.roles_missing && pipe.roles_missing.length > 0) {
+            lines.push("**Missing roles:** " + pipe.roles_missing.join(", "));
+        }
+        if ((pipe.roles_present && pipe.roles_present.length > 0) ||
+            (pipe.roles_missing && pipe.roles_missing.length > 0)) {
+            lines.push("");
+        }
+
+        // Pipeline-level conflicts
+        if (pipe.conflicts && pipe.conflicts.length > 0) {
+            lines.push("### Pipeline Conflicts");
+            lines.push("");
+            pipe.conflicts.forEach((c) => {
+                const sev = (c.severity || "unknown").toUpperCase();
+                lines.push("- **" + sev + ":** " + (c.description || c.message || JSON.stringify(c)));
+            });
+            lines.push("");
+        }
+    }
+
+    // Cross-stack sibling context from analysis data
+    const crossStack = (data.cross_stack || (data.pipeline_context && data.pipeline_context.cross_stack));
+    if (crossStack && crossStack.siblings && crossStack.siblings.length > 0) {
+        lines.push("");
+        lines.push("### Cross-Stack Siblings");
+        lines.push("");
+        crossStack.siblings.forEach((sib) => {
+            const sibMounts = (sib.host_sources || sib.volume_mounts || [])
+                .map((m) => typeof m === "string" ? "`" + m + "`" : "`" + (m.source || m) + "`")
+                .join(", ") || "(none)";
+            lines.push("- **" + (sib.service_name || sib.name || "?") + "** (" + (sib.stack_name || "?") + ", " + (sib.role || "?") + ") \u2014 " + sibMounts);
+        });
+        lines.push("");
+    }
+
+    // Pipeline role for this stack
+    if (data.pipeline_role) {
+        lines.push("**This stack\u2019s pipeline role:** " + data.pipeline_role);
+        lines.push("");
     }
 
     // Services table
