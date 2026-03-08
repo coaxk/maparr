@@ -82,13 +82,27 @@ def resolve_compose(
         result["_warnings"] = warnings
         return result
 
-    logger.warning("Resolution fallback: docker compose config unavailable for %s — "
-                   "using manual YAML + .env parsing (extends/include won't resolve)",
-                   stack.name)
-    warnings.append(
-        "docker compose config unavailable — using manual resolution. "
-        "extends/include directives won't be resolved."
-    )
+    # Provide actionable guidance based on why docker compose config failed.
+    # Common cause: socket proxy blocking the compose endpoint, Docker not
+    # installed, or DOCKER_HOST pointing to an unreachable daemon.
+    docker_host = os.environ.get("DOCKER_HOST", "")
+    if docker_host:
+        logger.warning("Resolution fallback for %s — docker compose config failed "
+                       "(DOCKER_HOST=%s). If using a socket proxy, ensure compose "
+                       "endpoints are allowed.", stack.name, docker_host)
+        warnings.append(
+            "docker compose config failed (DOCKER_HOST=" + docker_host + "). "
+            "If using a socket proxy, ensure it allows compose API access. "
+            "Falling back to manual resolution — extends/include won't resolve."
+        )
+    else:
+        logger.warning("Resolution fallback: docker compose config unavailable for %s — "
+                       "using manual YAML + .env parsing (extends/include won't resolve)",
+                       stack.name)
+        warnings.append(
+            "docker compose config unavailable — using manual resolution. "
+            "extends/include directives won't be resolved."
+        )
 
     # Strategy 2: Raw YAML + .env
     t0_manual = time.time()
@@ -130,7 +144,7 @@ def _try_docker_compose_config(
             capture_output=True,
             text=True,
             cwd=str(stack),
-            timeout=15,
+            timeout=30,
         )
 
         if result.returncode != 0:
@@ -153,7 +167,7 @@ def _try_docker_compose_config(
         logger.info("Docker CLI not found — falling back to manual resolution")
         return None
     except subprocess.TimeoutExpired:
-        logger.warning("docker compose config timed out after 15s")
+        logger.warning("docker compose config timed out after 30s")
         return None
     except Exception as e:
         logger.info("docker compose config error: %s", e)

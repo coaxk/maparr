@@ -87,7 +87,12 @@ def split_errors(text: str) -> list[str]:
     if not text or not text.strip():
         return []
 
-    chunks = _SPLIT_REGEX.split(text.strip())
+    # Normalize Windows CRLF to Unix LF before splitting.
+    # Users on Windows (and web browsers on Windows) paste text with \r\n
+    # which breaks our \n-based split patterns.
+    normalized = text.strip().replace("\r\n", "\n").replace("\r", "\n")
+
+    chunks = _SPLIT_REGEX.split(normalized)
     # Filter out empty/whitespace-only chunks and very short fragments
     result = [c.strip() for c in chunks if c and c.strip() and len(c.strip()) > 10]
 

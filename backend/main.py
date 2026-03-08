@@ -44,15 +44,22 @@ def _get_stacks_root() -> str:
     )
 
 
-def _is_path_within_stacks(path: str) -> bool:
+def _is_path_within_stacks(path: str, require_root: bool = False) -> bool:
     """
     Check that a resolved path is within the stacks root directory.
-    Returns True if no stacks root is configured — path restriction only
-    applies when MAPARR_STACKS_PATH is set (always true in Docker).
+
+    When require_root=False (read operations like scan/analyze):
+      Returns True if no stacks root is configured.
+    When require_root=True (write operations like apply-fix):
+      Returns False if no stacks root is configured — writes are only
+      allowed when a boundary is explicitly set. This prevents accidental
+      writes to arbitrary compose files when running outside Docker.
     """
     stacks_root = _get_stacks_root()
     if not stacks_root:
-        return True  # No root configured — can't enforce boundary
+        if require_root:
+            return False  # Writes require an explicit boundary
+        return True  # Reads are permissive without a configured root
     try:
         # Resolve symlinks and normalize both paths
         real_path = Path(path).resolve()
@@ -318,8 +325,23 @@ async def api_change_stacks_path(request: Request):
             status_code=400,
         )
 
-    # Security: block obvious system directories
+    # Security: if a stacks root is configured, the new path must be within
+    # it (allowlist). This is stricter than the denylist below and covers all
+    # edge cases (no need to enumerate every system directory).
+    stacks_root = _get_stacks_root()
+    if stacks_root:
+        try:
+            Path(new_path).resolve().relative_to(Path(stacks_root).resolve())
+        except (ValueError, OSError):
+            logger.warning("Change path blocked: %s outside stacks root %s", new_path, stacks_root)
+            return JSONResponse(
+                {"error": "Path must be within the stacks directory"},
+                status_code=403,
+            )
+
+    # Defense-in-depth: block obvious system directories (when no stacks root)
     _blocked_prefixes = ("/etc", "/proc", "/sys", "/dev", "/boot", "/sbin",
+                         "/root", "/home",
                          "C:\\Windows", "C:\\Program Files")
     resolved_new = str(Path(new_path).resolve())
     if any(resolved_new.startswith(p) for p in _blocked_prefixes):
@@ -695,8 +717,19 @@ async def api_apply_fix(request: Request):
             status_code=400,
         )
 
-    # Security: validate the path is within the stacks directory
-    if not _is_path_within_stacks(compose_file_path):
+    # Security: validate the path is within the stacks directory.
+    # Write operations require an explicit boundary (MAPARR_STACKS_PATH or
+    # custom_stacks_path) — without one, we refuse to write to prevent
+    # accidental modifications to arbitrary compose files on the host.
+    if not _is_path_within_stacks(compose_file_path, require_root=True):
+        stacks_root = _get_stacks_root()
+        if not stacks_root:
+            logger.warning("Apply fix blocked: no stacks root configured (set MAPARR_STACKS_PATH)")
+            return JSONResponse(
+                {"error": "Apply Fix requires MAPARR_STACKS_PATH to be set for security. "
+                          "Set the environment variable or use Change Path in the UI."},
+                status_code=403,
+            )
         logger.warning("Apply fix blocked: path outside stacks root: %s", compose_file_path)
         return JSONResponse(
             {"error": "Path is outside the stacks directory"},
@@ -739,10 +772,12 @@ async def api_apply_fix(request: Request):
             status_code=500,
         )
 
-    # Write the corrected YAML
+    # Write the corrected YAML with explicit LF line endings.
+    # Docker compose files should use Unix line endings regardless of host OS.
+    # newline="" prevents Python from translating \n to \r\n on Windows.
     try:
-        with open(compose_file_path, "w", encoding="utf-8") as f:
-            f.write(corrected_yaml)
+        with open(compose_file_path, "w", encoding="utf-8", newline="") as f:
+            f.write(corrected_yaml.replace("\r\n", "\n"))
         logger.info("Apply fix: wrote corrected YAML to %s", compose_file_path)
     except Exception as e:
         logger.error("Apply fix: write failed: %s", e)
@@ -808,7 +843,7 @@ async def api_log_stream():
     for WARN/ERROR notifications.
     """
     async def event_generator():
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
 
         def on_log(entry):
             try:
@@ -852,4 +887,5 @@ async def api_log_stream():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=9494, log_level="info")
+    port = int(os.environ.get("MAPARR_PORT", "9494"))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

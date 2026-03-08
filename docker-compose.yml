@@ -1,57 +1,51 @@
 # ══════════════════════════════════════════════════════════════
-# MapArr v1.0 — Docker Compose
+# MapArr v1.5.0 — Docker Compose
+#
+# Quick start:
+#   1. Set STACKS_PATH below to your Docker stacks directory
+#   2. docker compose up -d
+#   3. Open http://localhost:9494
+#
+# PUID/PGID: Set these to match your host user (run `id` to check).
+# This ensures MapArr can read your compose files and write fixes.
 # ══════════════════════════════════════════════════════════════
-
-version: '3.8'
 
 services:
   maparr:
-    image: maparr:v1.0
+    image: ghcr.io/coaxk/maparr:latest
     container_name: maparr
     restart: unless-stopped
 
-    networks:
-      - maparr-net
-
     ports:
-      - "${MAPARR_PORT:-9900}:9900"
+      - "${MAPARR_PORT:-9494}:${MAPARR_PORT:-9494}"
 
     environment:
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
-      API_HOST: 0.0.0.0
-      API_PORT: 9900
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - MAPARR_PORT=${MAPARR_PORT:-9494}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Uncomment for socket proxy instead of socket mount:
+      # - DOCKER_HOST=tcp://socket-proxy:2375
 
     volumes:
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
-      - maparr-data:/data
-      - maparr-logs:/logs
+      # REQUIRED: Your Docker stacks directory (where your compose files live)
+      - ${STACKS_PATH:-/opt/docker}:/stacks:ro
+      # OPTIONAL: Docker socket for full compose resolution
+      # Remove this line if using a socket proxy (set DOCKER_HOST above instead)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    # For Apply Fix (writing corrected compose files), change :ro to :rw above
+    # or remove the :ro flag entirely.
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9900/health"]
-      interval: 60s
+      test: ["CMD", "curl", "-f", "http://localhost:${MAPARR_PORT:-9494}/api/health"]
+      interval: 30s
       timeout: 5s
-      retries: 2
+      retries: 3
       start_period: 10s
 
     logging:
       driver: "json-file"
       options:
-        max-size: "${LOG_MAX_SIZE:-100M}"
-        max-file: "${LOG_MAX_FILES:-5}"
-
-    labels:
-      com.maparr.app: "core"
-      com.maparr.description: "Path mapping intelligence"
-      maintenance_log: "[2026-02-13] MapArr v1.0 - universal networking, optional docker socket"
-
-networks:
-  maparr-net:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.25.0.0/16
-
-volumes:
-  maparr-data:
-  maparr-logs:
+        max-size: "10m"
+        max-file: "3"

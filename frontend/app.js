@@ -26,6 +26,7 @@ const state = {
     pipeline: null,      // Cached PipelineResult from /api/pipeline-scan
     verifiedStacks: new Set(), // Stacks analyzed/fixed this session — skip caution override
     preflightOverridden: false, // User bypassed a pre-flight warning for this analysis
+    _analysisInFlight: false,    // Guard against concurrent analysis requests
 };
 
 // Load persisted custom dirs from localStorage
@@ -1835,6 +1836,11 @@ function showBrowsePreflightWarning(stack, serviceList) {
  * result card based on status.
  */
 async function runAnalysis(stack) {
+    // Guard against double-submit: if an analysis is already in-flight,
+    // ignore subsequent calls (e.g. rapid stack clicks, double-click).
+    if (state._analysisInFlight) return;
+    state._analysisInFlight = true;
+
     clearAnalysisResults();
 
     const termSection = document.getElementById("step-analyzing");
@@ -1865,6 +1871,13 @@ async function runAnalysis(stack) {
     termSection.classList.remove("hidden");
     termSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
+    // Abort controller: cancel a stale request if the user navigates away
+    // or if a new analysis starts. 60s timeout covers slow compose resolution
+    // through socket proxies or large stacks.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    state._analysisAbort = controller;
+
     try {
         const resp = await fetch("/api/analyze", {
             method: "POST",
@@ -1873,7 +1886,9 @@ async function runAnalysis(stack) {
                 stack_path: stack.path,
                 error: state.parsedError,
             }),
+            signal: controller.signal,
         });
+        clearTimeout(timeout);
 
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ error: "Analysis failed" }));
@@ -1961,10 +1976,19 @@ async function runAnalysis(stack) {
                 showAnalysisResult(data);
             }
         }
-    } catch {
-        setTerminalDots("error");
-        addTerminalLine("fail", "Could not reach the backend. Is MapArr running?");
-        showAnalysisError("Could not reach the backend. Is MapArr running?");
+    } catch (err) {
+        if (err.name === "AbortError") {
+            // Request was cancelled (timeout or user navigated away) — don't
+            // show an error since the user has already moved on.
+            setTerminalDots("warning");
+            addTerminalLine("info", "Analysis cancelled.");
+        } else {
+            setTerminalDots("error");
+            addTerminalLine("fail", "Could not reach the backend. Is MapArr running?");
+            showAnalysisError("Could not reach the backend. Is MapArr running?");
+        }
+    } finally {
+        state._analysisInFlight = false;
     }
 }
 
@@ -4532,6 +4556,13 @@ function showAgainButton() {
 // ─── Analyze Another (return to stack list) ───
 
 function clearAnalysisResults() {
+    // Abort any in-flight analysis request — prevents stale responses from
+    // rendering after the user has moved on to a different stack or mode.
+    if (state._analysisAbort) {
+        state._analysisAbort.abort();
+        state._analysisAbort = null;
+    }
+
     // Hide ALL result sections — called before any new analysis cycle
     const resultSections = [
         "step-analyzing", "step-current-setup", "step-problem",
@@ -5937,6 +5968,16 @@ function initLogSystem() {
 // (initLogSystem is now called immediately in the main DOMContentLoaded handler
 // so SSE connects during boot and logs flow from the start.)
 
+// Clean up SSE connection on page unload to prevent server-side connection leak.
+// Without this, navigating away or closing the tab leaves the EventSource open
+// and the backend keeps the SSE generator alive until it times out.
+window.addEventListener("beforeunload", () => {
+    if (_logState.sseSource) {
+        _logState.sseSource.close();
+        _logState.sseSource = null;
+    }
+});
+
 // ─── Log Panel Toggle ───
 
 function toggleLogPanel() {
@@ -6067,6 +6108,11 @@ async function fetchLogs() {
 
 // ─── SSE Live Stream ───
 
+// Exponential backoff for SSE reconnection: 5s → 10s → 20s → 40s → 60s cap.
+// Resets to 5s on successful connection. Prevents hammering a down backend.
+let _sseReconnectDelay = 5000;
+const _SSE_MAX_DELAY = 60000;
+
 function connectLogStream() {
     if (_logState.sseSource) {
         _logState.sseSource.close();
@@ -6077,9 +6123,9 @@ function connectLogStream() {
         _logState.sseSource = es;
 
         es.addEventListener("connected", () => {
-            // SSE just (re)connected — backfill any entries we missed
-            // during the disconnection gap. This handles browser tab
-            // throttling, network hiccups, and backend restarts.
+            // Connected successfully — reset backoff
+            _sseReconnectDelay = 5000;
+            // Backfill any entries we missed during the disconnection gap.
             _backfillMissedLogs();
         });
 
@@ -6091,15 +6137,18 @@ function connectLogStream() {
         });
 
         es.addEventListener("error", () => {
-            // Reconnect after delay
             es.close();
             _logState.sseSource = null;
-            setTimeout(connectLogStream, 5000);
+            // Exponential backoff with cap
+            setTimeout(connectLogStream, _sseReconnectDelay);
+            _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, _SSE_MAX_DELAY);
         });
     } catch {
-        // SSE not supported or network error
-        // Fall back to polling
-        setInterval(fetchLogs, 10000);
+        // SSE not supported — fall back to polling (once only)
+        if (!_logState._pollingFallback) {
+            _logState._pollingFallback = true;
+            setInterval(fetchLogs, 10000);
+        }
     }
 }
 
@@ -6158,6 +6207,19 @@ function addLogEntry(entry) {
     // Cap at 500 entries in memory
     if (_logState.entries.length > 500) {
         _logState.entries.shift();
+    }
+
+    // Live progress: update terminal title during analysis with step info.
+    // Backend logs "Step X/6: ..." — we surface this as inline progress so
+    // users see activity even without opening the log panel.
+    if (state._analysisInFlight && entry.message) {
+        const stepMatch = entry.message.match(/^Step (\d+)\/(\d+):\s*(.+)/);
+        if (stepMatch) {
+            const termTitle = document.querySelector(".terminal-title");
+            if (termTitle) {
+                termTitle.textContent = "Step " + stepMatch[1] + "/" + stepMatch[2] + ": " + stepMatch[3];
+            }
+        }
     }
 
     // Render if panel is open

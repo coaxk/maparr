@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>MapArr</Name>
+  <Repository>ghcr.io/coaxk/maparr:latest</Repository>
+  <Registry>https://github.com/coaxk/maparr/pkgs/container/maparr</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/coaxk/maparr/issues</Support>
+  <Project>https://github.com/coaxk/maparr</Project>
+  <Overview>
+    MapArr analyzes your Docker Compose volume mounts and detects path mapping
+    issues that break hardlinks, cause import failures, and create permission
+    conflicts across your *arr stack (Sonarr, Radarr, Prowlarr, etc.).
+
+    Point it at your Docker stacks directory and get instant analysis with
+    one-click fixes.
+  </Overview>
+  <Category>Tools: MediaApp:Other</Category>
+  <WebUI>http://[IP]:[PORT:9494]</WebUI>
+  <Icon>https://raw.githubusercontent.com/coaxk/maparr/main/frontend/favicon.svg</Icon>
+  <ExtraParams/>
+  <DateInstalled/>
+  <Description>
+    Path mapping intelligence for Docker *arr applications.
+    Detects mount conflicts, hardlink breakage, permission issues,
+    and generates fixes — all from your compose files.
+  </Description>
+  <Config
+    Name="WebUI Port"
+    Target="9494"
+    Default="9494"
+    Mode="tcp"
+    Description="MapArr web interface port"
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">9494</Config>
+  <Config
+    Name="Stacks Directory"
+    Target="/stacks"
+    Default="/mnt/user/appdata"
+    Mode="ro"
+    Description="Path to your Docker compose stacks on the host. Read-only for scanning; remove :ro for Apply Fix."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata</Config>
+  <Config
+    Name="Docker Socket"
+    Target="/var/run/docker.sock"
+    Default="/var/run/docker.sock"
+    Mode="ro"
+    Description="Docker socket for full compose resolution. Optional — remove if using a socket proxy."
+    Type="Path"
+    Display="always"
+    Required="false"
+    Mask="false">/var/run/docker.sock</Config>
+  <Config
+    Name="PUID"
+    Target="PUID"
+    Default="99"
+    Description="User ID to run as (Unraid default: 99)"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">99</Config>
+  <Config
+    Name="PGID"
+    Target="PGID"
+    Default="100"
+    Description="Group ID to run as (Unraid default: 100)"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false">100</Config>
+  <Config
+    Name="DOCKER_HOST"
+    Target="DOCKER_HOST"
+    Default=""
+    Description="Socket proxy address (e.g., tcp://socket-proxy:2375). Leave blank if mounting the socket directly."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false"/>
+  <Config
+    Name="Log Level"
+    Target="LOG_LEVEL"
+    Default="info"
+    Description="Logging verbosity: debug, info, warning, error"
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">info</Config>
+</Container>
