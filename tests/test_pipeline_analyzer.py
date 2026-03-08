@@ -361,15 +361,20 @@ class TestAnalyzeWithPipeline:
         # Pipeline scan
         client.post("/api/pipeline-scan", json={"scan_dir": root})
 
-        # Change path (invalidates pipeline)
+        # Change path to a new root (invalidates pipeline).
+        # Create a stack inside the new root so we can analyze it —
+        # the path security check requires the analyzed path to be
+        # within the current stacks root.
         new_dir = tmp_path / "newroot"
         new_dir.mkdir()
+        new_stack = new_dir / "sonarr"
+        new_stack.mkdir()
+        (new_stack / "docker-compose.yml").write_text(SONARR_YAML)
         client.post("/api/change-stacks-path", json={"path": str(new_dir)})
 
-        # Analyze — pipeline should be gone
-        sonarr_path = os.path.join(root, "sonarr")
-        resp = client.post("/api/analyze", json={"stack_path": sonarr_path})
+        # Analyze a stack inside the new root — pipeline should be gone
+        resp = client.post("/api/analyze", json={"stack_path": str(new_stack)})
         assert resp.status_code == 200
         data = resp.json()
-        # Pipeline should be None since we changed paths
+        # Pipeline should be None since we changed paths and haven't rescanned
         assert data.get("pipeline") is None

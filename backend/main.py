@@ -124,6 +124,12 @@ class RateLimiter:
             timestamps.append(now)
             return (True, 0)
 
+    def reset(self):
+        """Clear all rate limit state. Used by test fixtures."""
+        with self._lock:
+            self._requests.clear()
+            self._last_cleanup = time.time()
+
     def _cleanup(self, now: float):
         """Remove IPs with no recent activity. Called under lock."""
         cutoff = now - self.WINDOW

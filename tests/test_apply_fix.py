@@ -24,6 +24,12 @@ from conftest import BROKEN_MULTI_YAML, HEALTHY_MULTI_YAML
 class TestApplyFix:
     """Apply corrected YAML to compose file."""
 
+    @pytest.fixture(autouse=True)
+    def _set_stacks_root(self, tmp_path, monkeypatch):
+        """Apply-fix requires MAPARR_STACKS_PATH to be set (write boundary).
+        Point it at tmp_path so test compose files pass the security check."""
+        monkeypatch.setenv("MAPARR_STACKS_PATH", str(tmp_path))
+
     def test_apply_creates_backup(self, client, tmp_path):
         """Applying a fix should create a .bak backup."""
         compose = tmp_path / "docker-compose.yml"

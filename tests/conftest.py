@@ -17,17 +17,28 @@ from fastapi.testclient import TestClient
 # ─── Session Cleanup ───
 
 @pytest.fixture(autouse=True)
-def _clear_session_pipeline():
-    """Reset the in-memory pipeline cache between tests.
+def _clear_session():
+    """Reset all in-memory session state and rate limiter between tests.
 
-    Without this, tests that call /api/pipeline-scan pollute the shared
-    _session dict, causing later tests to see 'healthy_pipeline' instead
-    of 'healthy' status.
+    Without this, tests that call endpoints like /api/pipeline-scan or
+    /api/change-stacks-path pollute the shared _session dict, causing:
+    - Later tests seeing 'healthy_pipeline' instead of 'healthy' status
+    - Apply-fix tests getting 403 because custom_stacks_path leaked from
+      a prior test makes _is_path_within_stacks() reject the tmp_path
+    - Rapid sequential API calls hitting the rate limiter (429)
     """
-    from backend.main import _session
+    from backend.main import _session, _rate_limiter
+    _session["parsed_error"] = None
+    _session["selected_stack"] = None
     _session["pipeline"] = None
+    _session.pop("custom_stacks_path", None)
+    _rate_limiter.reset()
     yield
+    _session["parsed_error"] = None
+    _session["selected_stack"] = None
     _session["pipeline"] = None
+    _session.pop("custom_stacks_path", None)
+    _rate_limiter.reset()
 
 
 # ─── App Client ───
