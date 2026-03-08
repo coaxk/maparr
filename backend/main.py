@@ -212,6 +212,12 @@ _log_handler = install_log_handler()
 # Frontend reads this via the health endpoint on page load.
 VERSION = "1.5.0"
 
+# ─── Image Registry ───
+# Eagerly initialize the singleton so startup logs show image count.
+# The registry itself lives in image_registry.py (avoids circular imports).
+from backend.image_registry import get_registry as _get_registry
+registry = _get_registry()
+
 # ─── App ───
 
 app = FastAPI(

@@ -69,6 +69,8 @@ class ImageRegistry:
         self._all_keywords: set[str] = set()
         self._keywords_by_role: dict[str, set[str]] = {}
         self._hardlink_keywords: set[str] = set()
+        # Family-level pattern index for get_family() fallback
+        self._family_by_pattern: list[tuple[str, dict]] = []
         self._loaded = False
 
     @property
@@ -158,6 +160,17 @@ class ImageRegistry:
         self._all_keywords = set()
         self._keywords_by_role = {}
         self._hardlink_keywords = set()
+        self._family_by_pattern = []
+
+        # Build family-level pattern index (for get_family() fallback).
+        # Families can declare image_patterns like ["hotio/", "cr.hotio.dev/hotio/"]
+        # so any image from that registry is recognized even without a specific
+        # image entry in the DB.
+        for _key, family in self._families.items():
+            for pattern in family.get("image_patterns", []):
+                self._family_by_pattern.append((pattern.lower(), family))
+        # Sort longest-first so more specific patterns win
+        self._family_by_pattern.sort(key=lambda x: -len(x[0]))
 
         for _key, entry in self._images.items():
             role = entry.get("role", "other")
@@ -237,10 +250,22 @@ class ImageRegistry:
         """Look up the image family for a Docker image string.
 
         Returns the family dict (with uid_env, gid_env, etc.) or None.
+
+        Family-level patterns are the source of truth for UID/GID conventions.
+        An image like `hotio/radarr` may appear in the radarr image entry
+        (which has family=linuxserver for LSIO defaults), but the *family*
+        for that specific image string is Hotio — which has different default
+        UIDs. So we match family patterns first, then fall back to image entries.
         """
         image_lower = image.lower() if image else ""
 
-        # Match image against patterns to find the entry
+        # Pass 1: match against family-level patterns (authoritative for UID/GID)
+        # Sorted longest-first, so "cr.hotio.dev/hotio/" beats "hotio/"
+        for pattern, family in self._family_by_pattern:
+            if pattern in image_lower:
+                return family
+
+        # Pass 2: match image against specific image entry patterns
         for pattern, entry in self._by_pattern:
             if pattern in image_lower:
                 family_key = entry.get("family")
@@ -261,3 +286,24 @@ class ImageRegistry:
     def hardlink_participants(self) -> set[str]:
         """Return keywords for services that participate in hardlink analysis."""
         return set(self._hardlink_keywords)
+
+
+# ─── Module-Level Singleton ───
+# Lazy-loaded on first access. Lives here (not in main.py) to avoid
+# circular imports: main.py → pipeline.py → analyzer.py → registry.
+
+_registry: Optional[ImageRegistry] = None
+
+
+def get_registry() -> ImageRegistry:
+    """Return the global ImageRegistry singleton, loading it on first call.
+
+    The data directory is resolved relative to this file's location:
+    image_registry.py is in backend/, so data/ is at ../data/.
+    """
+    global _registry
+    if _registry is None:
+        _registry = ImageRegistry()
+        data_dir = Path(__file__).parent.parent / "data"
+        _registry.load(data_dir)
+    return _registry

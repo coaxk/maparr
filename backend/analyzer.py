@@ -35,110 +35,47 @@ from backend.mounts import classify_path, check_hardlink_compatibility, MountCla
 logger = logging.getLogger("maparr.analyzer")
 
 
-# ─── Known Services ───
+# ─── Image Registry ───
+# Service classification and image family intelligence is provided by the
+# ImageRegistry, loaded from data/images.json on boot. See image_registry.py.
 
-# These lists drive service classification and relationship detection.
-# Order doesn't matter — they're used for membership testing.
+def _get_registry():
+    """Get the global ImageRegistry singleton.
 
-ARR_APPS = {
-    "sonarr", "radarr", "lidarr", "readarr", "whisparr",
-    "prowlarr", "bazarr",
-}
-
-DOWNLOAD_CLIENTS = {
-    "qbittorrent", "sabnzbd", "nzbget", "transmission",
-    "deluge", "rtorrent", "jdownloader",
-    "aria2", "flood", "rdtclient",
-}
-
-MEDIA_SERVERS = {
-    "plex", "jellyfin", "emby",
-}
-
-REQUEST_APPS = {
-    "overseerr", "jellyseerr", "ombi",
-}
-
-# Services that need to share filesystem paths for hardlinks/atomic moves.
-# An *arr app imports from a download client, then hardlinks/moves to media.
-# All three MUST share a common parent volume for hardlinks to work.
-HARDLINK_PARTICIPANTS = ARR_APPS | DOWNLOAD_CLIENTS | MEDIA_SERVERS
+    Delegates to image_registry.get_registry() which lazy-loads on first call.
+    """
+    from backend.image_registry import get_registry
+    return get_registry()
 
 
-# ─── Image Family Intelligence ───
+# ─── Backward-Compatibility Aliases ───
+# These sets were hardcoded here before the Image DB migration.
+# Other modules (pipeline.py, cross_stack.py, tests) import them by name,
+# so we keep computed aliases that delegate to the registry. They are
+# populated lazily on first access via a module-level __getattr__.
 #
-# Docker image families handle user identity differently. LinuxServer.io uses
-# PUID/PGID env vars (defaulting to internal UID 911), Hotio uses the same
-# names but defaults to 1000, jlesage uses USER_ID/GROUP_ID, and official
-# images often use their own conventions or the compose `user:` directive.
-#
-# This registry lets the permissions analysis understand each family's
-# mechanism without hardcoding image-specific logic in every check function.
+# ImageFamily is replaced by SimpleNamespace objects from the registry,
+# but tests import the name — so we keep it as a no-op reference.
+# IMAGE_FAMILIES is similarly kept as an empty list (tests import but don't use it).
 
-@dataclass
-class ImageFamily:
-    """Intelligence about a Docker image family's user identity mechanism."""
-    name: str                                   # Human-readable family name
-    image_patterns: List[str]                   # Substrings to match in image string
-    uid_env: Optional[str] = None               # Env var for UID (e.g., "PUID")
-    gid_env: Optional[str] = None               # Env var for GID (e.g., "PGID")
-    umask_env: Optional[str] = None             # Env var for UMASK
-    default_uid: Optional[str] = None           # Default UID if env var not set
-    default_gid: Optional[str] = None           # Default GID if env var not set
-    needs_puid: bool = True                     # Whether this image expects explicit UID/GID
+from types import SimpleNamespace as ImageFamily  # noqa: E402 — backward compat alias
+
+IMAGE_FAMILIES: list = []  # Deprecated — kept for import compatibility
 
 
-IMAGE_FAMILIES: List[ImageFamily] = [
-    ImageFamily(
-        name="LinuxServer.io",
-        image_patterns=["lscr.io/linuxserver/", "linuxserver/", "ghcr.io/linuxserver/"],
-        uid_env="PUID", gid_env="PGID", umask_env="UMASK",
-        default_uid="911", default_gid="911",
-        needs_puid=True,
-    ),
-    ImageFamily(
-        name="Hotio",
-        image_patterns=["hotio/", "cr.hotio.dev/hotio/", "ghcr.io/hotio/"],
-        uid_env="PUID", gid_env="PGID", umask_env="UMASK",
-        default_uid="1000", default_gid="1000",
-        needs_puid=True,
-    ),
-    ImageFamily(
-        name="jlesage",
-        image_patterns=["jlesage/"],
-        uid_env="USER_ID", gid_env="GROUP_ID", umask_env="UMASK",
-        default_uid="1000", default_gid="1000",
-        needs_puid=True,
-    ),
-    ImageFamily(
-        name="Binhex",
-        image_patterns=["binhex/"],
-        uid_env="PUID", gid_env="PGID", umask_env="UMASK",
-        default_uid="99", default_gid="100",
-        needs_puid=True,
-    ),
-    ImageFamily(
-        name="Official Plex",
-        image_patterns=["plexinc/pms-docker"],
-        uid_env="PLEX_UID", gid_env="PLEX_GID", umask_env=None,
-        default_uid=None, default_gid=None,
-        needs_puid=True,
-    ),
-    ImageFamily(
-        name="Official Jellyfin",
-        image_patterns=["jellyfin/jellyfin"],
-        uid_env=None, gid_env=None, umask_env=None,
-        default_uid=None, default_gid=None,
-        needs_puid=False,  # Typically uses compose user: directive
-    ),
-    ImageFamily(
-        name="Seerr",
-        image_patterns=["sctx/overseerr", "fallenbagel/jellyseerr"],
-        uid_env=None, gid_env=None, umask_env=None,
-        default_uid=None, default_gid=None,
-        needs_puid=False,  # Uses compose user: directive
-    ),
-]
+def __getattr__(name: str):
+    """Lazy module-level attribute access for backward-compat set aliases."""
+    if name == "ARR_APPS":
+        return _get_registry().known_by_role("arr")
+    if name == "DOWNLOAD_CLIENTS":
+        return _get_registry().known_by_role("download_client")
+    if name == "MEDIA_SERVERS":
+        return _get_registry().known_by_role("media_server")
+    if name == "REQUEST_APPS":
+        return _get_registry().known_by_role("request")
+    if name == "HARDLINK_PARTICIPANTS":
+        return _get_registry().hardlink_participants()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass
@@ -725,25 +662,8 @@ def _extract_services(compose: Dict[str, Any]) -> List[ServiceInfo]:
 
 def _classify_service(name: str, image: str) -> str:
     """Classify a service by its role in the media stack."""
-    name_lower = name.lower()
-    image_lower = image.lower()
-
-    # Check name first (most reliable for user-named services)
-    for check in (name_lower, image_lower):
-        for app in ARR_APPS:
-            if app in check:
-                return "arr"
-        for client in DOWNLOAD_CLIENTS:
-            if client in check:
-                return "download_client"
-        for server in MEDIA_SERVERS:
-            if server in check:
-                return "media_server"
-        for req in REQUEST_APPS:
-            if req in check:
-                return "request"
-
-    return "other"
+    result = _get_registry().classify(name, image)
+    return result["role"]
 
 
 def _parse_volumes(volumes_raw: list) -> List[VolumeMount]:
@@ -1305,18 +1225,18 @@ def _get_path_root(path: str) -> Optional[str]:
 #   4. Unknown (unrecognized image, no user: directive)
 
 
-def _identify_image_family(image: str) -> Optional[ImageFamily]:
+def _identify_image_family(image: str):
     """Identify which image family a Docker image belongs to.
 
-    Matches the image string against known patterns in IMAGE_FAMILIES.
-    Returns the first matching family, or None for unrecognized images.
+    Returns a family-like object with uid_env, gid_env, etc. fields,
+    or None for unrecognized/independent images.
     """
-    image_lower = image.lower()
-    for family in IMAGE_FAMILIES:
-        for pattern in family.image_patterns:
-            if pattern.lower() in image_lower:
-                return family
-    return None
+    family_dict = _get_registry().get_family(image)
+    if family_dict is None:
+        return None
+    # Return a SimpleNamespace so existing code using family.uid_env still works
+    from types import SimpleNamespace
+    return SimpleNamespace(**family_dict)
 
 
 def _build_permission_profile(service: ServiceInfo) -> PermissionProfile:
