@@ -42,7 +42,7 @@ class RateLimiter:
     """Per-IP sliding window rate limiter with tiered endpoint limits."""
 
     # Endpoint classification: (path_prefixes, requests_per_minute)
-    WRITE_PATHS = ("/api/apply-fix", "/api/change-stacks-path")
+    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/change-stacks-path")
     ANALYSIS_PATHS = ("/api/analyze", "/api/pipeline-scan")
     SKIP_PATHS = ("/api/health",)
     STATIC_PREFIXES = ("/", "/static")
@@ -946,6 +946,36 @@ async def api_apply_fix(request: Request):
         "backup_file": os.path.basename(backup_path),
         "message": f"Fix applied to {os.path.basename(compose_file_path)}. Backup saved as {os.path.basename(backup_path)}.",
     }
+
+
+@app.post("/api/apply-fixes")
+async def api_apply_fixes(request: Request):
+    """Apply corrected YAML to multiple compose files in one batch."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    fixes = body.get("fixes", [])
+    if not isinstance(fixes, list):
+        return JSONResponse({"error": "fixes must be a list"}, status_code=400)
+    if len(fixes) > 20:
+        return JSONResponse({"error": "Maximum 20 files per batch"}, status_code=400)
+
+    stacks_root = _get_stacks_root()
+    if not stacks_root:
+        return JSONResponse(
+            {"error": "Apply Fix requires MAPARR_STACKS_PATH to be set for security."},
+            status_code=403,
+        )
+
+    from backend.apply_multi import apply_fixes_batch
+    result = apply_fixes_batch(fixes, stacks_root)
+
+    if result["status"] == "validation_failed":
+        return JSONResponse(result, status_code=400)
+
+    return JSONResponse(result)
 
 
 # ─── API: Health ───
