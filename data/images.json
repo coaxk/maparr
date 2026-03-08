@@ -1,0 +1,3186 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-08T17:41:30Z",
+  "families": {
+    "linuxserver": {
+      "name": "LinuxServer.io",
+      "uid_env": "PUID",
+      "gid_env": "PGID",
+      "umask_env": "UMASK",
+      "default_uid": "911",
+      "default_gid": "911",
+      "needs_puid": true
+    },
+    "hotio": {
+      "name": "Hotio",
+      "uid_env": "PUID",
+      "gid_env": "PGID",
+      "umask_env": "UMASK",
+      "default_uid": "1000",
+      "default_gid": "1000",
+      "needs_puid": true
+    },
+    "jlesage": {
+      "name": "jlesage",
+      "uid_env": "USER_ID",
+      "gid_env": "GROUP_ID",
+      "umask_env": "UMASK",
+      "default_uid": "1000",
+      "default_gid": "1000",
+      "needs_puid": true
+    },
+    "binhex": {
+      "name": "Binhex",
+      "uid_env": "PUID",
+      "gid_env": "PGID",
+      "umask_env": "UMASK",
+      "default_uid": "99",
+      "default_gid": "100",
+      "needs_puid": true
+    },
+    "official_plex": {
+      "name": "Official Plex",
+      "uid_env": "PLEX_UID",
+      "gid_env": "PLEX_GID",
+      "umask_env": null,
+      "default_uid": null,
+      "default_gid": null,
+      "needs_puid": true
+    },
+    "official_jellyfin": {
+      "name": "Official Jellyfin",
+      "uid_env": null,
+      "gid_env": null,
+      "umask_env": null,
+      "default_uid": null,
+      "default_gid": null,
+      "needs_puid": false
+    },
+    "seerr": {
+      "name": "Seerr",
+      "uid_env": null,
+      "gid_env": null,
+      "umask_env": null,
+      "default_uid": null,
+      "default_gid": null,
+      "needs_puid": false
+    }
+  },
+  "images": {
+    "adguardhome-sync": {
+      "name": "Adguardhome Sync",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/adguardhome-sync",
+        "linuxserver/adguardhome-sync",
+        "ghcr.io/linuxserver/adguardhome-sync"
+      ],
+      "keywords": [
+        "adguardhome-sync"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-adguardhome-sync"
+    },
+    "airsonic-advanced": {
+      "name": "Airsonic Advanced",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/airsonic-advanced",
+        "linuxserver/airsonic-advanced",
+        "ghcr.io/linuxserver/airsonic-advanced"
+      ],
+      "keywords": [
+        "airsonic-advanced"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-airsonic-advanced"
+    },
+    "altus": {
+      "name": "Altus",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/altus",
+        "linuxserver/altus",
+        "ghcr.io/linuxserver/altus"
+      ],
+      "keywords": [
+        "altus"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-altus"
+    },
+    "apprise-api": {
+      "name": "Apprise Api",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/apprise-api",
+        "linuxserver/apprise-api",
+        "ghcr.io/linuxserver/apprise-api"
+      ],
+      "keywords": [
+        "apprise-api"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-apprise-api"
+    },
+    "ardour": {
+      "name": "Ardour",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ardour",
+        "linuxserver/ardour",
+        "ghcr.io/linuxserver/ardour"
+      ],
+      "keywords": [
+        "ardour"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ardour"
+    },
+    "aria2": {
+      "name": "aria2",
+      "role": "download_client",
+      "family": null,
+      "patterns": [
+        "p3terx/aria2-pro"
+      ],
+      "keywords": [
+        "aria2"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://aria2.github.io/"
+    },
+    "audacity": {
+      "name": "Audacity",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/audacity",
+        "linuxserver/audacity",
+        "ghcr.io/linuxserver/audacity"
+      ],
+      "keywords": [
+        "audacity"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-audacity"
+    },
+    "azahar": {
+      "name": "Azahar",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/azahar",
+        "linuxserver/azahar",
+        "ghcr.io/linuxserver/azahar"
+      ],
+      "keywords": [
+        "azahar"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-azahar"
+    },
+    "babybuddy": {
+      "name": "Babybuddy",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/babybuddy",
+        "linuxserver/babybuddy",
+        "ghcr.io/linuxserver/babybuddy"
+      ],
+      "keywords": [
+        "babybuddy"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-babybuddy"
+    },
+    "bambustudio": {
+      "name": "Bambustudio",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/bambustudio",
+        "linuxserver/bambustudio",
+        "ghcr.io/linuxserver/bambustudio"
+      ],
+      "keywords": [
+        "bambustudio"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-bambustudio"
+    },
+    "bazarr": {
+      "name": "Bazarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/bazarr",
+        "ghcr.io/linuxserver/bazarr",
+        "hotio/bazarr",
+        "linuxserver/bazarr",
+        "lscr.io/linuxserver/bazarr"
+      ],
+      "keywords": [
+        "bazarr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://www.bazarr.media/"
+    },
+    "beets": {
+      "name": "Beets",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/beets",
+        "linuxserver/beets",
+        "ghcr.io/linuxserver/beets"
+      ],
+      "keywords": [
+        "beets"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-beets"
+    },
+    "bitcoin-knots": {
+      "name": "Bitcoin Knots",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/bitcoin-knots",
+        "linuxserver/bitcoin-knots",
+        "ghcr.io/linuxserver/bitcoin-knots"
+      ],
+      "keywords": [
+        "bitcoin-knots"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-bitcoin-knots"
+    },
+    "blender": {
+      "name": "Blender",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/blender",
+        "linuxserver/blender",
+        "ghcr.io/linuxserver/blender"
+      ],
+      "keywords": [
+        "blender"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-blender"
+    },
+    "boinc": {
+      "name": "Boinc",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/boinc",
+        "linuxserver/boinc",
+        "ghcr.io/linuxserver/boinc"
+      ],
+      "keywords": [
+        "boinc"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-boinc"
+    },
+    "bookstack": {
+      "name": "Bookstack",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/bookstack",
+        "linuxserver/bookstack",
+        "ghcr.io/linuxserver/bookstack"
+      ],
+      "keywords": [
+        "bookstack"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-bookstack"
+    },
+    "brave": {
+      "name": "Brave",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/brave",
+        "linuxserver/brave",
+        "ghcr.io/linuxserver/brave"
+      ],
+      "keywords": [
+        "brave"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-brave"
+    },
+    "budge": {
+      "name": "Budge",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/budge",
+        "linuxserver/budge",
+        "ghcr.io/linuxserver/budge"
+      ],
+      "keywords": [
+        "budge"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-budge"
+    },
+    "calibre": {
+      "name": "Calibre",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/calibre",
+        "linuxserver/calibre",
+        "ghcr.io/linuxserver/calibre"
+      ],
+      "keywords": [
+        "calibre"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-calibre"
+    },
+    "calibre-web": {
+      "name": "Calibre Web",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/calibre-web",
+        "linuxserver/calibre-web",
+        "ghcr.io/linuxserver/calibre-web"
+      ],
+      "keywords": [
+        "calibre-web"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-calibre-web"
+    },
+    "calligra": {
+      "name": "Calligra",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/calligra",
+        "linuxserver/calligra",
+        "ghcr.io/linuxserver/calligra"
+      ],
+      "keywords": [
+        "calligra"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-calligra"
+    },
+    "changedetection.io": {
+      "name": "Changedetection.Io",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/changedetection.io",
+        "linuxserver/changedetection.io",
+        "ghcr.io/linuxserver/changedetection.io"
+      ],
+      "keywords": [
+        "changedetection.io"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-changedetection.io"
+    },
+    "chrome": {
+      "name": "Chrome",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/chrome",
+        "linuxserver/chrome",
+        "ghcr.io/linuxserver/chrome"
+      ],
+      "keywords": [
+        "chrome"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-chrome"
+    },
+    "chromium": {
+      "name": "Chromium",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/chromium",
+        "linuxserver/chromium",
+        "ghcr.io/linuxserver/chromium"
+      ],
+      "keywords": [
+        "chromium"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-chromium"
+    },
+    "citron": {
+      "name": "Citron",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/citron",
+        "linuxserver/citron",
+        "ghcr.io/linuxserver/citron"
+      ],
+      "keywords": [
+        "citron"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-citron"
+    },
+    "code-server": {
+      "name": "Code Server",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/code-server",
+        "linuxserver/code-server",
+        "ghcr.io/linuxserver/code-server"
+      ],
+      "keywords": [
+        "code-server"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-code-server"
+    },
+    "cops": {
+      "name": "Cops",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/cops",
+        "linuxserver/cops",
+        "ghcr.io/linuxserver/cops"
+      ],
+      "keywords": [
+        "cops"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-cops"
+    },
+    "cura": {
+      "name": "Cura",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/cura",
+        "linuxserver/cura",
+        "ghcr.io/linuxserver/cura"
+      ],
+      "keywords": [
+        "cura"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-cura"
+    },
+    "darktable": {
+      "name": "Darktable",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/darktable",
+        "linuxserver/darktable",
+        "ghcr.io/linuxserver/darktable"
+      ],
+      "keywords": [
+        "darktable"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-darktable"
+    },
+    "davos": {
+      "name": "Davos",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/davos",
+        "linuxserver/davos",
+        "ghcr.io/linuxserver/davos"
+      ],
+      "keywords": [
+        "davos"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-davos"
+    },
+    "ddclient": {
+      "name": "Ddclient",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ddclient",
+        "linuxserver/ddclient",
+        "ghcr.io/linuxserver/ddclient"
+      ],
+      "keywords": [
+        "ddclient"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ddclient"
+    },
+    "deluge": {
+      "name": "Deluge",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/deluge",
+        "ghcr.io/linuxserver/deluge",
+        "hotio/deluge",
+        "linuxserver/deluge",
+        "lscr.io/linuxserver/deluge"
+      ],
+      "keywords": [
+        "deluge"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://deluge-torrent.org/"
+    },
+    "digikam": {
+      "name": "Digikam",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/digikam",
+        "linuxserver/digikam",
+        "ghcr.io/linuxserver/digikam"
+      ],
+      "keywords": [
+        "digikam"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-digikam"
+    },
+    "diskover": {
+      "name": "Diskover",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/diskover",
+        "linuxserver/diskover",
+        "ghcr.io/linuxserver/diskover"
+      ],
+      "keywords": [
+        "diskover"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-diskover"
+    },
+    "dogwalk": {
+      "name": "Dogwalk",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/dogwalk",
+        "linuxserver/dogwalk",
+        "ghcr.io/linuxserver/dogwalk"
+      ],
+      "keywords": [
+        "dogwalk"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-dogwalk"
+    },
+    "dokuwiki": {
+      "name": "Dokuwiki",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/dokuwiki",
+        "linuxserver/dokuwiki",
+        "ghcr.io/linuxserver/dokuwiki"
+      ],
+      "keywords": [
+        "dokuwiki"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-dokuwiki"
+    },
+    "dolphin": {
+      "name": "Dolphin",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/dolphin",
+        "linuxserver/dolphin",
+        "ghcr.io/linuxserver/dolphin"
+      ],
+      "keywords": [
+        "dolphin"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-dolphin"
+    },
+    "doplarr": {
+      "name": "Doplarr",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/doplarr",
+        "linuxserver/doplarr",
+        "ghcr.io/linuxserver/doplarr"
+      ],
+      "keywords": [
+        "doplarr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-doplarr"
+    },
+    "dosbox-staging": {
+      "name": "Dosbox Staging",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/dosbox-staging",
+        "linuxserver/dosbox-staging",
+        "ghcr.io/linuxserver/dosbox-staging"
+      ],
+      "keywords": [
+        "dosbox-staging"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-dosbox-staging"
+    },
+    "doublecommander": {
+      "name": "Doublecommander",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/doublecommander",
+        "linuxserver/doublecommander",
+        "ghcr.io/linuxserver/doublecommander"
+      ],
+      "keywords": [
+        "doublecommander"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-doublecommander"
+    },
+    "duckdns": {
+      "name": "Duckdns",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/duckdns",
+        "linuxserver/duckdns",
+        "ghcr.io/linuxserver/duckdns"
+      ],
+      "keywords": [
+        "duckdns"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-duckdns"
+    },
+    "duckstation": {
+      "name": "Duckstation",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/duckstation",
+        "linuxserver/duckstation",
+        "ghcr.io/linuxserver/duckstation"
+      ],
+      "keywords": [
+        "duckstation"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-duckstation"
+    },
+    "duplicati": {
+      "name": "Duplicati",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/duplicati",
+        "linuxserver/duplicati",
+        "ghcr.io/linuxserver/duplicati"
+      ],
+      "keywords": [
+        "duplicati"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-duplicati"
+    },
+    "eden": {
+      "name": "Eden",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/eden",
+        "linuxserver/eden",
+        "ghcr.io/linuxserver/eden"
+      ],
+      "keywords": [
+        "eden"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-eden"
+    },
+    "emby": {
+      "name": "Emby",
+      "role": "media_server",
+      "family": null,
+      "patterns": [
+        "emby/embyserver",
+        "ghcr.io/linuxserver/emby",
+        "linuxserver/emby",
+        "lscr.io/linuxserver/emby"
+      ],
+      "keywords": [
+        "emby"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://emby.media/support/articles/"
+    },
+    "fail2ban": {
+      "name": "Fail2Ban",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/fail2ban",
+        "linuxserver/fail2ban",
+        "ghcr.io/linuxserver/fail2ban"
+      ],
+      "keywords": [
+        "fail2ban"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-fail2ban"
+    },
+    "faster-whisper": {
+      "name": "Faster Whisper",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/faster-whisper",
+        "linuxserver/faster-whisper",
+        "ghcr.io/linuxserver/faster-whisper"
+      ],
+      "keywords": [
+        "faster-whisper"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-faster-whisper"
+    },
+    "ferdium": {
+      "name": "Ferdium",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ferdium",
+        "linuxserver/ferdium",
+        "ghcr.io/linuxserver/ferdium"
+      ],
+      "keywords": [
+        "ferdium"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ferdium"
+    },
+    "ffmpeg": {
+      "name": "Ffmpeg",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ffmpeg",
+        "linuxserver/ffmpeg",
+        "ghcr.io/linuxserver/ffmpeg"
+      ],
+      "keywords": [
+        "ffmpeg"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ffmpeg"
+    },
+    "filezilla": {
+      "name": "Filezilla",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/filezilla",
+        "linuxserver/filezilla",
+        "ghcr.io/linuxserver/filezilla"
+      ],
+      "keywords": [
+        "filezilla"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-filezilla"
+    },
+    "firefox": {
+      "name": "Firefox",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/firefox",
+        "linuxserver/firefox",
+        "ghcr.io/linuxserver/firefox"
+      ],
+      "keywords": [
+        "firefox"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-firefox"
+    },
+    "flexget": {
+      "name": "Flexget",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/flexget",
+        "linuxserver/flexget",
+        "ghcr.io/linuxserver/flexget"
+      ],
+      "keywords": [
+        "flexget"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-flexget"
+    },
+    "flood": {
+      "name": "Flood",
+      "role": "download_client",
+      "family": null,
+      "patterns": [
+        "jesec/flood"
+      ],
+      "keywords": [
+        "flood"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/jesec/flood"
+    },
+    "flycast": {
+      "name": "Flycast",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/flycast",
+        "linuxserver/flycast",
+        "ghcr.io/linuxserver/flycast"
+      ],
+      "keywords": [
+        "flycast"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-flycast"
+    },
+    "foldingathome": {
+      "name": "Foldingathome",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/foldingathome",
+        "linuxserver/foldingathome",
+        "ghcr.io/linuxserver/foldingathome"
+      ],
+      "keywords": [
+        "foldingathome"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-foldingathome"
+    },
+    "freecad": {
+      "name": "Freecad",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/freecad",
+        "linuxserver/freecad",
+        "ghcr.io/linuxserver/freecad"
+      ],
+      "keywords": [
+        "freecad"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-freecad"
+    },
+    "freshrss": {
+      "name": "Freshrss",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/freshrss",
+        "linuxserver/freshrss",
+        "ghcr.io/linuxserver/freshrss"
+      ],
+      "keywords": [
+        "freshrss"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-freshrss"
+    },
+    "gimp": {
+      "name": "Gimp",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/gimp",
+        "linuxserver/gimp",
+        "ghcr.io/linuxserver/gimp"
+      ],
+      "keywords": [
+        "gimp"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-gimp"
+    },
+    "github-desktop": {
+      "name": "Github Desktop",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/github-desktop",
+        "linuxserver/github-desktop",
+        "ghcr.io/linuxserver/github-desktop"
+      ],
+      "keywords": [
+        "github-desktop"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-github-desktop"
+    },
+    "gitqlient": {
+      "name": "Gitqlient",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/gitqlient",
+        "linuxserver/gitqlient",
+        "ghcr.io/linuxserver/gitqlient"
+      ],
+      "keywords": [
+        "gitqlient"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-gitqlient"
+    },
+    "grav": {
+      "name": "Grav",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/grav",
+        "linuxserver/grav",
+        "ghcr.io/linuxserver/grav"
+      ],
+      "keywords": [
+        "grav"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-grav"
+    },
+    "grocy": {
+      "name": "Grocy",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/grocy",
+        "linuxserver/grocy",
+        "ghcr.io/linuxserver/grocy"
+      ],
+      "keywords": [
+        "grocy"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-grocy"
+    },
+    "gzdoom": {
+      "name": "Gzdoom",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/gzdoom",
+        "linuxserver/gzdoom",
+        "ghcr.io/linuxserver/gzdoom"
+      ],
+      "keywords": [
+        "gzdoom"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-gzdoom"
+    },
+    "habridge": {
+      "name": "Habridge",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/habridge",
+        "linuxserver/habridge",
+        "ghcr.io/linuxserver/habridge"
+      ],
+      "keywords": [
+        "habridge"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-habridge"
+    },
+    "handbrake": {
+      "name": "Handbrake",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/handbrake",
+        "linuxserver/handbrake",
+        "ghcr.io/linuxserver/handbrake"
+      ],
+      "keywords": [
+        "handbrake"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-handbrake"
+    },
+    "healthchecks": {
+      "name": "Healthchecks",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/healthchecks",
+        "linuxserver/healthchecks",
+        "ghcr.io/linuxserver/healthchecks"
+      ],
+      "keywords": [
+        "healthchecks"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-healthchecks"
+    },
+    "hedgedoc": {
+      "name": "Hedgedoc",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/hedgedoc",
+        "linuxserver/hedgedoc",
+        "ghcr.io/linuxserver/hedgedoc"
+      ],
+      "keywords": [
+        "hedgedoc"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-hedgedoc"
+    },
+    "heimdall": {
+      "name": "Heimdall",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/heimdall",
+        "linuxserver/heimdall",
+        "ghcr.io/linuxserver/heimdall"
+      ],
+      "keywords": [
+        "heimdall"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-heimdall"
+    },
+    "hishtory-server": {
+      "name": "Hishtory Server",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/hishtory-server",
+        "linuxserver/hishtory-server",
+        "ghcr.io/linuxserver/hishtory-server"
+      ],
+      "keywords": [
+        "hishtory-server"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-hishtory-server"
+    },
+    "homeassistant": {
+      "name": "Homeassistant",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/homeassistant",
+        "linuxserver/homeassistant",
+        "ghcr.io/linuxserver/homeassistant"
+      ],
+      "keywords": [
+        "homeassistant"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-homeassistant"
+    },
+    "htpcmanager": {
+      "name": "Htpcmanager",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/htpcmanager",
+        "linuxserver/htpcmanager",
+        "ghcr.io/linuxserver/htpcmanager"
+      ],
+      "keywords": [
+        "htpcmanager"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-htpcmanager"
+    },
+    "inkscape": {
+      "name": "Inkscape",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/inkscape",
+        "linuxserver/inkscape",
+        "ghcr.io/linuxserver/inkscape"
+      ],
+      "keywords": [
+        "inkscape"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-inkscape"
+    },
+    "intellij-idea": {
+      "name": "Intellij Idea",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/intellij-idea",
+        "linuxserver/intellij-idea",
+        "ghcr.io/linuxserver/intellij-idea"
+      ],
+      "keywords": [
+        "intellij-idea"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-intellij-idea"
+    },
+    "jackett": {
+      "name": "Jackett",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/jackett",
+        "linuxserver/jackett",
+        "ghcr.io/linuxserver/jackett"
+      ],
+      "keywords": [
+        "jackett"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-jackett"
+    },
+    "jdownloader": {
+      "name": "JDownloader",
+      "role": "download_client",
+      "family": "jlesage",
+      "patterns": [
+        "jlesage/jdownloader-2"
+      ],
+      "keywords": [
+        "jdownloader",
+        "jdown",
+        "jd2"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://jdownloader.org/"
+    },
+    "jellyfin": {
+      "name": "Jellyfin",
+      "role": "media_server",
+      "family": "official_jellyfin",
+      "patterns": [
+        "ghcr.io/linuxserver/jellyfin",
+        "jellyfin/jellyfin",
+        "linuxserver/jellyfin",
+        "lscr.io/linuxserver/jellyfin"
+      ],
+      "keywords": [
+        "jellyfin"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://jellyfin.org/docs/"
+    },
+    "jellyseerr": {
+      "name": "Jellyseerr",
+      "role": "request",
+      "family": "seerr",
+      "patterns": [
+        "fallenbagel/jellyseerr"
+      ],
+      "keywords": [
+        "jellyseerr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://github.com/Fallenbagel/jellyseerr"
+    },
+    "joplin": {
+      "name": "Joplin",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/joplin",
+        "linuxserver/joplin",
+        "ghcr.io/linuxserver/joplin"
+      ],
+      "keywords": [
+        "joplin"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-joplin"
+    },
+    "kali-linux": {
+      "name": "Kali Linux",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/kali-linux",
+        "linuxserver/kali-linux",
+        "ghcr.io/linuxserver/kali-linux"
+      ],
+      "keywords": [
+        "kali-linux"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-kali-linux"
+    },
+    "kasm": {
+      "name": "Kasm",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/kasm",
+        "linuxserver/kasm",
+        "ghcr.io/linuxserver/kasm"
+      ],
+      "keywords": [
+        "kasm"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-kasm"
+    },
+    "kavita": {
+      "name": "Kavita",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/kavita",
+        "linuxserver/kavita",
+        "ghcr.io/linuxserver/kavita"
+      ],
+      "keywords": [
+        "kavita"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-kavita"
+    },
+    "kdenlive": {
+      "name": "Kdenlive",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/kdenlive",
+        "linuxserver/kdenlive",
+        "ghcr.io/linuxserver/kdenlive"
+      ],
+      "keywords": [
+        "kdenlive"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-kdenlive"
+    },
+    "keepassxc": {
+      "name": "Keepassxc",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/keepassxc",
+        "linuxserver/keepassxc",
+        "ghcr.io/linuxserver/keepassxc"
+      ],
+      "keywords": [
+        "keepassxc"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-keepassxc"
+    },
+    "kicad": {
+      "name": "Kicad",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/kicad",
+        "linuxserver/kicad",
+        "ghcr.io/linuxserver/kicad"
+      ],
+      "keywords": [
+        "kicad"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-kicad"
+    },
+    "kimai": {
+      "name": "Kimai",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/kimai",
+        "linuxserver/kimai",
+        "ghcr.io/linuxserver/kimai"
+      ],
+      "keywords": [
+        "kimai"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-kimai"
+    },
+    "kometa": {
+      "name": "Kometa",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/kometa",
+        "linuxserver/kometa",
+        "ghcr.io/linuxserver/kometa"
+      ],
+      "keywords": [
+        "kometa"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-kometa"
+    },
+    "krita": {
+      "name": "Krita",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/krita",
+        "linuxserver/krita",
+        "ghcr.io/linuxserver/krita"
+      ],
+      "keywords": [
+        "krita"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-krita"
+    },
+    "lazylibrarian": {
+      "name": "Lazylibrarian",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/lazylibrarian",
+        "linuxserver/lazylibrarian",
+        "ghcr.io/linuxserver/lazylibrarian"
+      ],
+      "keywords": [
+        "lazylibrarian"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-lazylibrarian"
+    },
+    "ldap-auth": {
+      "name": "Ldap Auth",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ldap-auth",
+        "linuxserver/ldap-auth",
+        "ghcr.io/linuxserver/ldap-auth"
+      ],
+      "keywords": [
+        "ldap-auth"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ldap-auth"
+    },
+    "libreoffice": {
+      "name": "Libreoffice",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/libreoffice",
+        "linuxserver/libreoffice",
+        "ghcr.io/linuxserver/libreoffice"
+      ],
+      "keywords": [
+        "libreoffice"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-libreoffice"
+    },
+    "librespeed": {
+      "name": "Librespeed",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/librespeed",
+        "linuxserver/librespeed",
+        "ghcr.io/linuxserver/librespeed"
+      ],
+      "keywords": [
+        "librespeed"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-librespeed"
+    },
+    "librewolf": {
+      "name": "Librewolf",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/librewolf",
+        "linuxserver/librewolf",
+        "ghcr.io/linuxserver/librewolf"
+      ],
+      "keywords": [
+        "librewolf"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-librewolf"
+    },
+    "lidarr": {
+      "name": "Lidarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/lidarr",
+        "ghcr.io/linuxserver/lidarr",
+        "hotio/lidarr",
+        "linuxserver/lidarr",
+        "lscr.io/linuxserver/lidarr"
+      ],
+      "keywords": [
+        "lidarr"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/lidarr"
+    },
+    "limnoria": {
+      "name": "Limnoria",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/limnoria",
+        "linuxserver/limnoria",
+        "ghcr.io/linuxserver/limnoria"
+      ],
+      "keywords": [
+        "limnoria"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-limnoria"
+    },
+    "lollypop": {
+      "name": "Lollypop",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/lollypop",
+        "linuxserver/lollypop",
+        "ghcr.io/linuxserver/lollypop"
+      ],
+      "keywords": [
+        "lollypop"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-lollypop"
+    },
+    "luanti": {
+      "name": "Luanti",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/luanti",
+        "linuxserver/luanti",
+        "ghcr.io/linuxserver/luanti"
+      ],
+      "keywords": [
+        "luanti"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-luanti"
+    },
+    "lychee": {
+      "name": "Lychee",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/lychee",
+        "linuxserver/lychee",
+        "ghcr.io/linuxserver/lychee"
+      ],
+      "keywords": [
+        "lychee"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-lychee"
+    },
+    "mame": {
+      "name": "Mame",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/mame",
+        "linuxserver/mame",
+        "ghcr.io/linuxserver/mame"
+      ],
+      "keywords": [
+        "mame"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-mame"
+    },
+    "manyfold": {
+      "name": "Manyfold",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/manyfold",
+        "linuxserver/manyfold",
+        "ghcr.io/linuxserver/manyfold"
+      ],
+      "keywords": [
+        "manyfold"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-manyfold"
+    },
+    "mariadb": {
+      "name": "Mariadb",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/mariadb",
+        "linuxserver/mariadb",
+        "ghcr.io/linuxserver/mariadb"
+      ],
+      "keywords": [
+        "mariadb"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-mariadb"
+    },
+    "mastodon": {
+      "name": "Mastodon",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/mastodon",
+        "linuxserver/mastodon",
+        "ghcr.io/linuxserver/mastodon"
+      ],
+      "keywords": [
+        "mastodon"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-mastodon"
+    },
+    "mediaelch": {
+      "name": "Mediaelch",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/mediaelch",
+        "linuxserver/mediaelch",
+        "ghcr.io/linuxserver/mediaelch"
+      ],
+      "keywords": [
+        "mediaelch"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-mediaelch"
+    },
+    "medusa": {
+      "name": "Medusa",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/medusa",
+        "linuxserver/medusa",
+        "ghcr.io/linuxserver/medusa"
+      ],
+      "keywords": [
+        "medusa"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-medusa"
+    },
+    "melonds": {
+      "name": "Melonds",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/melonds",
+        "linuxserver/melonds",
+        "ghcr.io/linuxserver/melonds"
+      ],
+      "keywords": [
+        "melonds"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-melonds"
+    },
+    "minisatip": {
+      "name": "Minisatip",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/minisatip",
+        "linuxserver/minisatip",
+        "ghcr.io/linuxserver/minisatip"
+      ],
+      "keywords": [
+        "minisatip"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-minisatip"
+    },
+    "modmanager": {
+      "name": "Modmanager",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/modmanager",
+        "linuxserver/modmanager",
+        "ghcr.io/linuxserver/modmanager"
+      ],
+      "keywords": [
+        "modmanager"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-modmanager"
+    },
+    "modrinth": {
+      "name": "Modrinth",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/modrinth",
+        "linuxserver/modrinth",
+        "ghcr.io/linuxserver/modrinth"
+      ],
+      "keywords": [
+        "modrinth"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-modrinth"
+    },
+    "monica": {
+      "name": "Monica",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/monica",
+        "linuxserver/monica",
+        "ghcr.io/linuxserver/monica"
+      ],
+      "keywords": [
+        "monica"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-monica"
+    },
+    "msedge": {
+      "name": "Msedge",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/msedge",
+        "linuxserver/msedge",
+        "ghcr.io/linuxserver/msedge"
+      ],
+      "keywords": [
+        "msedge"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-msedge"
+    },
+    "mstream": {
+      "name": "Mstream",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/mstream",
+        "linuxserver/mstream",
+        "ghcr.io/linuxserver/mstream"
+      ],
+      "keywords": [
+        "mstream"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-mstream"
+    },
+    "mullvad-browser": {
+      "name": "Mullvad Browser",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/mullvad-browser",
+        "linuxserver/mullvad-browser",
+        "ghcr.io/linuxserver/mullvad-browser"
+      ],
+      "keywords": [
+        "mullvad-browser"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-mullvad-browser"
+    },
+    "mylar3": {
+      "name": "Mylar3",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/mylar3",
+        "linuxserver/mylar3",
+        "ghcr.io/linuxserver/mylar3"
+      ],
+      "keywords": [
+        "mylar3"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-mylar3"
+    },
+    "mysql-workbench": {
+      "name": "Mysql Workbench",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/mysql-workbench",
+        "linuxserver/mysql-workbench",
+        "ghcr.io/linuxserver/mysql-workbench"
+      ],
+      "keywords": [
+        "mysql-workbench"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-mysql-workbench"
+    },
+    "netbox": {
+      "name": "Netbox",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/netbox",
+        "linuxserver/netbox",
+        "ghcr.io/linuxserver/netbox"
+      ],
+      "keywords": [
+        "netbox"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-netbox"
+    },
+    "nextcloud": {
+      "name": "Nextcloud",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/nextcloud",
+        "linuxserver/nextcloud",
+        "ghcr.io/linuxserver/nextcloud"
+      ],
+      "keywords": [
+        "nextcloud"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-nextcloud"
+    },
+    "nginx": {
+      "name": "Nginx",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/nginx",
+        "linuxserver/nginx",
+        "ghcr.io/linuxserver/nginx"
+      ],
+      "keywords": [
+        "nginx"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-nginx"
+    },
+    "ngircd": {
+      "name": "Ngircd",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ngircd",
+        "linuxserver/ngircd",
+        "ghcr.io/linuxserver/ngircd"
+      ],
+      "keywords": [
+        "ngircd"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ngircd"
+    },
+    "nzbget": {
+      "name": "NZBGet",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/nzbget",
+        "ghcr.io/linuxserver/nzbget",
+        "hotio/nzbget",
+        "linuxserver/nzbget",
+        "lscr.io/linuxserver/nzbget"
+      ],
+      "keywords": [
+        "nzbget"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://nzbget.com/documentation/"
+    },
+    "nzbhydra2": {
+      "name": "Nzbhydra2",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/nzbhydra2",
+        "linuxserver/nzbhydra2",
+        "ghcr.io/linuxserver/nzbhydra2"
+      ],
+      "keywords": [
+        "nzbhydra2"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-nzbhydra2"
+    },
+    "obsidian": {
+      "name": "Obsidian",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/obsidian",
+        "linuxserver/obsidian",
+        "ghcr.io/linuxserver/obsidian"
+      ],
+      "keywords": [
+        "obsidian"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-obsidian"
+    },
+    "ombi": {
+      "name": "Ombi",
+      "role": "request",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/linuxserver/ombi",
+        "linuxserver/ombi",
+        "lscr.io/linuxserver/ombi"
+      ],
+      "keywords": [
+        "ombi"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.ombi.app/"
+    },
+    "onlyoffice": {
+      "name": "Onlyoffice",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/onlyoffice",
+        "linuxserver/onlyoffice",
+        "ghcr.io/linuxserver/onlyoffice"
+      ],
+      "keywords": [
+        "onlyoffice"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-onlyoffice"
+    },
+    "openshot": {
+      "name": "Openshot",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/openshot",
+        "linuxserver/openshot",
+        "ghcr.io/linuxserver/openshot"
+      ],
+      "keywords": [
+        "openshot"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-openshot"
+    },
+    "openssh-server": {
+      "name": "Openssh Server",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/openssh-server",
+        "linuxserver/openssh-server",
+        "ghcr.io/linuxserver/openssh-server"
+      ],
+      "keywords": [
+        "openssh-server"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-openssh-server"
+    },
+    "openvscode-server": {
+      "name": "Openvscode Server",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/openvscode-server",
+        "linuxserver/openvscode-server",
+        "ghcr.io/linuxserver/openvscode-server"
+      ],
+      "keywords": [
+        "openvscode-server"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-openvscode-server"
+    },
+    "opera": {
+      "name": "Opera",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/opera",
+        "linuxserver/opera",
+        "ghcr.io/linuxserver/opera"
+      ],
+      "keywords": [
+        "opera"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-opera"
+    },
+    "orcaslicer": {
+      "name": "Orcaslicer",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/orcaslicer",
+        "linuxserver/orcaslicer",
+        "ghcr.io/linuxserver/orcaslicer"
+      ],
+      "keywords": [
+        "orcaslicer"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-orcaslicer"
+    },
+    "oscam": {
+      "name": "Oscam",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/oscam",
+        "linuxserver/oscam",
+        "ghcr.io/linuxserver/oscam"
+      ],
+      "keywords": [
+        "oscam"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-oscam"
+    },
+    "overseerr": {
+      "name": "Overseerr",
+      "role": "request",
+      "family": "seerr",
+      "patterns": [
+        "sctx/overseerr"
+      ],
+      "keywords": [
+        "overseerr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.overseerr.dev/"
+    },
+    "pairdrop": {
+      "name": "Pairdrop",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/pairdrop",
+        "linuxserver/pairdrop",
+        "ghcr.io/linuxserver/pairdrop"
+      ],
+      "keywords": [
+        "pairdrop"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-pairdrop"
+    },
+    "pcsx2": {
+      "name": "Pcsx2",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/pcsx2",
+        "linuxserver/pcsx2",
+        "ghcr.io/linuxserver/pcsx2"
+      ],
+      "keywords": [
+        "pcsx2"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-pcsx2"
+    },
+    "phpmyadmin": {
+      "name": "Phpmyadmin",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/phpmyadmin",
+        "linuxserver/phpmyadmin",
+        "ghcr.io/linuxserver/phpmyadmin"
+      ],
+      "keywords": [
+        "phpmyadmin"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-phpmyadmin"
+    },
+    "pidgin": {
+      "name": "Pidgin",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/pidgin",
+        "linuxserver/pidgin",
+        "ghcr.io/linuxserver/pidgin"
+      ],
+      "keywords": [
+        "pidgin"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-pidgin"
+    },
+    "piper": {
+      "name": "Piper",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/piper",
+        "linuxserver/piper",
+        "ghcr.io/linuxserver/piper"
+      ],
+      "keywords": [
+        "piper"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-piper"
+    },
+    "piwigo": {
+      "name": "Piwigo",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/piwigo",
+        "linuxserver/piwigo",
+        "ghcr.io/linuxserver/piwigo"
+      ],
+      "keywords": [
+        "piwigo"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-piwigo"
+    },
+    "planka": {
+      "name": "Planka",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/planka",
+        "linuxserver/planka",
+        "ghcr.io/linuxserver/planka"
+      ],
+      "keywords": [
+        "planka"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-planka"
+    },
+    "plex": {
+      "name": "Plex",
+      "role": "media_server",
+      "family": "official_plex",
+      "patterns": [
+        "ghcr.io/linuxserver/plex",
+        "linuxserver/plex",
+        "lscr.io/linuxserver/plex",
+        "plexinc/pms-docker"
+      ],
+      "keywords": [
+        "plex"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://support.plex.tv/"
+    },
+    "ppsspp": {
+      "name": "Ppsspp",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ppsspp",
+        "linuxserver/ppsspp",
+        "ghcr.io/linuxserver/ppsspp"
+      ],
+      "keywords": [
+        "ppsspp"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ppsspp"
+    },
+    "projectsend": {
+      "name": "Projectsend",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/projectsend",
+        "linuxserver/projectsend",
+        "ghcr.io/linuxserver/projectsend"
+      ],
+      "keywords": [
+        "projectsend"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-projectsend"
+    },
+    "prowlarr": {
+      "name": "Prowlarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/prowlarr",
+        "ghcr.io/linuxserver/prowlarr",
+        "hotio/prowlarr",
+        "linuxserver/prowlarr",
+        "lscr.io/linuxserver/prowlarr"
+      ],
+      "keywords": [
+        "prowlarr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://wiki.servarr.com/prowlarr"
+    },
+    "pwndrop": {
+      "name": "Pwndrop",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/pwndrop",
+        "linuxserver/pwndrop",
+        "ghcr.io/linuxserver/pwndrop"
+      ],
+      "keywords": [
+        "pwndrop"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-pwndrop"
+    },
+    "pycharm": {
+      "name": "Pycharm",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/pycharm",
+        "linuxserver/pycharm",
+        "ghcr.io/linuxserver/pycharm"
+      ],
+      "keywords": [
+        "pycharm"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-pycharm"
+    },
+    "pydio-cells": {
+      "name": "Pydio Cells",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/pydio-cells",
+        "linuxserver/pydio-cells",
+        "ghcr.io/linuxserver/pydio-cells"
+      ],
+      "keywords": [
+        "pydio-cells"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-pydio-cells"
+    },
+    "pyload-ng": {
+      "name": "Pyload Ng",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/pyload-ng",
+        "linuxserver/pyload-ng",
+        "ghcr.io/linuxserver/pyload-ng"
+      ],
+      "keywords": [
+        "pyload-ng"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-pyload-ng"
+    },
+    "qbittorrent": {
+      "name": "qBittorrent",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/qbittorrent",
+        "ghcr.io/linuxserver/qbittorrent",
+        "hotio/qbittorrent",
+        "linuxserver/qbittorrent",
+        "lscr.io/linuxserver/qbittorrent"
+      ],
+      "keywords": [
+        "qbittorrent",
+        "qbit"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/qbittorrent/qBittorrent/wiki"
+    },
+    "qdirstat": {
+      "name": "Qdirstat",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/qdirstat",
+        "linuxserver/qdirstat",
+        "ghcr.io/linuxserver/qdirstat"
+      ],
+      "keywords": [
+        "qdirstat"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-qdirstat"
+    },
+    "qemu-static": {
+      "name": "Qemu Static",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/qemu-static",
+        "linuxserver/qemu-static",
+        "ghcr.io/linuxserver/qemu-static"
+      ],
+      "keywords": [
+        "qemu-static"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-qemu-static"
+    },
+    "radarr": {
+      "name": "Radarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/radarr",
+        "ghcr.io/linuxserver/radarr",
+        "hotio/radarr",
+        "linuxserver/radarr",
+        "lscr.io/linuxserver/radarr"
+      ],
+      "keywords": [
+        "radarr"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/radarr"
+    },
+    "raneto": {
+      "name": "Raneto",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/raneto",
+        "linuxserver/raneto",
+        "ghcr.io/linuxserver/raneto"
+      ],
+      "keywords": [
+        "raneto"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-raneto"
+    },
+    "rawtherapee": {
+      "name": "Rawtherapee",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/rawtherapee",
+        "linuxserver/rawtherapee",
+        "ghcr.io/linuxserver/rawtherapee"
+      ],
+      "keywords": [
+        "rawtherapee"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-rawtherapee"
+    },
+    "rdtclient": {
+      "name": "RDTClient",
+      "role": "download_client",
+      "family": null,
+      "patterns": [
+        "rogerfar/rdtclient"
+      ],
+      "keywords": [
+        "rdtclient"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/rogerfar/rdt-client"
+    },
+    "readarr": {
+      "name": "Readarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": [
+        "hotio/readarr",
+        "ghcr.io/hotio/readarr"
+      ],
+      "keywords": [
+        "readarr"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/readarr"
+    },
+    "remmina": {
+      "name": "Remmina",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/remmina",
+        "linuxserver/remmina",
+        "ghcr.io/linuxserver/remmina"
+      ],
+      "keywords": [
+        "remmina"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-remmina"
+    },
+    "resilio-sync": {
+      "name": "Resilio Sync",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/resilio-sync",
+        "linuxserver/resilio-sync",
+        "ghcr.io/linuxserver/resilio-sync"
+      ],
+      "keywords": [
+        "resilio-sync"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-resilio-sync"
+    },
+    "retroarch": {
+      "name": "Retroarch",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/retroarch",
+        "linuxserver/retroarch",
+        "ghcr.io/linuxserver/retroarch"
+      ],
+      "keywords": [
+        "retroarch"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-retroarch"
+    },
+    "rpcs3": {
+      "name": "Rpcs3",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/rpcs3",
+        "linuxserver/rpcs3",
+        "ghcr.io/linuxserver/rpcs3"
+      ],
+      "keywords": [
+        "rpcs3"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-rpcs3"
+    },
+    "rsnapshot": {
+      "name": "Rsnapshot",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/rsnapshot",
+        "linuxserver/rsnapshot",
+        "ghcr.io/linuxserver/rsnapshot"
+      ],
+      "keywords": [
+        "rsnapshot"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-rsnapshot"
+    },
+    "rtorrent": {
+      "name": "rTorrent",
+      "role": "download_client",
+      "family": null,
+      "patterns": [],
+      "keywords": [
+        "rtorrent"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/rakshasa/rtorrent/wiki"
+    },
+    "rustdesk": {
+      "name": "Rustdesk",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/rustdesk",
+        "linuxserver/rustdesk",
+        "ghcr.io/linuxserver/rustdesk"
+      ],
+      "keywords": [
+        "rustdesk"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-rustdesk"
+    },
+    "sabnzbd": {
+      "name": "SABnzbd",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/sabnzbd",
+        "ghcr.io/linuxserver/sabnzbd",
+        "hotio/sabnzbd",
+        "linuxserver/sabnzbd",
+        "lscr.io/linuxserver/sabnzbd"
+      ],
+      "keywords": [
+        "sabnzbd",
+        "sab",
+        "nzb"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://sabnzbd.org/wiki/"
+    },
+    "scummvm": {
+      "name": "Scummvm",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/scummvm",
+        "linuxserver/scummvm",
+        "ghcr.io/linuxserver/scummvm"
+      ],
+      "keywords": [
+        "scummvm"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-scummvm"
+    },
+    "sealskin": {
+      "name": "Sealskin",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/sealskin",
+        "linuxserver/sealskin",
+        "ghcr.io/linuxserver/sealskin"
+      ],
+      "keywords": [
+        "sealskin"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-sealskin"
+    },
+    "shadps4": {
+      "name": "Shadps4",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/shadps4",
+        "linuxserver/shadps4",
+        "ghcr.io/linuxserver/shadps4"
+      ],
+      "keywords": [
+        "shadps4"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-shadps4"
+    },
+    "shotcut": {
+      "name": "Shotcut",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/shotcut",
+        "linuxserver/shotcut",
+        "ghcr.io/linuxserver/shotcut"
+      ],
+      "keywords": [
+        "shotcut"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-shotcut"
+    },
+    "sickgear": {
+      "name": "Sickgear",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/sickgear",
+        "linuxserver/sickgear",
+        "ghcr.io/linuxserver/sickgear"
+      ],
+      "keywords": [
+        "sickgear"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-sickgear"
+    },
+    "signal": {
+      "name": "Signal",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/signal",
+        "linuxserver/signal",
+        "ghcr.io/linuxserver/signal"
+      ],
+      "keywords": [
+        "signal"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-signal"
+    },
+    "smokeping": {
+      "name": "Smokeping",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/smokeping",
+        "linuxserver/smokeping",
+        "ghcr.io/linuxserver/smokeping"
+      ],
+      "keywords": [
+        "smokeping"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-smokeping"
+    },
+    "socket-proxy": {
+      "name": "Socket Proxy",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/socket-proxy",
+        "linuxserver/socket-proxy",
+        "ghcr.io/linuxserver/socket-proxy"
+      ],
+      "keywords": [
+        "socket-proxy"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-socket-proxy"
+    },
+    "sonarr": {
+      "name": "Sonarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/sonarr",
+        "ghcr.io/linuxserver/sonarr",
+        "hotio/sonarr",
+        "linuxserver/sonarr",
+        "lscr.io/linuxserver/sonarr"
+      ],
+      "keywords": [
+        "sonarr"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/sonarr"
+    },
+    "speedtest-tracker": {
+      "name": "Speedtest Tracker",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/speedtest-tracker",
+        "linuxserver/speedtest-tracker",
+        "ghcr.io/linuxserver/speedtest-tracker"
+      ],
+      "keywords": [
+        "speedtest-tracker"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-speedtest-tracker"
+    },
+    "spotube": {
+      "name": "Spotube",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/spotube",
+        "linuxserver/spotube",
+        "ghcr.io/linuxserver/spotube"
+      ],
+      "keywords": [
+        "spotube"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-spotube"
+    },
+    "sqlitebrowser": {
+      "name": "Sqlitebrowser",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/sqlitebrowser",
+        "linuxserver/sqlitebrowser",
+        "ghcr.io/linuxserver/sqlitebrowser"
+      ],
+      "keywords": [
+        "sqlitebrowser"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-sqlitebrowser"
+    },
+    "steam": {
+      "name": "Steam",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/steam",
+        "linuxserver/steam",
+        "ghcr.io/linuxserver/steam"
+      ],
+      "keywords": [
+        "steam"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-steam"
+    },
+    "swag": {
+      "name": "Swag",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/swag",
+        "linuxserver/swag",
+        "ghcr.io/linuxserver/swag"
+      ],
+      "keywords": [
+        "swag"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-swag"
+    },
+    "synclounge": {
+      "name": "Synclounge",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/synclounge",
+        "linuxserver/synclounge",
+        "ghcr.io/linuxserver/synclounge"
+      ],
+      "keywords": [
+        "synclounge"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-synclounge"
+    },
+    "syncthing": {
+      "name": "Syncthing",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/syncthing",
+        "linuxserver/syncthing",
+        "ghcr.io/linuxserver/syncthing"
+      ],
+      "keywords": [
+        "syncthing"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-syncthing"
+    },
+    "syslog-ng": {
+      "name": "Syslog Ng",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/syslog-ng",
+        "linuxserver/syslog-ng",
+        "ghcr.io/linuxserver/syslog-ng"
+      ],
+      "keywords": [
+        "syslog-ng"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-syslog-ng"
+    },
+    "tautulli": {
+      "name": "Tautulli",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/tautulli",
+        "linuxserver/tautulli",
+        "ghcr.io/linuxserver/tautulli"
+      ],
+      "keywords": [
+        "tautulli"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-tautulli"
+    },
+    "telegram": {
+      "name": "Telegram",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/telegram",
+        "linuxserver/telegram",
+        "ghcr.io/linuxserver/telegram"
+      ],
+      "keywords": [
+        "telegram"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-telegram"
+    },
+    "thelounge": {
+      "name": "Thelounge",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/thelounge",
+        "linuxserver/thelounge",
+        "ghcr.io/linuxserver/thelounge"
+      ],
+      "keywords": [
+        "thelounge"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-thelounge"
+    },
+    "thunderbird": {
+      "name": "Thunderbird",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/thunderbird",
+        "linuxserver/thunderbird",
+        "ghcr.io/linuxserver/thunderbird"
+      ],
+      "keywords": [
+        "thunderbird"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-thunderbird"
+    },
+    "transmission": {
+      "name": "Transmission",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": [
+        "ghcr.io/hotio/transmission",
+        "ghcr.io/linuxserver/transmission",
+        "hotio/transmission",
+        "linuxserver/transmission",
+        "lscr.io/linuxserver/transmission"
+      ],
+      "keywords": [
+        "transmission"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://transmissionbt.com/"
+    },
+    "tvheadend": {
+      "name": "Tvheadend",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/tvheadend",
+        "linuxserver/tvheadend",
+        "ghcr.io/linuxserver/tvheadend"
+      ],
+      "keywords": [
+        "tvheadend"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-tvheadend"
+    },
+    "ubooquity": {
+      "name": "Ubooquity",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ubooquity",
+        "linuxserver/ubooquity",
+        "ghcr.io/linuxserver/ubooquity"
+      ],
+      "keywords": [
+        "ubooquity"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ubooquity"
+    },
+    "ungoogled-chromium": {
+      "name": "Ungoogled Chromium",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/ungoogled-chromium",
+        "linuxserver/ungoogled-chromium",
+        "ghcr.io/linuxserver/ungoogled-chromium"
+      ],
+      "keywords": [
+        "ungoogled-chromium"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-ungoogled-chromium"
+    },
+    "unifi-network-application": {
+      "name": "Unifi Network Application",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/unifi-network-application",
+        "linuxserver/unifi-network-application",
+        "ghcr.io/linuxserver/unifi-network-application"
+      ],
+      "keywords": [
+        "unifi-network-application"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-unifi-network-application"
+    },
+    "vivaldi": {
+      "name": "Vivaldi",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/vivaldi",
+        "linuxserver/vivaldi",
+        "ghcr.io/linuxserver/vivaldi"
+      ],
+      "keywords": [
+        "vivaldi"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-vivaldi"
+    },
+    "vlc": {
+      "name": "Vlc",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/vlc",
+        "linuxserver/vlc",
+        "ghcr.io/linuxserver/vlc"
+      ],
+      "keywords": [
+        "vlc"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-vlc"
+    },
+    "vscodium": {
+      "name": "Vscodium",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/vscodium",
+        "linuxserver/vscodium",
+        "ghcr.io/linuxserver/vscodium"
+      ],
+      "keywords": [
+        "vscodium"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-vscodium"
+    },
+    "vscodium-web": {
+      "name": "Vscodium Web",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/vscodium-web",
+        "linuxserver/vscodium-web",
+        "ghcr.io/linuxserver/vscodium-web"
+      ],
+      "keywords": [
+        "vscodium-web"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-vscodium-web"
+    },
+    "webcord": {
+      "name": "Webcord",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/webcord",
+        "linuxserver/webcord",
+        "ghcr.io/linuxserver/webcord"
+      ],
+      "keywords": [
+        "webcord"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-webcord"
+    },
+    "webgrabplus": {
+      "name": "Webgrabplus",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/webgrabplus",
+        "linuxserver/webgrabplus",
+        "ghcr.io/linuxserver/webgrabplus"
+      ],
+      "keywords": [
+        "webgrabplus"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-webgrabplus"
+    },
+    "webstation": {
+      "name": "Webstation",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/webstation",
+        "linuxserver/webstation",
+        "ghcr.io/linuxserver/webstation"
+      ],
+      "keywords": [
+        "webstation"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-webstation"
+    },
+    "webtop": {
+      "name": "Webtop",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/webtop",
+        "linuxserver/webtop",
+        "ghcr.io/linuxserver/webtop"
+      ],
+      "keywords": [
+        "webtop"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-webtop"
+    },
+    "weixin": {
+      "name": "Weixin",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/weixin",
+        "linuxserver/weixin",
+        "ghcr.io/linuxserver/weixin"
+      ],
+      "keywords": [
+        "weixin"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-weixin"
+    },
+    "whisparr": {
+      "name": "Whisparr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": [
+        "hotio/whisparr",
+        "ghcr.io/hotio/whisparr"
+      ],
+      "keywords": [
+        "whisparr"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/whisparr"
+    },
+    "wikijs": {
+      "name": "Wikijs",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/wikijs",
+        "linuxserver/wikijs",
+        "ghcr.io/linuxserver/wikijs"
+      ],
+      "keywords": [
+        "wikijs"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-wikijs"
+    },
+    "wireguard": {
+      "name": "Wireguard",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/wireguard",
+        "linuxserver/wireguard",
+        "ghcr.io/linuxserver/wireguard"
+      ],
+      "keywords": [
+        "wireguard"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-wireguard"
+    },
+    "wireshark": {
+      "name": "Wireshark",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/wireshark",
+        "linuxserver/wireshark",
+        "ghcr.io/linuxserver/wireshark"
+      ],
+      "keywords": [
+        "wireshark"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-wireshark"
+    },
+    "wps-office": {
+      "name": "Wps Office",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/wps-office",
+        "linuxserver/wps-office",
+        "ghcr.io/linuxserver/wps-office"
+      ],
+      "keywords": [
+        "wps-office"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-wps-office"
+    },
+    "xbackbone": {
+      "name": "Xbackbone",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/xbackbone",
+        "linuxserver/xbackbone",
+        "ghcr.io/linuxserver/xbackbone"
+      ],
+      "keywords": [
+        "xbackbone"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-xbackbone"
+    },
+    "xemu": {
+      "name": "Xemu",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/xemu",
+        "linuxserver/xemu",
+        "ghcr.io/linuxserver/xemu"
+      ],
+      "keywords": [
+        "xemu"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-xemu"
+    },
+    "yaak": {
+      "name": "Yaak",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/yaak",
+        "linuxserver/yaak",
+        "ghcr.io/linuxserver/yaak"
+      ],
+      "keywords": [
+        "yaak"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-yaak"
+    },
+    "your_spotify": {
+      "name": "Your_Spotify",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/your_spotify",
+        "linuxserver/your_spotify",
+        "ghcr.io/linuxserver/your_spotify"
+      ],
+      "keywords": [
+        "your_spotify"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-your_spotify"
+    },
+    "zen": {
+      "name": "Zen",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/zen",
+        "linuxserver/zen",
+        "ghcr.io/linuxserver/zen"
+      ],
+      "keywords": [
+        "zen"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-zen"
+    },
+    "znc": {
+      "name": "Znc",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/znc",
+        "linuxserver/znc",
+        "ghcr.io/linuxserver/znc"
+      ],
+      "keywords": [
+        "znc"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-znc"
+    },
+    "zotero": {
+      "name": "Zotero",
+      "role": "other",
+      "family": "linuxserver",
+      "patterns": [
+        "lscr.io/linuxserver/zotero",
+        "linuxserver/zotero",
+        "ghcr.io/linuxserver/zotero"
+      ],
+      "keywords": [
+        "zotero"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.linuxserver.io/images/docker-zotero"
+    }
+  }
+}
