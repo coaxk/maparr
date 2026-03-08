@@ -4,11 +4,12 @@
 Path Mapping Problem Solver for Docker *arr apps. Web UI with FastAPI backend.
 Analyzes Docker Compose volume mounts, detects hardlink-breaking configurations,
 and generates specific fixes following the TRaSH Guides pattern.
+Recognizes 207+ Docker images across 7 families via a JSON Image DB.
 
 ## Stack
 - **Backend:** Python 3.11, FastAPI (>=0.115.0), uvicorn (>=0.30.0), PyYAML (>=6.0.2), python-multipart (>=0.0.18)
 - **Frontend:** Vanilla HTML/CSS/JS (single-page, no framework, no build step)
-- **Tests:** pytest (515+ tests), run with `pytest tests/ -p no:capture` on Windows
+- **Tests:** pytest (546+ tests), run with `pytest tests/ -p no:capture` on Windows
 - **Docker:** Multi-stage build, gosu for PUID/PGID, Docker CLI + compose plugin
 
 ## Architecture
@@ -16,7 +17,8 @@ and generates specific fixes following the TRaSH Guides pattern.
 ### Backend Modules (`backend/`)
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI app, 11 API routes, session state, rate limiter middleware |
+| `main.py` | FastAPI app, 11 API routes, session state, rate limiter middleware, registry init |
+| `image_registry.py` | **Image DB** — `ImageRegistry` class, JSON-driven service classification |
 | `pipeline.py` | **Core innovation** — full-directory scan, unified media service map |
 | `analyzer.py` | Per-stack 4-pass analysis: path conflicts, hardlinks, permissions, platform |
 | `cross_stack.py` | Sibling scanning for single-service stacks (legacy, pipeline supersedes) |
@@ -31,6 +33,14 @@ and generates specific fixes following the TRaSH Guides pattern.
 - `index.html` — Single-page app, all inline onclick handlers migrated to addEventListener (CSP-ready)
 - `app.js` — ~6500+ lines, entire frontend logic, aria-labels on interactive elements
 - `styles.css` — Full CSS with dark theme
+
+### Data & Scripts
+| File | Purpose |
+|------|---------|
+| `data/images.json` | Generated Image DB (207 images, 7 families) — committed to repo |
+| `data/custom-images.json` | Optional user overrides (mounted via compose) |
+| `scripts/seed_images.py` | Dev-time seed script: LSIO fleet API → merge manual → write images.json |
+| `scripts/manual_entries.json` | Hand-curated families + non-LSIO images for seed merge |
 
 ### Docker & Deployment Files
 | File | Purpose |
@@ -132,11 +142,29 @@ After Apply Fix writes corrected YAML:
 3. Pipeline majority root captured regardless of within-stack conflicts
 4. All media services expanded as affected when pipeline override active
 
-### Service Classification
-Hardcoded sets in `analyzer.py`: `ARR_APPS`, `DOWNLOAD_CLIENTS`, `MEDIA_SERVERS`.
-Classification checks both service name and image name (case-insensitive substring match).
-Download clients include: qbittorrent, sabnzbd, nzbget, transmission, deluge,
-rtorrent, jdownloader, aria2, flood, rdtclient.
+### Image DB & Service Classification
+`ImageRegistry` in `backend/image_registry.py` replaces all hardcoded service lists.
+Two-layer JSON at `data/images.json` (207 images, 7 families), seeded from LSIO fleet API.
+
+**Classification priority (3-pass):**
+1. Image string → `patterns` (substring, case-insensitive) — precise
+2. Service name → `keywords` (substring, longest-first, first-position-wins) — fuzzy
+3. No match → `{role: "other", family: None, hardlink_capable: False}`
+
+**Key internals:**
+- `_by_pattern` / `_by_keyword` indexes sorted longest-first (prevents "nzb" stealing "nzbget")
+- `_family_by_pattern` index for family-level prefix matching (e.g., `hotio/` → Hotio UID/GID)
+- `get_registry()` singleton in `image_registry.py` (not `main.py`) to avoid circular imports
+- `__getattr__` in `analyzer.py` provides backward-compat `ARR_APPS`, `DOWNLOAD_CLIENTS`, etc.
+- `_identify_image_family()` wraps dict results in `SimpleNamespace` for attribute access
+
+**Data pipeline (dev-time only, zero runtime API calls):**
+- `scripts/seed_images.py` pulls LSIO fleet → merges `scripts/manual_entries.json` → writes `data/images.json`
+- `scripts/manual_entries.json` = hand-curated families (7) + non-LSIO images (23)
+- `data/custom-images.json` (optional, user-mounted) merges at boot
+
+**Roles:** `arr`, `download_client`, `media_server`, `request`, `other`
+**Families:** linuxserver, hotio, jlesage, binhex, official_plex, official_jellyfin, seerr
 
 ### Quick-Switch Combobox
 All 3 stack search inputs (fix mode filter, browse collapsed bar, bottom-of-card)
