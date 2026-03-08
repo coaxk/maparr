@@ -1,0 +1,277 @@
+{
+  "version": 1,
+  "families": {
+    "linuxserver": {
+      "name": "LinuxServer.io",
+      "uid_env": "PUID",
+      "gid_env": "PGID",
+      "umask_env": "UMASK",
+      "default_uid": "911",
+      "default_gid": "911",
+      "needs_puid": true
+    },
+    "hotio": {
+      "name": "Hotio",
+      "uid_env": "PUID",
+      "gid_env": "PGID",
+      "umask_env": "UMASK",
+      "default_uid": "1000",
+      "default_gid": "1000",
+      "needs_puid": true
+    },
+    "jlesage": {
+      "name": "jlesage",
+      "uid_env": "USER_ID",
+      "gid_env": "GROUP_ID",
+      "umask_env": "UMASK",
+      "default_uid": "1000",
+      "default_gid": "1000",
+      "needs_puid": true
+    },
+    "binhex": {
+      "name": "Binhex",
+      "uid_env": "PUID",
+      "gid_env": "PGID",
+      "umask_env": "UMASK",
+      "default_uid": "99",
+      "default_gid": "100",
+      "needs_puid": true
+    },
+    "official_plex": {
+      "name": "Official Plex",
+      "uid_env": "PLEX_UID",
+      "gid_env": "PLEX_GID",
+      "umask_env": null,
+      "default_uid": null,
+      "default_gid": null,
+      "needs_puid": true
+    },
+    "official_jellyfin": {
+      "name": "Official Jellyfin",
+      "uid_env": null,
+      "gid_env": null,
+      "umask_env": null,
+      "default_uid": null,
+      "default_gid": null,
+      "needs_puid": false
+    },
+    "seerr": {
+      "name": "Seerr",
+      "uid_env": null,
+      "gid_env": null,
+      "umask_env": null,
+      "default_uid": null,
+      "default_gid": null,
+      "needs_puid": false
+    }
+  },
+  "images": {
+    "sonarr": {
+      "name": "Sonarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": ["hotio/sonarr", "ghcr.io/hotio/sonarr"],
+      "keywords": ["sonarr"],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/sonarr"
+    },
+    "radarr": {
+      "name": "Radarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": ["hotio/radarr", "ghcr.io/hotio/radarr"],
+      "keywords": ["radarr"],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/radarr"
+    },
+    "lidarr": {
+      "name": "Lidarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": ["hotio/lidarr", "ghcr.io/hotio/lidarr"],
+      "keywords": ["lidarr"],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/lidarr"
+    },
+    "readarr": {
+      "name": "Readarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": ["hotio/readarr", "ghcr.io/hotio/readarr"],
+      "keywords": ["readarr"],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/readarr"
+    },
+    "whisparr": {
+      "name": "Whisparr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": ["hotio/whisparr", "ghcr.io/hotio/whisparr"],
+      "keywords": ["whisparr"],
+      "hardlink_capable": true,
+      "docs_url": "https://wiki.servarr.com/whisparr"
+    },
+    "prowlarr": {
+      "name": "Prowlarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": ["hotio/prowlarr", "ghcr.io/hotio/prowlarr"],
+      "keywords": ["prowlarr"],
+      "hardlink_capable": false,
+      "docs_url": "https://wiki.servarr.com/prowlarr"
+    },
+    "bazarr": {
+      "name": "Bazarr",
+      "role": "arr",
+      "family": "linuxserver",
+      "patterns": ["hotio/bazarr", "ghcr.io/hotio/bazarr"],
+      "keywords": ["bazarr"],
+      "hardlink_capable": false,
+      "docs_url": "https://www.bazarr.media/"
+    },
+    "overseerr": {
+      "name": "Overseerr",
+      "role": "request",
+      "family": "seerr",
+      "patterns": ["sctx/overseerr"],
+      "keywords": ["overseerr"],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.overseerr.dev/"
+    },
+    "jellyseerr": {
+      "name": "Jellyseerr",
+      "role": "request",
+      "family": "seerr",
+      "patterns": ["fallenbagel/jellyseerr"],
+      "keywords": ["jellyseerr"],
+      "hardlink_capable": false,
+      "docs_url": "https://github.com/Fallenbagel/jellyseerr"
+    },
+    "ombi": {
+      "name": "Ombi",
+      "role": "request",
+      "family": "linuxserver",
+      "patterns": [],
+      "keywords": ["ombi"],
+      "hardlink_capable": false,
+      "docs_url": "https://docs.ombi.app/"
+    },
+    "plex": {
+      "name": "Plex",
+      "role": "media_server",
+      "family": "official_plex",
+      "patterns": ["plexinc/pms-docker"],
+      "keywords": ["plex"],
+      "hardlink_capable": true,
+      "docs_url": "https://support.plex.tv/"
+    },
+    "jellyfin": {
+      "name": "Jellyfin",
+      "role": "media_server",
+      "family": "official_jellyfin",
+      "patterns": ["jellyfin/jellyfin"],
+      "keywords": ["jellyfin"],
+      "hardlink_capable": true,
+      "docs_url": "https://jellyfin.org/docs/"
+    },
+    "emby": {
+      "name": "Emby",
+      "role": "media_server",
+      "family": null,
+      "patterns": ["emby/embyserver"],
+      "keywords": ["emby"],
+      "hardlink_capable": true,
+      "docs_url": "https://emby.media/support/articles/"
+    },
+    "qbittorrent": {
+      "name": "qBittorrent",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": ["hotio/qbittorrent", "ghcr.io/hotio/qbittorrent"],
+      "keywords": ["qbittorrent", "qbit"],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/qbittorrent/qBittorrent/wiki"
+    },
+    "sabnzbd": {
+      "name": "SABnzbd",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": ["hotio/sabnzbd", "ghcr.io/hotio/sabnzbd"],
+      "keywords": ["sabnzbd", "sab", "nzb"],
+      "hardlink_capable": true,
+      "docs_url": "https://sabnzbd.org/wiki/"
+    },
+    "nzbget": {
+      "name": "NZBGet",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": ["hotio/nzbget", "ghcr.io/hotio/nzbget"],
+      "keywords": ["nzbget"],
+      "hardlink_capable": true,
+      "docs_url": "https://nzbget.com/documentation/"
+    },
+    "transmission": {
+      "name": "Transmission",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": ["hotio/transmission", "ghcr.io/hotio/transmission"],
+      "keywords": ["transmission"],
+      "hardlink_capable": true,
+      "docs_url": "https://transmissionbt.com/"
+    },
+    "deluge": {
+      "name": "Deluge",
+      "role": "download_client",
+      "family": "linuxserver",
+      "patterns": ["hotio/deluge", "ghcr.io/hotio/deluge"],
+      "keywords": ["deluge"],
+      "hardlink_capable": true,
+      "docs_url": "https://deluge-torrent.org/"
+    },
+    "rtorrent": {
+      "name": "rTorrent",
+      "role": "download_client",
+      "family": null,
+      "patterns": [],
+      "keywords": ["rtorrent"],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/rakshasa/rtorrent/wiki"
+    },
+    "jdownloader": {
+      "name": "JDownloader",
+      "role": "download_client",
+      "family": "jlesage",
+      "patterns": ["jlesage/jdownloader-2"],
+      "keywords": ["jdownloader", "jdown", "jd2"],
+      "hardlink_capable": true,
+      "docs_url": "https://jdownloader.org/"
+    },
+    "aria2": {
+      "name": "aria2",
+      "role": "download_client",
+      "family": null,
+      "patterns": ["p3terx/aria2-pro"],
+      "keywords": ["aria2"],
+      "hardlink_capable": true,
+      "docs_url": "https://aria2.github.io/"
+    },
+    "flood": {
+      "name": "Flood",
+      "role": "download_client",
+      "family": null,
+      "patterns": ["jesec/flood"],
+      "keywords": ["flood"],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/jesec/flood"
+    },
+    "rdtclient": {
+      "name": "RDTClient",
+      "role": "download_client",
+      "family": null,
+      "patterns": ["rogerfar/rdtclient"],
+      "keywords": ["rdtclient"],
+      "hardlink_capable": true,
+      "docs_url": "https://github.com/rogerfar/rdt-client"
+    }
+  }
+}
