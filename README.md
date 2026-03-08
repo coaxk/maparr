@@ -168,26 +168,30 @@ All services mount the same parent: `/host/data:/data`. Subdirectories handle se
 
 ## Security
 
-MapArr handles filesystem paths and Docker socket access, so it enforces strict boundaries at every layer.
+MapArr handles filesystem paths and Docker socket access, so it enforces strict boundaries at every layer. Last audited: 2026-03-09.
 
 - **Path traversal prevention** — All user-supplied paths are resolved via `Path.resolve()` and verified against the stacks root using `relative_to()`. Requests targeting paths outside the stacks directory are rejected before any read or write occurs.
+- **Write operation boundary** — Apply Fix requires `MAPARR_STACKS_PATH` to be set (always true in Docker). Without an explicit boundary, write operations are refused. Change Path uses an allowlist when a stacks root is configured.
 - **Compose filename whitelist** — The apply-fix endpoint only writes to files named `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, or `compose.yaml`. Arbitrary filenames are blocked.
-- **System directory blocking** — The stacks path configuration rejects system-critical directories (`/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/sbin`, `C:\Windows`, `C:\Program Files`).
-- **XSS prevention** — The frontend renders all user-derived content via `textContent` assignments. `innerHTML` is never used with untrusted data.
+- **System directory blocking** — Defense-in-depth denylist rejects system-critical directories (`/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/sbin`, `/root`, `/home`, `C:\Windows`, `C:\Program Files`).
+- **XSS prevention** — The frontend renders all user-derived content via `textContent` assignments. Zero use of `innerHTML` with untrusted data across ~6500 lines of JS. All inline event handlers migrated to `addEventListener` for CSP readiness.
 - **Safe YAML loading** — All YAML parsing uses `yaml.safe_load()`. No arbitrary Python object deserialization.
+- **No shell injection** — Subprocess calls use list-form arguments (never `shell=True`). No user input is interpolated into commands.
+- **Dependency hygiene** — All dependencies pinned to minimum safe versions. python-multipart CVE-2024-47874 patched. FastAPI, uvicorn, and PyYAML kept current.
+- **Bounded resources** — SSE log queue capped at 100 entries per connection. Reconnection uses exponential backoff (5s→60s) to prevent self-inflicted DoS.
 - **Read-only analysis** — No Docker containers are started, stopped, or modified. The auto-apply feature writes only to compose files, only when explicitly confirmed, and always creates a `.bak` backup first.
+- **Non-root container** — Runs as PUID/PGID user (default 1000:1000), not root. Docker socket access via group membership, not privilege escalation.
 - **No outbound connections** — MapArr makes zero external API calls. No telemetry, no update pings, no data leaves your machine. (The update checker compares a local version string against GitHub releases — initiated by the user, not automatic.)
 
 ## The *arr Ecosystem
 
-MapArr is part of a planned 4-tool ecosystem for Docker media stack management:
+MapArr is part of a 3-tool ecosystem for Docker media stack management:
 
 | Tool | Purpose |
 |------|---------|
 | **MapArr** | Path mapping analysis and fixes |
 | **ComposeArr** | Docker Compose hygiene linting (30 rules, health scoring) |
 | **SubBrainArr** | Subtitle intelligence |
-| **Apart** | Service separation analysis |
 
 ## Privacy
 

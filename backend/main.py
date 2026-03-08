@@ -14,7 +14,9 @@ No Docker SDK dependency. No SQLite. No persistence, no jobs system.
 import asyncio
 import logging
 import os
+import threading
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +31,118 @@ from backend.analyzer import analyze_stack
 from backend.smart_match import smart_match
 from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
 from backend.log_handler import install_log_handler, get_log_handler
+
+
+# ─── Rate Limiting ───
+# Simple in-memory sliding window rate limiter. No external dependencies.
+# Classifies endpoints into tiers with different request-per-minute limits.
+# Thread-safe via a lock (needed because uvicorn may use thread pools).
+
+class RateLimiter:
+    """Per-IP sliding window rate limiter with tiered endpoint limits."""
+
+    # Endpoint classification: (path_prefixes, requests_per_minute)
+    WRITE_PATHS = ("/api/apply-fix", "/api/change-stacks-path")
+    ANALYSIS_PATHS = ("/api/analyze", "/api/pipeline-scan")
+    SKIP_PATHS = ("/api/health",)
+    STATIC_PREFIXES = ("/", "/static")
+
+    WRITE_LIMIT = 10       # requests per minute
+    ANALYSIS_LIMIT = 20    # requests per minute
+    READ_LIMIT = 60        # requests per minute
+
+    WINDOW = 60.0          # sliding window in seconds
+    CLEANUP_INTERVAL = 300.0  # purge stale entries every 5 minutes
+
+    def __init__(self):
+        # {ip: {"write": [timestamps], "analysis": [...], "read": [...]}}
+        self._requests: dict[str, dict[str, list[float]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        self._lock = threading.Lock()
+        self._last_cleanup = time.time()
+
+    def _classify(self, path: str) -> tuple[str, int] | None:
+        """Classify a request path into a tier. Returns (tier, limit) or None to skip."""
+        # Skip health checks and static files entirely
+        if path in self.SKIP_PATHS:
+            return None
+        if path == "/" or path.startswith("/static"):
+            return None
+
+        # Write endpoints (most restrictive)
+        if path in self.WRITE_PATHS:
+            return ("write", self.WRITE_LIMIT)
+
+        # Analysis endpoints
+        if path in self.ANALYSIS_PATHS:
+            return ("analysis", self.ANALYSIS_LIMIT)
+
+        # Everything else under /api/ is a read endpoint
+        if path.startswith("/api/"):
+            return ("read", self.READ_LIMIT)
+
+        # Non-API paths (shouldn't happen, but don't rate limit)
+        return None
+
+    def check(self, ip: str, path: str) -> tuple[bool, int]:
+        """
+        Check if a request is allowed.
+
+        Returns (allowed, retry_after_seconds).
+        When allowed=True, retry_after is 0.
+        When allowed=False, retry_after is seconds until the oldest
+        request in the window expires.
+        """
+        classification = self._classify(path)
+        if classification is None:
+            return (True, 0)
+
+        tier, limit = classification
+        now = time.time()
+        cutoff = now - self.WINDOW
+
+        with self._lock:
+            # Periodic cleanup of stale IPs
+            if now - self._last_cleanup > self.CLEANUP_INTERVAL:
+                self._cleanup(now)
+
+            timestamps = self._requests[ip][tier]
+
+            # Prune expired timestamps for this IP+tier
+            self._requests[ip][tier] = timestamps = [
+                t for t in timestamps if t > cutoff
+            ]
+
+            if len(timestamps) >= limit:
+                # Rate limited — calculate when the oldest request expires
+                oldest = min(timestamps)
+                retry_after = int(oldest + self.WINDOW - now) + 1
+                return (False, max(retry_after, 1))
+
+            # Allowed — record this request
+            timestamps.append(now)
+            return (True, 0)
+
+    def _cleanup(self, now: float):
+        """Remove IPs with no recent activity. Called under lock."""
+        cutoff = now - self.WINDOW
+        stale_ips = []
+        for ip, tiers in self._requests.items():
+            all_empty = True
+            for tier, timestamps in tiers.items():
+                # Filter in place
+                tiers[tier] = [t for t in timestamps if t > cutoff]
+                if tiers[tier]:
+                    all_empty = False
+            if all_empty:
+                stale_ips.append(ip)
+        for ip in stale_ips:
+            del self._requests[ip]
+        self._last_cleanup = now
+
+
+_rate_limiter = RateLimiter()
 
 
 # ─── Security: Path Validation ───
@@ -101,6 +215,27 @@ app = FastAPI(
 )
 
 logger.info("MapArr v%s starting up", VERSION)
+
+
+# ─── Rate Limiting Middleware ───
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Enforce per-IP rate limits based on endpoint tier."""
+    client_ip = request.client.host if request.client else "unknown"
+    path = request.url.path
+
+    allowed, retry_after = _rate_limiter.check(client_ip, path)
+    if not allowed:
+        logger.warning("Rate limited: %s on %s (retry after %ds)", client_ip, path, retry_after)
+        return JSONResponse(
+            {"error": "Too many requests. Please slow down.", "retry_after": retry_after},
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    return await call_next(request)
+
 
 # ─── State ───
 # Minimal in-memory state for the current session.

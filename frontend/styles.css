@@ -1003,6 +1003,13 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     white-space: nowrap;
 }
 
+.stack-last-scanned {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    opacity: 0.6;
+    margin-top: 0.15rem;
+}
+
 .stack-services {
     display: flex;
     flex-wrap: wrap;

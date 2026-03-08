@@ -116,6 +116,25 @@ def parse_errors(text: str) -> list[dict]:
         d["excerpt"] = chunk[:80] + ("..." if len(chunk) > 80 else "")
         results.append(d)
 
+    # Deduplicate results where the same (service, path, error_type) tuple
+    # appears more than once — e.g., user pasted the same error twice.
+    # Keep the first occurrence (best excerpt/index).
+    seen: set[tuple] = set()
+    deduped = []
+    for r in results:
+        key = (r["service"], r["path"], r["error_type"])
+        if key in seen:
+            logger.info("Dedup: dropping duplicate (service=%s, path=%s, error_type=%s) at index %d",
+                        r["service"], r["path"], r["error_type"], r["index"])
+            continue
+        seen.add(key)
+        deduped.append(r)
+
+    if len(deduped) < len(results):
+        logger.info("Dedup removed %d duplicate(s): %d → %d results",
+                    len(results) - len(deduped), len(results), len(deduped))
+    results = deduped
+
     logger.info("Multi-error parse: %d chunk%s from %d chars input",
                 len(results), "s" if len(results) != 1 else "", len(text))
 

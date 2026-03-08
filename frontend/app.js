@@ -27,6 +27,7 @@ const state = {
     verifiedStacks: new Set(), // Stacks analyzed/fixed this session — skip caution override
     preflightOverridden: false, // User bypassed a pre-flight warning for this analysis
     _analysisInFlight: false,    // Guard against concurrent analysis requests
+    lastAnalyzed: {},            // stackPath → timestamp (Date.now()) of last analysis
 };
 
 // Load persisted custom dirs from localStorage
@@ -164,12 +165,16 @@ async function runBootSequence(backendOnline, discData) {
     // before any per-stack analysis happens.
     lineDelay += 400;
     await bootAddLine("run", "Analyzing media pipeline\u2026", lineDelay);
+    const pController = new AbortController();
+    const pTimeout = setTimeout(() => pController.abort(), 30000);
     try {
         const pipelineResp = await fetch("/api/pipeline-scan", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ scan_dir: discData.scan_path }),
+            signal: pController.signal,
         });
+        clearTimeout(pTimeout);
         if (pipelineResp.ok) {
             state.pipeline = await pipelineResp.json();
             const p = state.pipeline;
@@ -187,6 +192,7 @@ async function runBootSequence(backendOnline, discData) {
             }
         }
     } catch (e) {
+        clearTimeout(pTimeout);
         console.warn("Pipeline scan failed during boot:", e);
         // Non-fatal — pipeline is optional enhancement
     }
@@ -333,13 +339,20 @@ async function bootScanCustomPath() {
     const path = input.value.trim();
     if (!path) { input.focus(); return; }
 
+    const cpController = new AbortController();
+    const cpTimeout = setTimeout(() => cpController.abort(), 10000);
     try {
         await fetch("/api/change-stacks-path", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ path }),
+            signal: cpController.signal,
         });
-        const resp = await fetch("/api/discover-stacks");
+        clearTimeout(cpTimeout);
+        const dsController = new AbortController();
+        const dsTimeout = setTimeout(() => dsController.abort(), 10000);
+        const resp = await fetch("/api/discover-stacks", { signal: dsController.signal });
+        clearTimeout(dsTimeout);
         if (resp.ok) {
             const data = await resp.json();
             state.stacks = data.stacks || [];
@@ -358,14 +371,18 @@ async function bootScanCustomPath() {
                 addCustomDir(path, state.stacks.length);
                 setPreferredPath(path);
                 // Run pipeline scan for the new path
+                const pController = new AbortController();
+                const pTimeout = setTimeout(() => pController.abort(), 30000);
                 try {
                     const pResp = await fetch("/api/pipeline-scan", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ scan_dir: path }),
+                        signal: pController.signal,
                     });
+                    clearTimeout(pTimeout);
                     if (pResp.ok) state.pipeline = await pResp.json();
-                } catch {}
+                } catch { clearTimeout(pTimeout); }
                 document.getElementById("boot-no-stacks").classList.add("hidden");
                 state.bootComplete = false; // Allow transition
                 transitionBootToFork(state.stacks.length);
@@ -375,6 +392,7 @@ async function bootScanCustomPath() {
             }
         }
     } catch {
+        clearTimeout(cpTimeout);
         input.style.borderColor = "var(--error)";
         setTimeout(() => { input.style.borderColor = ""; }, 2000);
     }
@@ -424,6 +442,65 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     }
+
+    // ─── Click handlers (migrated from inline onclick attributes) ───
+
+    // Header
+    document.getElementById("header-brand-link").addEventListener("click", (e) => {
+        e.preventDefault();
+        startOver();
+    });
+
+    // Boot — zero-stacks scan
+    document.getElementById("btn-boot-scan").addEventListener("click", () => bootScanCustomPath());
+
+    // Mode selector
+    document.getElementById("mode-fix").addEventListener("click", () => enterFixMode());
+    document.getElementById("mode-browse").addEventListener("click", () => enterBrowseMode());
+
+    // Example error pills — wire up all 14 conflict type examples
+    document.getElementById("example-import").addEventListener("click", () => fillExample("import"));
+    document.getElementById("example-remote").addEventListener("click", () => fillExample("remote"));
+    document.getElementById("example-hardlink").addEventListener("click", () => fillExample("hardlink"));
+    document.getElementById("example-permission").addEventListener("click", () => fillExample("permission"));
+    document.getElementById("example-path-not-found").addEventListener("click", () => fillExample("path-not-found"));
+    document.getElementById("example-named-volume").addEventListener("click", () => fillExample("named-volume"));
+    document.getElementById("example-puid-mismatch").addEventListener("click", () => fillExample("puid-mismatch"));
+    document.getElementById("example-missing-puid").addEventListener("click", () => fillExample("missing-puid"));
+    document.getElementById("example-root").addEventListener("click", () => fillExample("root"));
+    document.getElementById("example-umask").addEventListener("click", () => fillExample("umask"));
+    document.getElementById("example-cross-stack").addEventListener("click", () => fillExample("cross-stack"));
+    document.getElementById("example-nfs").addEventListener("click", () => fillExample("nfs"));
+    document.getElementById("example-wsl2").addEventListener("click", () => fillExample("wsl2"));
+    document.getElementById("example-mixed-mounts").addEventListener("click", () => fillExample("mixed-mounts"));
+    document.getElementById("example-windows-path").addEventListener("click", () => fillExample("windows-path"));
+    document.getElementById("example-disk-space").addEventListener("click", () => fillExample("disk-space"));
+
+    // Error input actions
+    document.getElementById("btn-parse").addEventListener("click", () => parseError());
+    document.getElementById("btn-skip-to-browse").addEventListener("click", () => switchToBrowseMode());
+
+    // Fix-match fallback
+    document.getElementById("btn-browse-fallback").addEventListener("click", () => switchToBrowseMode());
+
+    // Stack browser — path controls
+    document.getElementById("btn-change-path").addEventListener("click", () => togglePathInput());
+    document.getElementById("btn-switch-to-fix").addEventListener("click", () => switchToFixMode());
+    document.getElementById("btn-change-path-scan").addEventListener("click", () => changeStacksPath());
+    document.getElementById("btn-reset-path").addEventListener("click", () => resetStacksPath());
+
+    // Solution tabs and actions
+    document.getElementById("tab-recommended").addEventListener("click", () => switchSolutionTab("recommended"));
+    document.getElementById("tab-original").addEventListener("click", () => switchSolutionTab("original"));
+    document.getElementById("btn-copy").addEventListener("click", () => copySolutionYaml());
+    document.getElementById("btn-copy-original").addEventListener("click", () => copySolutionYaml());
+    document.getElementById("btn-apply-fix").addEventListener("click", () => applyFix());
+    document.getElementById("btn-cancel-apply").addEventListener("click", () => cancelApplyFix());
+
+    // Bottom actions
+    document.getElementById("btn-analyze-another").addEventListener("click", () => analyzeAnother());
+    document.getElementById("btn-copy-diagnostic").addEventListener("click", () => copyDiagnosticSummary());
+    document.getElementById("btn-start-over").addEventListener("click", () => startOver());
 });
 
 // ─── Mode Management ───
@@ -510,8 +587,11 @@ async function checkHealth() {
     let backendOnline = false;
     let discData = null;
 
+    const hController = new AbortController();
+    const hTimeout = setTimeout(() => hController.abort(), 10000);
     try {
-        const resp = await fetch("/api/health");
+        const resp = await fetch("/api/health", { signal: hController.signal });
+        clearTimeout(hTimeout);
         if (resp.ok) {
             backendOnline = true;
             const healthData = await resp.json();
@@ -527,14 +607,20 @@ async function checkHealth() {
             fetchStarCount();
 
             // Reset custom path so initial scan finds everything
+            const cpController = new AbortController();
+            const cpTimeout = setTimeout(() => cpController.abort(), 10000);
             try { await fetch("/api/change-stacks-path", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ path: "" }),
-            }); } catch {}
+                signal: cpController.signal,
+            }); clearTimeout(cpTimeout); } catch { clearTimeout(cpTimeout); }
             // Fetch full stack summary for the header display
+            const dsController = new AbortController();
+            const dsTimeout = setTimeout(() => dsController.abort(), 10000);
             try {
-                const discResp = await fetch("/api/discover-stacks");
+                const discResp = await fetch("/api/discover-stacks", { signal: dsController.signal });
+                clearTimeout(dsTimeout);
                 if (discResp.ok) {
                     discData = await discResp.json();
                     state.stacks = discData.stacks || [];
@@ -555,6 +641,7 @@ async function checkHealth() {
                     el.textContent = "Connected";
                 }
             } catch {
+                clearTimeout(dsTimeout);
                 el.textContent = "Connected";
             }
         } else {
@@ -562,6 +649,7 @@ async function checkHealth() {
             el.className = "header-status disconnected";
         }
     } catch {
+        clearTimeout(hTimeout);
         el.textContent = "Offline";
         el.className = "header-status disconnected";
     }
@@ -593,12 +681,16 @@ async function parseError() {
     btn.disabled = true;
     btn.textContent = "Analyzing...";
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
         const resp = await fetch("/api/parse-error", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ error_text: text }),
+            signal: controller.signal,
         });
+        clearTimeout(timeout);
 
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ error: "Request failed" }));
@@ -617,7 +709,10 @@ async function parseError() {
             await autoMatchStacks(data);
         }
     } catch (err) {
-        alert("Could not reach the backend. Is MapArr running?");
+        clearTimeout(timeout);
+        alert(err.name === "AbortError"
+            ? "Request timed out. Is MapArr running?"
+            : "Could not reach the backend. Is MapArr running?");
     } finally {
         btn.disabled = false;
         btn.textContent = "Analyze Error";
@@ -629,28 +724,35 @@ async function parseError() {
 async function autoMatchStacks(parsed) {
     // Ensure we have stacks loaded
     if (state.stacks.length === 0) {
+        const dsController = new AbortController();
+        const dsTimeout = setTimeout(() => dsController.abort(), 10000);
         try {
-            const resp = await fetch("/api/discover-stacks");
+            const resp = await fetch("/api/discover-stacks", { signal: dsController.signal });
+            clearTimeout(dsTimeout);
             if (resp.ok) {
                 const data = await resp.json();
                 state.stacks = data.stacks || [];
                 state.activeScanPath = (data.scan_path || "").replace(/\\/g, "/");
             }
-        } catch {}
+        } catch { clearTimeout(dsTimeout); }
     }
 
     // Ensure pipeline is available for Fix mode analysis
     if (!state.pipeline && state.stacks.length > 0) {
         const scanPath = state.activeScanPath || getPreferredPath();
         if (scanPath) {
+            const pController = new AbortController();
+            const pTimeout = setTimeout(() => pController.abort(), 30000);
             try {
                 const pResp = await fetch("/api/pipeline-scan", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ scan_dir: scanPath }),
+                    signal: pController.signal,
                 });
+                clearTimeout(pTimeout);
                 if (pResp.ok) state.pipeline = await pResp.json();
-            } catch {}
+            } catch { clearTimeout(pTimeout); }
         }
     }
 
@@ -679,6 +781,8 @@ async function autoMatchStacks(parsed) {
         // Multiple matches — ask the backend to figure out which one
         // most likely produced this error (volume layout analysis, path
         // reachability, conflict correlation — the full smart-match).
+        const smController = new AbortController();
+        const smTimeout = setTimeout(() => smController.abort(), 30000);
         try {
             const resp = await fetch("/api/smart-match", {
                 method: "POST",
@@ -687,7 +791,9 @@ async function autoMatchStacks(parsed) {
                     parsed_error: parsed,
                     candidate_paths: matches.map((s) => s.path),
                 }),
+                signal: smController.signal,
             });
+            clearTimeout(smTimeout);
 
             if (resp.ok) {
                 const result = await resp.json();
@@ -716,6 +822,7 @@ async function autoMatchStacks(parsed) {
                 }
             }
         } catch {
+            clearTimeout(smTimeout);
             // Smart-match failed — fall through to pill picker
         }
 
@@ -1050,6 +1157,18 @@ function fillExample(type) {
         remote: "Download client qBittorrent places downloads in /downloads/tv but this directory does not appear to exist inside the container. You may need a Remote Path Mapping in Radarr (Settings > Download Clients > Remote Path Mappings).",
         hardlink: "Invalid cross-device link: rename '/downloads/complete/Movie.Name.2024.mkv' -> '/data/media/movies/Movie Name (2024)/Movie.Name.2024.mkv'. Sonarr cannot create hardlinks across different mount points.",
         permission: "Access to the path '/data/media/movies/Movie Name (2024)' is denied. Radarr does not have permission to write to this directory. Check PUID/PGID match between containers.",
+        "path-not-found": "Missing root folder: /data/media/tv does not exist. Series paths configured in Sonarr point to a directory that does not appear to exist inside the container.",
+        "named-volume": "Sonarr and qBittorrent are both using Docker named volumes (e.g. 'downloads:/downloads'). Hardlinks will fail because named volumes are separate filesystem layers — use bind mounts to a shared host path instead.",
+        "puid-mismatch": "Files downloaded by qBittorrent (UID 1000) are owned by a different user than Sonarr (UID 911). Sonarr cannot move or hardlink these files. PUID/PGID must match across all media services.",
+        "missing-puid": "Radarr container has no PUID or PGID environment variables set. Without explicit user mapping, the container may run as root or an unpredictable UID, causing permission conflicts with other services.",
+        root: "Container 'sonarr' is running as root (UID 0). Files created by this container will be owned by root, causing permission denied errors in containers running as non-root (PUID=1000).",
+        umask: "Files created by Sonarr have permissions 755 (UMASK=022) but Radarr uses UMASK=002 (775). This mismatch means Radarr cannot write to directories created by Sonarr because group write permission is missing.",
+        "cross-stack": "Jellyfin in stack 'media-server' runs as UID 1000 but Sonarr in stack 'arr-services' runs as UID 911. Both access /data/media — the UID mismatch will cause permission denied errors.",
+        nfs: "Hardlinks are failing on /mnt/nas/media which is an NFS mount. Hardlinks cannot work across network filesystems — the download client and media library must be on the same local filesystem.",
+        wsl2: "Docker containers are extremely slow reading from /mnt/c/DockerData. Windows filesystem mounts via WSL2 have poor I/O performance — move your volumes to the Linux filesystem (e.g. /home/user/docker).",
+        "mixed-mounts": "Sonarr uses a bind mount for /data/media but qBittorrent uses a named volume for downloads. Mixing bind mounts and named volumes in the same media pipeline prevents hardlinks and atomic moves.",
+        "windows-path": "Volume mount uses Windows-style path: C:\\Users\\media:/data/media. Docker Compose on Linux requires forward slashes. Convert to Unix paths or use WSL2 paths like /mnt/c/Users/media.",
+        "disk-space": "No space left on device. Import failed for '/data/media/movies/Movie Name (2024)/Movie.Name.2024.mkv'. The target filesystem is full — free up space or move your media library to a larger volume.",
     };
     const textarea = document.getElementById("error-input");
     if (!textarea || !examples[type]) return;
@@ -1072,8 +1191,11 @@ async function showStackSelection() {
     list.classList.add("hidden");
     empty.classList.add("hidden");
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-        const resp = await fetch("/api/discover-stacks");
+        const resp = await fetch("/api/discover-stacks", { signal: controller.signal });
+        clearTimeout(timeout);
         // Bail out if user navigated away during fetch
         if (state.mode !== "browse") { loading.classList.add("hidden"); return; }
         if (!resp.ok) {
@@ -1107,6 +1229,7 @@ async function showStackSelection() {
         // Populate detected directories for quick-select
         populateDetectedDirs(state.stacks);
     } catch (err) {
+        clearTimeout(timeout);
         console.error("showStackSelection error:", err);
         if (state.mode !== "browse") return;
         loading.classList.add("hidden");
@@ -1447,6 +1570,21 @@ function renderStacks(stacks) {
     });
 }
 
+/**
+ * Format a timestamp as a human-readable relative time string.
+ * Returns strings like "just now", "2m ago", "1h ago", "3d ago".
+ */
+function formatRelativeTime(timestamp) {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return "just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes + "m ago";
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + "h ago";
+    const days = Math.floor(hours / 24);
+    return days + "d ago";
+}
+
 function renderStackItem(stack, detectedService) {
     const item = document.createElement("div");
     item.className = "stack-item";
@@ -1505,6 +1643,16 @@ function renderStackItem(stack, detectedService) {
         err.className = "stack-error";
         err.textContent = stack.error;
         info.appendChild(err);
+    }
+
+    // Last-scanned timestamp — helps users spot stale results
+    const normalizedPath = stack.path.replace(/\\/g, "/");
+    const lastTs = state.lastAnalyzed[normalizedPath];
+    if (lastTs) {
+        const scanned = document.createElement("div");
+        scanned.className = "stack-last-scanned";
+        scanned.textContent = "analyzed " + formatRelativeTime(lastTs);
+        info.appendChild(scanned);
     }
 
     item.appendChild(info);
@@ -1608,6 +1756,7 @@ async function selectStack(stack, clickEvent) {
             searchInput.className = "path-input quick-switch-input";
             searchInput.placeholder = "Search or click to browse...";
             searchInput.spellcheck = false;
+            searchInput.setAttribute("aria-label", "Search stacks");
 
             const resultsDropdown = document.createElement("div");
             resultsDropdown.className = "quick-switch-results hidden";
@@ -1900,6 +2049,9 @@ async function runAnalysis(stack) {
 
         const data = await resp.json();
         state.analysis = data;
+
+        // Record when this stack was last analyzed — shown on stack cards
+        state.lastAnalyzed[stack.path.replace(/\\/g, "/")] = Date.now();
 
         // Mark this stack as verified — deep analysis is authoritative.
         // Healthy stacks skip the blinking-yellow caution override.
@@ -4401,6 +4553,8 @@ function showCrossStackConflict(data) {
         yesBtn.addEventListener("click", async () => {
             yesBtn.disabled = true;
             yesBtn.textContent = "Applying...";
+            const afController = new AbortController();
+            const afTimeout = setTimeout(() => afController.abort(), 30000);
             try {
                 const resp = await fetch("/api/apply-fix", {
                     method: "POST",
@@ -4409,7 +4563,9 @@ function showCrossStackConflict(data) {
                         compose_file_path: data.compose_file_path,
                         corrected_yaml: data.original_corrected_yaml,
                     }),
+                    signal: afController.signal,
                 });
+                clearTimeout(afTimeout);
                 const result = await resp.json();
                 if (resp.ok && result.status === "applied") {
                     resultDiv.className = "apply-result apply-result-success";
@@ -4437,8 +4593,11 @@ function showCrossStackConflict(data) {
                     confirmWrap.classList.add("hidden");
                 }
             } catch (err) {
+                clearTimeout(afTimeout);
                 resultDiv.className = "apply-result apply-result-error";
-                resultDiv.textContent = "Error: " + (err?.message || "could not reach backend");
+                resultDiv.textContent = err.name === "AbortError"
+                    ? "Error: request timed out — is the backend responding?"
+                    : "Error: " + (err?.message || "could not reach backend");
                 resultDiv.classList.remove("hidden");
                 confirmWrap.classList.add("hidden");
             } finally {
@@ -4629,6 +4788,7 @@ function renderBottomActions(container) {
         searchInput.className = "path-input quick-switch-input";
         searchInput.placeholder = "Search or click to browse...";
         searchInput.spellcheck = false;
+        searchInput.setAttribute("aria-label", "Search stacks");
 
         const resultsDropdown = document.createElement("div");
         resultsDropdown.className = "quick-switch-results quick-switch-results-up hidden";
@@ -4905,6 +5065,8 @@ async function doApplyFix() {
     yesBtn.disabled = true;
     yesBtn.textContent = "Applying...";
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     try {
         const resp = await fetch("/api/apply-fix", {
             method: "POST",
@@ -4913,7 +5075,9 @@ async function doApplyFix() {
                 compose_file_path: _lastAnalysisForApply.compose_file_path,
                 corrected_yaml: _lastAnalysisForApply.original_corrected_yaml,
             }),
+            signal: controller.signal,
         });
+        clearTimeout(timeout);
         const data = await resp.json();
 
         if (resp.ok && data.status === "applied") {
@@ -4966,10 +5130,13 @@ async function doApplyFix() {
             showSimpleToast(data.error || "Failed to apply fix.", "error");
         }
     } catch (err) {
+        clearTimeout(timeout);
         console.error("Apply fix error:", err, err?.message, err?.stack);
         if (resultEl) {
             resultEl.className = "apply-result apply-result-error";
-            resultEl.textContent = "Error: " + (err?.message || "could not reach backend");
+            resultEl.textContent = err.name === "AbortError"
+                ? "Error: request timed out — is the backend responding?"
+                : "Error: " + (err?.message || "could not reach backend");
             resultEl.classList.remove("hidden");
         }
     } finally {
@@ -4994,7 +5161,10 @@ async function _refreshHealthAfterFix() {
 
         console.log("[post-fix] Refreshing stacks + pipeline for:", scanPath);
 
-        const discResp = await fetch("/api/discover-stacks");
+        const discController = new AbortController();
+        const discTimeout = setTimeout(() => discController.abort(), 10000);
+        const discResp = await fetch("/api/discover-stacks", { signal: discController.signal });
+        clearTimeout(discTimeout);
         if (discResp.ok) {
             const discData = await discResp.json();
             if (discData.stacks) {
@@ -5008,11 +5178,15 @@ async function _refreshHealthAfterFix() {
         // Re-run pipeline scan — critical for fresh cross-stack analysis.
         // Without this, the re-analysis compares the fixed compose against
         // stale pipeline data and still reports conflicts.
+        const pController = new AbortController();
+        const pTimeout = setTimeout(() => pController.abort(), 30000);
         const pResp = await fetch("/api/pipeline-scan", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ scan_dir: scanPath }),
+            signal: pController.signal,
         });
+        clearTimeout(pTimeout);
         if (pResp.ok) {
             state.pipeline = await pResp.json();
             console.log("[post-fix] Pipeline refreshed:",
@@ -5378,6 +5552,7 @@ function toggleHeaderPathDropdown() {
             const removeBtn = document.createElement("button");
             removeBtn.className = "dropdown-dir-remove";
             removeBtn.title = "Remove from saved locations";
+            removeBtn.setAttribute("aria-label", "Remove from saved locations");
             removeBtn.textContent = "\u00d7";
             removeBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
@@ -5432,6 +5607,7 @@ function toggleHeaderPathDropdown() {
     input.type = "text";
     input.className = "path-input dropdown-path-input";
     input.placeholder = "/path/to/your/stacks";
+    input.setAttribute("aria-label", "Manual stacks directory path");
     input.spellcheck = false;
     input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
@@ -5451,6 +5627,7 @@ function toggleHeaderPathDropdown() {
     const scanBtn = document.createElement("button");
     scanBtn.className = "btn btn-primary btn-sm";
     scanBtn.textContent = "Scan";
+    scanBtn.setAttribute("aria-label", "Scan custom directory");
     scanBtn.addEventListener("click", () => {
         document.getElementById("custom-path-input").value = input.value;
         dropdown.classList.add("hidden");
@@ -5536,12 +5713,16 @@ async function changeStacksPath() {
         loading.classList.remove("hidden");
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
         const resp = await fetch("/api/change-stacks-path", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ path: newPath }),
+            signal: controller.signal,
         });
+        clearTimeout(timeout);
 
         const data = await resp.json();
         if (inBrowseMode) loading.classList.add("hidden");
@@ -5599,12 +5780,16 @@ async function changeStacksPath() {
         state.pipeline = null;
         state.verifiedStacks.clear();
         if (state.stacks.length > 0) {
+            const pController = new AbortController();
+            const pTimeout = setTimeout(() => pController.abort(), 30000);
             try {
                 const pResp = await fetch("/api/pipeline-scan", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ scan_dir: newPath }),
+                    signal: pController.signal,
                 });
+                clearTimeout(pTimeout);
                 if (pResp.ok) {
                     state.pipeline = await pResp.json();
                     // Re-render stack list with pipeline banner if in browse mode
@@ -5615,10 +5800,12 @@ async function changeStacksPath() {
                     enrichModeSelector(state.stacks.length);
                 }
             } catch (e) {
+                clearTimeout(pTimeout);
                 console.warn("Pipeline re-scan failed:", e);
             }
         }
     } catch {
+        clearTimeout(timeout);
         if (inBrowseMode) {
             loading.classList.add("hidden");
             empty.classList.remove("hidden");
@@ -5631,13 +5818,18 @@ async function changeStacksPath() {
 async function resetStacksPath() {
     document.getElementById("custom-path-input").value = "";
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
         await fetch("/api/change-stacks-path", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ path: "" }),
+            signal: controller.signal,
         });
+        clearTimeout(timeout);
     } catch {
+        clearTimeout(timeout);
         // Ignore — we'll re-scan with defaults
     }
 
@@ -5800,8 +5992,11 @@ async function checkForUpdates(currentVersion) {
         }
     } catch {}
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-        const resp = await fetch("https://api.github.com/repos/" + REPO + "/releases/latest");
+        const resp = await fetch("https://api.github.com/repos/" + REPO + "/releases/latest", { signal: controller.signal });
+        clearTimeout(timeout);
         if (!resp.ok) {
             // No releases, rate limited, or repo not public — cache the miss
             try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ checked: Date.now(), latest: null })); } catch {}
@@ -5818,6 +6013,7 @@ async function checkForUpdates(currentVersion) {
             showUpdateBadge(latestTag);
         }
     } catch {
+        clearTimeout(timeout);
         // Network error — silently ignore
     }
 }
@@ -5859,8 +6055,11 @@ async function fetchStarCount() {
         }
     } catch {}
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-        const resp = await fetch("https://api.github.com/repos/" + REPO);
+        const resp = await fetch("https://api.github.com/repos/" + REPO, { signal: controller.signal });
+        clearTimeout(timeout);
         if (!resp.ok) {
             try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ checked: Date.now(), stars: null })); } catch {}
             return;
@@ -5870,6 +6069,7 @@ async function fetchStarCount() {
         try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ checked: Date.now(), stars })); } catch {}
         showStarsBadge(stars);
     } catch {
+        clearTimeout(timeout);
         // Network error — silently ignore
     }
 }
@@ -6092,8 +6292,11 @@ function initLogPanelResize() {
 // ─── Fetch Logs from API ───
 
 async function fetchLogs() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-        const resp = await fetch("/api/logs?limit=200");
+        const resp = await fetch("/api/logs?limit=200", { signal: controller.signal });
+        clearTimeout(timeout);
         if (!resp.ok) return;
         const data = await resp.json();
         _logState.entries = (data.entries || []).reverse(); // API returns newest first, we want oldest first
@@ -6102,6 +6305,7 @@ async function fetchLogs() {
         }
         renderLogEntries();
     } catch {
+        clearTimeout(timeout);
         // Backend not ready yet — will get entries via SSE
     }
 }
@@ -6161,8 +6365,11 @@ function connectLogStream() {
  * Deduplicates by timestamp+message to avoid showing the same entry twice.
  */
 async function _backfillMissedLogs() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-        const resp = await fetch("/api/logs?limit=200");
+        const resp = await fetch("/api/logs?limit=200", { signal: controller.signal });
+        clearTimeout(timeout);
         if (!resp.ok) return;
         const data = await resp.json();
         const serverEntries = (data.entries || []).reverse(); // oldest first
@@ -6196,6 +6403,7 @@ async function _backfillMissedLogs() {
             console.log("Log backfill: recovered " + added + " missed entries");
         }
     } catch {
+        clearTimeout(timeout);
         // Backfill is best-effort — don't break the stream
     }
 }
@@ -6389,6 +6597,7 @@ function showToast(entry) {
     const copyBtn = document.createElement("button");
     copyBtn.className = "toast-btn";
     copyBtn.textContent = "Copy";
+    copyBtn.setAttribute("aria-label", "Copy log entry to clipboard");
     copyBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         navigator.clipboard.writeText(entry.message).then(() => {

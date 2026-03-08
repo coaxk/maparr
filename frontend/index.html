@@ -11,7 +11,7 @@
 
 <!-- ─── Header ─── -->
 <header class="header">
-    <a class="header-brand" href="/" onclick="startOver(); return false;">
+    <a class="header-brand" href="/" id="header-brand-link">
         <h1 class="logo">MapArr</h1>
         <span class="tagline">Path Mapping Problem Solver</span>
     </a>
@@ -46,8 +46,9 @@
         <div class="boot-path-row">
             <input type="text" id="boot-path-input" class="path-input"
                    placeholder="/path/to/your/stacks (e.g. /opt/docker)"
+                   aria-label="Docker stacks directory path"
                    spellcheck="false" />
-            <button class="btn btn-primary btn-sm" onclick="bootScanCustomPath()">Scan</button>
+            <button class="btn btn-primary btn-sm" id="btn-boot-scan">Scan</button>
         </div>
         <p class="hint boot-hint">
             Running in Docker? Mount your stacks:
@@ -70,12 +71,12 @@
             your stacks for a full health check.
         </p>
         <div class="mode-selector">
-            <button class="mode-btn" id="mode-fix" onclick="enterFixMode()">
+            <button class="mode-btn" id="mode-fix">
                 <span class="mode-icon">&#128295;</span>
                 <span class="mode-title" id="mode-fix-title">Fix an Error</span>
                 <span class="mode-desc">Paste an error from Sonarr, Radarr, or any *arr app and MapArr will diagnose the root cause and generate corrected YAML</span>
             </button>
-            <button class="mode-btn" id="mode-browse" onclick="enterBrowseMode()">
+            <button class="mode-btn" id="mode-browse">
                 <span class="mode-icon">&#128269;</span>
                 <span class="mode-title" id="mode-browse-title">Analyze Your Stacks</span>
                 <span class="mode-desc">Scan all your Docker stacks for mount conflicts, permission issues, and hardlink compatibility</span>
@@ -98,6 +99,7 @@
         <textarea
             id="error-input"
             class="error-textarea"
+            aria-label="Paste your error message here"
             placeholder="Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01/Episode.mkv"
             rows="5"
             spellcheck="false"
@@ -105,16 +107,28 @@
         <div id="error-live-preview" class="error-live-preview"></div>
         <div class="example-errors" id="example-errors">
             <span class="example-label">Try an example:</span>
-            <button class="example-pill" onclick="fillExample('import')">Import failed</button>
-            <button class="example-pill" onclick="fillExample('remote')">Remote path mapping</button>
-            <button class="example-pill" onclick="fillExample('hardlink')">Hardlink / atomic move</button>
-            <button class="example-pill" onclick="fillExample('permission')">Permission denied</button>
+            <button class="example-pill" id="example-import">Import failed</button>
+            <button class="example-pill" id="example-remote">Remote path mapping</button>
+            <button class="example-pill" id="example-hardlink">Hardlink / atomic move</button>
+            <button class="example-pill" id="example-permission">Permission denied</button>
+            <button class="example-pill" id="example-path-not-found">Path not found</button>
+            <button class="example-pill" id="example-named-volume">Named volume</button>
+            <button class="example-pill" id="example-puid-mismatch">PUID/PGID mismatch</button>
+            <button class="example-pill" id="example-missing-puid">Missing PUID/PGID</button>
+            <button class="example-pill" id="example-root">Running as root</button>
+            <button class="example-pill" id="example-umask">UMASK issue</button>
+            <button class="example-pill" id="example-cross-stack">Cross-stack UID</button>
+            <button class="example-pill" id="example-nfs">NFS / remote mount</button>
+            <button class="example-pill" id="example-wsl2">WSL2 slow I/O</button>
+            <button class="example-pill" id="example-mixed-mounts">Mixed mount types</button>
+            <button class="example-pill" id="example-windows-path">Windows path</button>
+            <button class="example-pill" id="example-disk-space">Disk full</button>
         </div>
         <div class="step-actions">
-            <button id="btn-parse" class="btn btn-primary" onclick="parseError()">
+            <button id="btn-parse" class="btn btn-primary">
                 Analyze Error
             </button>
-            <button class="btn btn-subtle" onclick="switchToBrowseMode()" title="Skip error diagnosis — browse all your stacks and check for path issues directly">
+            <button class="btn btn-subtle" id="btn-skip-to-browse" title="Skip error diagnosis — browse all your stacks and check for path issues directly">
                 <span class="btn-icon">&#128269;</span> Skip — browse stacks instead
             </button>
         </div>
@@ -141,7 +155,7 @@
             <p class="step-desc" style="color: var(--warning);">
                 Couldn't auto-match a stack for this service.
             </p>
-            <button class="btn btn-subtle btn-sm" onclick="switchToBrowseMode()">
+            <button class="btn btn-subtle btn-sm" id="btn-browse-fallback">
                 <span class="btn-icon">&#128269;</span> Browse all stacks manually
             </button>
         </div>
@@ -165,6 +179,7 @@
         <div class="stack-filter hidden" id="stack-filter">
             <div class="stack-filter-search">
                 <input type="text" id="stack-filter-input" class="path-input quick-switch-input"
+                       aria-label="Filter stacks by name"
                        placeholder="Search stacks — type to filter..." spellcheck="false" />
                 <div class="quick-switch-results hidden" id="stack-filter-results"></div>
             </div>
@@ -188,10 +203,10 @@
         <div id="stacks-search-note" class="search-note"></div>
         <div class="path-change" id="path-change">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <button class="btn btn-subtle btn-sm" id="btn-change-path" onclick="togglePathInput()">
+                <button class="btn btn-subtle btn-sm" id="btn-change-path">
                     <span class="btn-icon">&#9881;</span> Change scan path
                 </button>
-                <button class="btn btn-subtle btn-sm" onclick="switchToFixMode()">
+                <button class="btn btn-subtle btn-sm" id="btn-switch-to-fix">
                     <span class="btn-icon">&#128295;</span> Have an error to fix?
                 </button>
             </div>
@@ -205,11 +220,12 @@
                         type="text"
                         id="custom-path-input"
                         class="path-input"
+                        aria-label="Custom stacks directory path"
                         placeholder="/path/to/your/stacks"
                         spellcheck="false"
                     />
-                    <button class="btn btn-primary btn-sm" onclick="changeStacksPath()">Scan</button>
-                    <button class="btn btn-ghost btn-sm" onclick="resetStacksPath()">Reset</button>
+                    <button class="btn btn-primary btn-sm" id="btn-change-path-scan">Scan</button>
+                    <button class="btn btn-ghost btn-sm" id="btn-reset-path">Reset</button>
                 </div>
             </div>
         </div>
@@ -270,18 +286,18 @@
         </div>
         <p class="step-desc" id="solution-summary"></p>
         <div class="solution-tabs" id="solution-tabs">
-            <button class="solution-tab active" data-tab="recommended" onclick="switchSolutionTab('recommended')">Recommended Fix</button>
-            <button class="solution-tab hidden" data-tab="original" onclick="switchSolutionTab('original')">Your Config (Corrected)</button>
+            <button class="solution-tab active" data-tab="recommended" id="tab-recommended">Recommended Fix</button>
+            <button class="solution-tab hidden" data-tab="original" id="tab-original">Your Config (Corrected)</button>
         </div>
         <div class="code-block" id="solution-block-recommended">
             <pre id="solution-yaml"></pre>
-            <button class="copy-btn" id="btn-copy" onclick="copySolutionYaml()">Copy to Clipboard</button>
+            <button class="copy-btn" id="btn-copy">Copy to Clipboard</button>
         </div>
         <div class="code-block hidden" id="solution-block-original">
             <pre id="solution-yaml-original"></pre>
             <div class="solution-actions">
-                <button class="copy-btn" id="btn-copy-original" onclick="copySolutionYaml()">Copy to Clipboard</button>
-                <button class="apply-btn" id="btn-apply-fix" onclick="applyFix()">Apply Fix</button>
+                <button class="copy-btn" id="btn-copy-original">Copy to Clipboard</button>
+                <button class="apply-btn" id="btn-apply-fix">Apply Fix</button>
             </div>
         </div>
         <!-- Apply fix confirmation modal -->
@@ -292,7 +308,7 @@
                 <p class="apply-confirm-note">This will overwrite your compose file with the corrected version from the "Your Config" tab. A backup (.bak) will be created first. Your stack will NOT be restarted automatically — you'll need to restart it yourself after applying.</p>
                 <div class="apply-confirm-buttons">
                     <button class="apply-confirm-yes" id="apply-confirm-yes">Apply Fix</button>
-                    <button class="apply-confirm-no" onclick="cancelApplyFix()">Cancel</button>
+                    <button class="apply-confirm-no" id="btn-cancel-apply">Cancel</button>
                 </div>
             </div>
         </div>
@@ -348,13 +364,13 @@
     <!-- Analyze Another -->
     <section class="card hidden" id="step-again">
         <div class="step-actions" style="justify-content: center; gap: 0.75rem;">
-            <button class="btn btn-primary" onclick="analyzeAnother()">
+            <button class="btn btn-primary" id="btn-analyze-another">
                 Analyze Another Stack
             </button>
-            <button class="btn btn-subtle" onclick="copyDiagnosticSummary()">
+            <button class="btn btn-subtle" id="btn-copy-diagnostic">
                 <span class="btn-icon">&#128203;</span> Copy Diagnostic
             </button>
-            <button class="btn btn-subtle" onclick="startOver()">
+            <button class="btn btn-subtle" id="btn-start-over">
                 <span class="btn-icon">&#8634;</span> Start Over
             </button>
         </div>
@@ -370,19 +386,19 @@
     <div class="log-panel-header">
         <span class="log-panel-title">Application Logs</span>
         <div class="log-panel-controls">
-            <select id="log-level-filter" class="log-filter-select" title="Filter by level">
+            <select id="log-level-filter" class="log-filter-select" title="Filter by level" aria-label="Filter log level">
                 <option value="">All levels</option>
                 <option value="INFO" selected>INFO+</option>
                 <option value="WARNING">WARN+</option>
                 <option value="ERROR">ERROR+</option>
             </select>
-            <button class="log-btn" id="log-download-btn" title="Download logs as text file">
+            <button class="log-btn" id="log-download-btn" title="Download logs as text file" aria-label="Download logs">
                 <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75zM7.25 7.689V2a.75.75 0 011.5 0v5.689l1.97-1.969a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 6.78a.749.749 0 111.06-1.06l1.97 1.969z"/></svg>
             </button>
-            <button class="log-btn" id="log-clear-btn" title="Clear logs">
+            <button class="log-btn" id="log-clear-btn" title="Clear logs" aria-label="Clear logs">
                 <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
             </button>
-            <button class="log-btn" id="log-close-btn" title="Close log panel">
+            <button class="log-btn" id="log-close-btn" title="Close log panel" aria-label="Close log panel">
                 <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M3.47 7.78a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0l4.25 4.25a.751.751 0 01-.018 1.042.751.751 0 01-1.042.018L9.25 5.06v7.19a.75.75 0 01-1.5 0V5.06L5.03 7.78a.75.75 0 01-1.06 0z"/></svg>
             </button>
         </div>
@@ -393,24 +409,24 @@
 <!-- ─── Footer ─── -->
 <footer class="footer">
     <span class="footer-version" id="footer-version">MapArr</span>
-    <button class="footer-log-toggle" id="footer-log-toggle" title="View application logs">
+    <button class="footer-log-toggle" id="footer-log-toggle" title="View application logs" aria-label="Toggle log panel">
         <svg viewBox="0 0 16 16" width="14" height="14"><path fill="currentColor" d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v3.585a.746.746 0 010 .83v8.085A1.75 1.75 0 0114.25 16H6.5a.75.75 0 010-1.5h7.75a.25.25 0 00.25-.25V6.96l-1.616.832a.75.75 0 01-.768-1.29L14.25 5.32V1.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25H3a.75.75 0 010 1.5H1.75A1.75 1.75 0 010 9.25V1.75zM1.5 2.5h13v1H1.5v-1zm0 2.5h13v1H1.5V5z"/></svg>
         <span id="log-badge" class="log-badge hidden">0</span>
     </button>
     <nav class="footer-links">
-        <a class="footer-icon" href="https://github.com/coaxk" target="_blank" rel="noopener" data-tooltip="GitHub">
+        <a class="footer-icon" href="https://github.com/coaxk" target="_blank" rel="noopener" data-tooltip="GitHub" aria-label="GitHub">
             <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         </a>
-        <a class="footer-icon" href="https://github.com/coaxk/maparr/discussions" target="_blank" rel="noopener" data-tooltip="Support">
+        <a class="footer-icon" href="https://github.com/coaxk/maparr/discussions" target="_blank" rel="noopener" data-tooltip="Support" aria-label="Support discussions">
             <svg viewBox="0 0 16 16"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25H5.5v2.543L8.06 10.5h5.19a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25H2.75z"/></svg>
         </a>
-        <a class="footer-icon" href="https://github.com/coaxk/maparr/issues" target="_blank" rel="noopener" data-tooltip="Report a Bug">
+        <a class="footer-icon" href="https://github.com/coaxk/maparr/issues" target="_blank" rel="noopener" data-tooltip="Report a Bug" aria-label="Report a bug">
             <svg viewBox="0 0 16 16"><path d="M4.72.22a.75.75 0 011.06 0l1.204 1.203A3.98 3.98 0 018 1.25c.373 0 .733.051 1.075.148L10.22.22a.75.75 0 111.06 1.06l-.857.858c.457.456.789 1.034.95 1.674h1.877a.75.75 0 010 1.5h-1.564a4.013 4.013 0 01-.088.59l1.652.826a.75.75 0 11-.67 1.342l-1.455-.727A3.996 3.996 0 018 9.25a3.996 3.996 0 01-3.125-1.507l-1.455.727a.75.75 0 11-.67-1.342l1.652-.826a4.013 4.013 0 01-.088-.59H2.75a.75.75 0 010-1.5h1.877c.161-.64.493-1.218.95-1.674L4.72 1.28a.75.75 0 010-1.06zM6.173 5h3.654A2.5 2.5 0 008 3.75 2.5 2.5 0 006.173 5zM5.25 6.5a2.75 2.75 0 005.5 0v-.5h-5.5v.5zM4 12.25a.75.75 0 01.75-.75h6.5a.75.75 0 010 1.5h-6.5a.75.75 0 01-.75-.75zM4.75 14a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z"/></svg>
         </a>
-        <a class="footer-icon" href="https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/" target="_blank" rel="noopener" data-tooltip="TRaSH Guides">
+        <a class="footer-icon" href="https://trash-guides.info/File-and-Folder-Structure/How-to-set-up/Docker/" target="_blank" rel="noopener" data-tooltip="TRaSH Guides" aria-label="TRaSH Guides">
             <svg viewBox="0 0 16 16"><path d="M0 1.75A.75.75 0 01.75 1h4.253c1.227 0 2.317.59 3 1.501A3.744 3.744 0 0111.006 1h4.245a.75.75 0 01.75.75v10.5a.75.75 0 01-.75.75h-4.507a2.25 2.25 0 00-1.591.659l-.622.621a.75.75 0 01-1.06 0l-.622-.621A2.25 2.25 0 005.258 13H.75a.75.75 0 01-.75-.75V1.75zm7.251 10.324l.004-5.073-.002-2.253A2.25 2.25 0 005.003 2.5H1.5v9h3.757a3.75 3.75 0 011.994.574zM8.755 4.75l-.004 7.322a3.752 3.752 0 011.992-.572H14.5v-9h-3.495a2.25 2.25 0 00-2.25 2.25z"/></svg>
         </a>
-        <a class="footer-icon" href="https://github.com/coaxk/maparr/blob/main/LICENSE" target="_blank" rel="noopener" data-tooltip="MIT License">
+        <a class="footer-icon" href="https://github.com/coaxk/maparr/blob/main/LICENSE" target="_blank" rel="noopener" data-tooltip="MIT License" aria-label="MIT License">
             <svg viewBox="0 0 16 16"><path d="M8.75.75a.75.75 0 00-1.5 0V2h-3a1 1 0 00-1 1v2.5a1 1 0 001 1h3v1H4.75a1 1 0 00-1 1V11a1 1 0 001 1H7.25v3.25a.75.75 0 001.5 0V12h2.5a1 1 0 001-1V8.5a1 1 0 00-1-1H8.75v-1h3a1 1 0 001-1V3a1 1 0 00-1-1h-3V.75zM11.25 3.5v1.5h-6.5V3.5h6.5zm-6.5 5.5h6.5V10.5h-6.5V9z"/></svg>
         </a>
     </nav>
