@@ -87,8 +87,8 @@
             <h2>Paste Your Error</h2>
         </div>
         <p class="step-desc">
-            Paste the error from your *arr app's Activity &gt; Queue page or System &gt; Status health check.
-            MapArr will extract the service, path, and error type automatically.
+            Paste the error from Sonarr, Radarr, or any *arr app — check Activity &gt; Queue
+            or System &gt; Status. MapArr detects the service, path, and error type automatically.
         </p>
         <textarea
             id="error-input"
@@ -102,14 +102,15 @@
             <span class="example-label">Try an example:</span>
             <button class="example-pill" onclick="fillExample('import')">Import failed</button>
             <button class="example-pill" onclick="fillExample('remote')">Remote path mapping</button>
+            <button class="example-pill" onclick="fillExample('hardlink')">Hardlink / atomic move</button>
             <button class="example-pill" onclick="fillExample('permission')">Permission denied</button>
         </div>
         <div class="step-actions">
             <button id="btn-parse" class="btn btn-primary" onclick="parseError()">
                 Analyze Error
             </button>
-            <button class="btn btn-subtle" onclick="switchToBrowseMode()">
-                <span class="btn-icon">&#128269;</span> Analyze a stack instead
+            <button class="btn btn-subtle" onclick="switchToBrowseMode()" title="Skip error diagnosis — browse all your stacks and check for path issues directly">
+                <span class="btn-icon">&#128269;</span> Skip — browse stacks instead
             </button>
         </div>
     </section>

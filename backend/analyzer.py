@@ -374,6 +374,7 @@ def analyze_stack(
 
     stack_name = os.path.basename(stack_path)
     logger.info("Starting analysis of %s (via %s)", stack_name, resolution_method)
+    logger.info("Step 1/6: Reading compose file and identifying services...")
     if error_service:
         logger.info("Error context: service=%s path=%s", error_service, error_path or "none")
 
@@ -392,6 +393,11 @@ def analyze_stack(
     dl_names = [s.name for s in services if s.role == "download_client"]
     ms_names = [s.name for s in services if s.role == "media_server"]
     steps.append({"icon": "ok", "text": f"Found {len(services)} services ({len(participants)} media-related)"})
+    for svc_info in services:
+        vol_count = len(svc_info.volumes)
+        logger.info("  Service: %s — %d volume mount%s", svc_info.name, vol_count, "s" if vol_count != 1 else "")
+        for v in svc_info.volumes:
+            logger.info("    %s → %s", v.source or "?", v.target or "?")
     if arr_names:
         steps.append({"icon": "info", "text": f"*arr apps: {', '.join(arr_names)}"})
     if dl_names:
@@ -403,6 +409,7 @@ def analyze_stack(
     total_vols = sum(len(s.volumes) for s in services)
     data_vols = sum(len(s.data_paths) for s in services)
     steps.append({"icon": "ok", "text": f"Scanned {total_vols} volume mounts ({data_vols} data paths)"})
+    logger.info("Step 2/6: Checking for path conflicts between services...")
 
     # Step 4: Detect conflicts
     conflicts = _detect_conflicts(services, error_service, error_path, pipeline_context)
@@ -413,6 +420,7 @@ def analyze_stack(
         steps.append({"icon": "warn", "text": f"Detected {len(conflicts)} path conflict{'s' if len(conflicts) != 1 else ''}"})
     else:
         steps.append({"icon": "ok", "text": "No path conflicts detected"})
+    logger.info("Step 3/6: Running permission checks (PUID/PGID/UMASK)...")
 
     # Step 4b: Permissions analysis
     perm_conflicts = _check_permissions(services, pipeline_context)
@@ -424,6 +432,7 @@ def analyze_stack(
         steps.append({"icon": "warn", "text": f"Detected {len(perm_conflicts)} permission issue{'s' if len(perm_conflicts) != 1 else ''}"})
     else:
         steps.append({"icon": "ok", "text": "Permissions check passed"})
+    logger.info("Step 4/6: Classifying mount types (data vs config vs remote)...")
 
     # Step 5: Mount intelligence
     mount_classifications, mount_warnings = _analyze_mounts(services)
@@ -441,6 +450,7 @@ def analyze_stack(
 
     # Promote remote-FS warnings to conflicts
     _add_mount_conflicts(conflicts, mount_classifications, services)
+    logger.info("Step 5/6: Running platform compatibility checks...")
 
     # Step 5b: Platform recommendations
     platform_conflicts = _check_platform(services, mount_classifications, pipeline_context)
@@ -490,6 +500,8 @@ def analyze_stack(
                             ),
                             detail=f"Pipeline majority root: {majority_root}",
                         ))
+
+    logger.info("Step 6/6: Generating fix recommendations...")
 
     # Step 6: Generate fixes
     _generate_fixes(conflicts, services)

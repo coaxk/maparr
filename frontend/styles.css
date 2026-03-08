@@ -3117,6 +3117,16 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 .log-badge.hidden { display: none; }
 
+/* Pulse animation to draw attention to log panel during analysis */
+.log-toggle-pulse {
+    animation: log-pulse 1.5s ease-in-out 3;
+}
+
+@keyframes log-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; transform: scale(1.15); }
+}
+
 /* ─── Toast Notifications ─── */
 
 .toast-container {

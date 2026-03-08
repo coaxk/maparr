@@ -121,7 +121,9 @@ async function runBootSequence(backendOnline, discData) {
 
     // Backend online — let each line land before the next
     await bootAddLine("ok", "Backend connected", 0);
-    await bootAddLine("run", "Scanning for Docker stacks...", 400);
+    const scanPath = (discData.scan_path || "").replace(/\\/g, "/");
+    const displayScanPath = scanPath.length > 40 ? "..." + scanPath.slice(-37) : scanPath;
+    await bootAddLine("run", "Scanning " + (displayScanPath || "default locations") + "...", 400);
 
     if (!discData || !discData.stacks || discData.stacks.length === 0) {
         await bootAddLine("warn", "No compose stacks found in common locations", 600);
@@ -888,6 +890,7 @@ const _ERROR_KEYWORDS = {
     "path not found": /\b(path\s+(does\s+)?not\s+exist|no\s+such\s+file|not\s+found|not\s+accessible)\b/i,
     "permission denied": /\b(permission\s+denied|access\s+denied|EACCES)\b/i,
     "cross-device link": /\b(cross[- ]device\s+link|EXDEV|rename\s+.*across)\b/i,
+    "hardlink failure": /\b(hardlink|hard\s*link|atomic\s+move)\b/i,
     "remote path mapping": /\b(remote\s+path\s+mapp?ing)\b/i,
     "disk space": /\b(no\s+space|disk\s+full|ENOSPC)\b/i,
 };
@@ -951,9 +954,10 @@ function updateLivePreview(text) {
 
 function fillExample(type) {
     const examples = {
-        import: "Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01/Episode.mkv",
-        remote: "Download client qBittorrent places downloads in /downloads/tv but this directory is not reachable from Radarr. Remote path mapping may be needed.",
-        permission: "Access to the path '/data/media/movies/Movie Name (2024)' is denied. Sonarr does not have permission.",
+        import: "Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01/Episode.mkv. Ensure the path exists and the user running Sonarr has the correct permissions to access this file.",
+        remote: "Download client qBittorrent places downloads in /downloads/tv but this directory does not appear to exist inside the container. You may need a Remote Path Mapping in Radarr (Settings > Download Clients > Remote Path Mappings).",
+        hardlink: "Invalid cross-device link: rename '/downloads/complete/Movie.Name.2024.mkv' -> '/data/media/movies/Movie Name (2024)/Movie.Name.2024.mkv'. Sonarr cannot create hardlinks across different mount points.",
+        permission: "Access to the path '/data/media/movies/Movie Name (2024)' is denied. Radarr does not have permission to write to this directory. Check PUID/PGID match between containers.",
     };
     const textarea = document.getElementById("error-input");
     if (!textarea || !examples[type]) return;
@@ -1733,6 +1737,16 @@ async function runAnalysis(stack) {
     const termOutput = document.getElementById("terminal-output");
     termOutput.replaceChildren();
     setTerminalDots("running");
+
+    // Auto-expand log panel during analysis so users see detailed backend logs.
+    if (!_logState.panelOpen) {
+        const toggle = document.getElementById("footer-log-toggle");
+        if (toggle) {
+            toggle.classList.add("log-toggle-pulse");
+            setTimeout(() => toggle.classList.remove("log-toggle-pulse"), 15000);
+        }
+    }
+
     const composeFile = stack.compose_file || "docker-compose.yml";
     const composeFileName = composeFile.split(/[/\\]/).pop();
     const stackDirName = extractDirName(stack.path);
@@ -5727,6 +5741,10 @@ function openLogPanel() {
     // Flip close arrow to point down (panel is open, click to close/collapse)
     const closeBtn = document.getElementById("log-close-btn");
     if (closeBtn) closeBtn.classList.add("log-btn-flip");
+
+    // Clear any analysis-triggered pulse
+    const toggle = document.getElementById("footer-log-toggle");
+    if (toggle) toggle.classList.remove("log-toggle-pulse");
 
     // Clear error badge when panel is opened
     _logState.errorCount = 0;
