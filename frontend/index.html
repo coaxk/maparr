@@ -11,17 +11,35 @@
 
 <!-- ─── Header ─── -->
 <header class="header">
-    <a class="header-brand" href="/" id="header-brand-link">
-        <h1 class="logo">MapArr</h1>
-        <span class="tagline">Path Mapping Problem Solver</span>
-    </a>
-    <div class="header-status" id="health-status"></div>
+    <div class="header-left">
+        <a class="header-brand" href="/" id="header-brand-link">
+            <h1 class="logo">MapArr</h1>
+            <span class="tagline">Pipeline Dashboard</span>
+        </a>
+    </div>
+    <div class="header-right">
+        <div class="path-selector" id="path-selector">
+            <span class="path-icon">&#128193;</span>
+            <button class="path-display" id="header-path" aria-label="Change stacks directory">
+                <span id="header-path-text">No directory selected</span>
+                <span class="path-chevron">&#9662;</span>
+            </button>
+            <div class="path-editor hidden" id="path-editor">
+                <input type="text" id="header-path-input" class="path-input"
+                       placeholder="/path/to/stacks" spellcheck="false"
+                       aria-label="Enter new stacks path" />
+                <button class="btn btn-primary btn-sm" id="header-path-go">Scan</button>
+            </div>
+        </div>
+        <span class="service-count" id="service-count"></span>
+        <div class="header-status" id="health-status"></div>
+    </div>
 </header>
 
 <!-- ─── Main Content ─── -->
 <main class="main">
 
-    <!-- Boot Screen — discovery-first entry -->
+    <!-- Boot Screen — discovery terminal -->
     <section class="card" id="boot-screen">
         <div class="boot-terminal">
             <div class="terminal-header">
@@ -34,14 +52,42 @@
         </div>
     </section>
 
-    <!-- Zero Stacks — shown when discovery finds nothing -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- FIRST LAUNCH — no directory configured          -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <section class="card hidden" id="first-launch">
+        <div class="first-launch-content">
+            <h2>Where are your Docker stacks?</h2>
+            <p class="step-desc">
+                Enter the root directory that contains your compose files &mdash;
+                either one big stack or separate folders per service.
+            </p>
+            <div class="first-launch-input">
+                <input type="text" id="first-launch-path" class="path-input"
+                       placeholder="/opt/docker"
+                       aria-label="Stacks directory path" spellcheck="false" />
+                <button id="first-launch-scan" class="btn btn-primary">Scan</button>
+            </div>
+            <p class="first-launch-examples">
+                Examples: <code class="inline-code">/opt/docker</code>
+                <code class="inline-code">/home/user/stacks</code>
+                <code class="inline-code">C:\DockerContainers</code>
+            </p>
+            <p class="hint boot-hint">
+                Running in Docker? Mount your stacks:
+                <code class="inline-code">-v /path/to/stacks:/stacks:ro</code>
+            </p>
+        </div>
+    </section>
+
+    <!-- Zero Stacks — shown when scan finds nothing -->
     <section class="card hidden" id="boot-no-stacks">
         <div class="step-header">
             <h2>No Docker Stacks Found</h2>
         </div>
         <p class="step-desc">
-            MapArr scanned common locations but couldn't find any compose stacks.
-            Point it at your stacks directory to get started.
+            MapArr scanned but couldn't find any compose stacks.
+            Check the path and try again.
         </p>
         <div class="boot-path-row">
             <input type="text" id="boot-path-input" class="path-input"
@@ -54,199 +100,64 @@
             Running in Docker? Mount your stacks:
             <code class="inline-code">-v /path/to/stacks:/stacks:ro</code>
         </p>
-        <p class="hint boot-hint-nudge">
-            You can always change the scan directory later from the path in the header.
-        </p>
-    </section>
-
-    <!-- Mode Selector — the fork in the road (hidden until boot completes) -->
-    <section class="card hidden" id="step-mode">
-        <div class="step-header">
-            <h2>What would you like to do?</h2>
-            <p class="boot-context-line hidden" id="mode-context"></p>
-        </div>
-        <p class="step-desc">
-            MapArr analyzes your Docker Compose volume mounts to find path conflicts that break
-            hardlinks, imports, and atomic moves. Paste an error to get a targeted fix, or browse
-            your stacks for a full health check.
-        </p>
-        <div class="mode-selector">
-            <button class="mode-btn" id="mode-fix">
-                <span class="mode-icon">&#128295;</span>
-                <span class="mode-title" id="mode-fix-title">Fix an Error</span>
-                <span class="mode-desc">Paste an error from Sonarr, Radarr, or any *arr app and MapArr will diagnose the root cause and generate corrected YAML</span>
-            </button>
-            <button class="mode-btn" id="mode-browse">
-                <span class="mode-icon">&#128269;</span>
-                <span class="mode-title" id="mode-browse-title">Analyze Your Stacks</span>
-                <span class="mode-desc">Scan all your Docker stacks for mount conflicts, permission issues, and hardlink compatibility</span>
-            </button>
-        </div>
     </section>
 
     <!-- ═══════════════════════════════════════════════ -->
-    <!-- FIX MODE: Error Input                          -->
+    <!-- PIPELINE DASHBOARD — service-first view         -->
     <!-- ═══════════════════════════════════════════════ -->
-    <section class="card hidden" id="step-error">
-        <div class="step-header">
-            <span class="step-number">1</span>
-            <h2>Paste Your Error</h2>
-        </div>
-        <p class="step-desc">
-            Paste the error from Sonarr, Radarr, or any *arr app — check Activity &gt; Queue
-            or System &gt; Status. MapArr detects the service, path, and error type automatically.
-        </p>
-        <textarea
-            id="error-input"
-            class="error-textarea"
-            aria-label="Paste your error message here"
-            placeholder="Import failed, path does not exist or is not accessible by Sonarr: /data/tv/Show Name/Season 01/Episode.mkv"
-            rows="5"
-            spellcheck="false"
-        ></textarea>
-        <div id="error-live-preview" class="error-live-preview"></div>
-        <div class="example-errors" id="example-errors">
-            <span class="example-label">Try an example:</span>
-            <button class="example-pill" id="example-import">Import failed</button>
-            <button class="example-pill" id="example-remote">Remote path mapping</button>
-            <button class="example-pill" id="example-hardlink">Hardlink / atomic move</button>
-            <button class="example-pill" id="example-permission">Permission denied</button>
-            <button class="example-pill" id="example-path-not-found">Path not found</button>
-            <button class="example-pill" id="example-named-volume">Named volume</button>
-            <button class="example-pill" id="example-puid-mismatch">PUID/PGID mismatch</button>
-            <button class="example-pill" id="example-missing-puid">Missing PUID/PGID</button>
-            <button class="example-pill" id="example-root">Running as root</button>
-            <button class="example-pill" id="example-umask">UMASK issue</button>
-            <button class="example-pill" id="example-cross-stack">Cross-stack UID</button>
-            <button class="example-pill" id="example-nfs">NFS / remote mount</button>
-            <button class="example-pill" id="example-wsl2">WSL2 slow I/O</button>
-            <button class="example-pill" id="example-mixed-mounts">Mixed mount types</button>
-            <button class="example-pill" id="example-windows-path">Windows path</button>
-            <button class="example-pill" id="example-disk-space">Disk full</button>
-        </div>
-        <div class="step-actions">
-            <button id="btn-parse" class="btn btn-primary">
-                Analyze Error
-            </button>
-            <button class="btn btn-subtle" id="btn-skip-to-browse" title="Skip error diagnosis — browse all your stacks and check for path issues directly">
-                <span class="btn-icon">&#128269;</span> Skip — browse stacks instead
-            </button>
-        </div>
-    </section>
+    <section class="hidden" id="pipeline-dashboard">
 
-    <!-- FIX MODE: Parse Result -->
-    <section class="card hidden" id="step-parse-result">
-        <div class="step-header">
-            <span class="step-number ok">&#10003;</span>
-            <h2>What We Found</h2>
-        </div>
-        <div id="parse-details" class="parse-details"></div>
-    </section>
-
-    <!-- FIX MODE: Matching stacks (filtered, compact) -->
-    <section class="card hidden" id="step-fix-match">
-        <div class="step-header">
-            <span class="step-number">2</span>
-            <h2 id="fix-match-heading">Matching Stack</h2>
-        </div>
-        <p class="step-desc" id="fix-match-desc"></p>
-        <div id="fix-match-list" class="stacks-list"></div>
-        <div id="fix-match-empty" class="hidden" style="margin-top: 0.5rem;">
-            <p class="step-desc" style="color: var(--warning);">
-                Couldn't auto-match a stack for this service.
-            </p>
-            <button class="btn btn-subtle btn-sm" id="btn-browse-fallback">
-                <span class="btn-icon">&#128269;</span> Browse all stacks manually
-            </button>
-        </div>
-    </section>
-
-    <!-- ═══════════════════════════════════════════════ -->
-    <!-- BROWSE MODE: Stack Selection                   -->
-    <!-- ═══════════════════════════════════════════════ -->
-    <section class="card hidden" id="step-stacks">
-        <div class="step-header">
-            <span class="step-number">1</span>
-            <h2>Select a Stack to Analyze</h2>
-        </div>
-        <p class="step-desc" id="stacks-desc">
-            Choose a Docker Compose stack to check for path mapping issues.
-        </p>
-        <div id="stacks-loading" class="loading">
-            <div class="spinner"></div>
-            <span>Scanning for compose stacks...</span>
-        </div>
-        <div class="stack-filter hidden" id="stack-filter">
-            <div class="stack-filter-search">
-                <input type="text" id="stack-filter-input" class="path-input quick-switch-input"
-                       aria-label="Filter stacks by name"
-                       placeholder="Search stacks — type to filter..." spellcheck="false" />
-                <div class="quick-switch-results hidden" id="stack-filter-results"></div>
+        <!-- Health Banner -->
+        <div class="health-banner" id="health-banner">
+            <div class="health-banner-status">
+                <span class="health-banner-icon" id="health-banner-icon"></span>
+                <span class="health-banner-text" id="health-banner-text"></span>
             </div>
+            <div class="health-banner-actions" id="health-banner-actions"></div>
         </div>
-        <div id="stacks-list" class="stacks-list hidden"></div>
-        <div id="stacks-empty" class="empty-state hidden">
-            <p>No compose stacks found.</p>
-            <p class="hint">
-                If running MapArr in Docker, mount your stacks directory:
-            </p>
-            <div class="hint-examples">
-                <code>docker run -v /path/to/stacks:/stacks:ro -p 9494:9494 maparr</code>
-                <span class="hint-label">Or in your compose file:</span>
-                <code>volumes:<br>&nbsp;&nbsp;- /path/to/stacks:/stacks:ro</code>
-                <span class="hint-label hint-muted">Windows? Use your actual path: <code class="inline-code">C:/DockerContainers:/stacks:ro</code></span>
+
+        <!-- Service Groups (populated by JS — one group per role) -->
+        <div id="service-groups"></div>
+
+        <!-- Conflict Cards (populated by JS when issues detected) -->
+        <div id="conflict-cards"></div>
+
+        <!-- Error Paste Bar — persistent, always visible -->
+        <div class="paste-bar" id="paste-bar">
+            <div class="paste-bar-input">
+                <textarea id="paste-error-input" rows="1"
+                          placeholder="Select a directory to get started"
+                          aria-label="Paste error text" disabled></textarea>
+                <button id="paste-error-go" class="btn btn-primary btn-sm" disabled>Go</button>
             </div>
-            <p class="hint">
-                Not running in Docker? Use <em>Change scan path</em> below to point MapArr at your stacks directory.
-            </p>
-        </div>
-        <div id="stacks-search-note" class="search-note"></div>
-        <div class="path-change" id="path-change">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <button class="btn btn-subtle btn-sm" id="btn-change-path">
-                    <span class="btn-icon">&#9881;</span> Change scan path
-                </button>
-                <button class="btn btn-subtle btn-sm" id="btn-switch-to-fix">
-                    <span class="btn-icon">&#128295;</span> Have an error to fix?
-                </button>
+            <div class="paste-bar-examples" id="paste-bar-examples">
+                <span class="example-label">Try:</span>
+                <button class="example-pill paste-pill" data-example="import">Import failed</button>
+                <button class="example-pill paste-pill" data-example="hardlink">Hardlink issue</button>
+                <button class="example-pill paste-pill" data-example="permission">Permission denied</button>
+                <button class="example-pill paste-pill" data-example="remote">Remote path</button>
             </div>
-            <div class="path-input-row hidden" id="path-input-row">
-                <div class="detected-dirs hidden" id="detected-dirs">
-                    <span class="detected-dirs-label">Detected locations:</span>
-                    <div class="detected-dirs-list" id="detected-dirs-list"></div>
-                </div>
-                <div class="manual-entry-row">
-                    <input
-                        type="text"
-                        id="custom-path-input"
-                        class="path-input"
-                        aria-label="Custom stacks directory path"
-                        placeholder="/path/to/your/stacks"
-                        spellcheck="false"
-                    />
-                    <button class="btn btn-primary btn-sm" id="btn-change-path-scan">Scan</button>
-                    <button class="btn btn-ghost btn-sm" id="btn-reset-path">Reset</button>
-                </div>
-            </div>
+            <div class="paste-bar-result hidden" id="paste-bar-result"></div>
         </div>
     </section>
 
     <!-- ═══════════════════════════════════════════════ -->
-    <!-- SHARED: Analysis Results                       -->
+    <!-- ANALYSIS DETAIL CARDS (service drill-down)      -->
+    <!-- Shown inline when analyzing a specific service  -->
     <!-- ═══════════════════════════════════════════════ -->
 
     <!-- Analysis Terminal -->
     <section class="card hidden" id="step-analyzing">
         <div class="step-header">
-            <span class="step-number">3</span>
-            <h2>Analyzing Your Stack</h2>
+            <span class="step-number">&#8943;</span>
+            <h2>Analyzing</h2>
         </div>
         <div class="terminal" id="analysis-terminal">
             <div class="terminal-header">
                 <span class="terminal-dot" id="dot-red"></span>
                 <span class="terminal-dot" id="dot-yellow"></span>
                 <span class="terminal-dot" id="dot-green"></span>
-                <span class="terminal-title">maparr — analysis</span>
+                <span class="terminal-title">maparr &mdash; analysis</span>
             </div>
             <div class="terminal-body" id="terminal-output">
                 <div class="terminal-line">
@@ -257,7 +168,7 @@
         </div>
     </section>
 
-    <!-- The Problem (shown first — users want the punchline) -->
+    <!-- The Problem -->
     <section class="card hidden" id="step-problem">
         <div class="step-header">
             <span class="step-number problem-icon">!</span>
@@ -266,7 +177,7 @@
         <div id="problem-details"></div>
     </section>
 
-    <!-- Your Current Setup (evidence table) -->
+    <!-- Your Current Setup -->
     <section class="card hidden" id="step-current-setup">
         <div class="step-header">
             <span class="step-number info-icon">i</span>
@@ -305,7 +216,7 @@
             <div class="apply-confirm-content">
                 <p class="apply-confirm-title">Apply fix to your compose file?</p>
                 <p class="apply-confirm-detail" id="apply-confirm-file"></p>
-                <p class="apply-confirm-note">This will overwrite your compose file with the corrected version from the "Your Config" tab. A backup (.bak) will be created first. Your stack will NOT be restarted automatically — you'll need to restart it yourself after applying.</p>
+                <p class="apply-confirm-note">This will overwrite your compose file with the corrected version from the "Your Config" tab. A backup (.bak) will be created first.</p>
                 <div class="apply-confirm-buttons">
                     <button class="apply-confirm-yes" id="apply-confirm-yes">Apply Fix</button>
                     <button class="apply-confirm-no" id="btn-cancel-apply">Cancel</button>
@@ -343,7 +254,7 @@
         <div id="trash-details"></div>
     </section>
 
-    <!-- Healthy Result (no conflicts) -->
+    <!-- Healthy Result -->
     <section class="card hidden" id="step-healthy">
         <div class="step-header">
             <span class="step-number ok">&#10003;</span>
@@ -361,17 +272,14 @@
         <div id="analysis-error-details"></div>
     </section>
 
-    <!-- Analyze Another -->
+    <!-- Back to Dashboard -->
     <section class="card hidden" id="step-again">
         <div class="step-actions" style="justify-content: center; gap: 0.75rem;">
-            <button class="btn btn-primary" id="btn-analyze-another">
-                Analyze Another Stack
+            <button class="btn btn-primary" id="btn-back-to-dashboard">
+                Back to Dashboard
             </button>
             <button class="btn btn-subtle" id="btn-copy-diagnostic">
                 <span class="btn-icon">&#128203;</span> Copy Diagnostic
-            </button>
-            <button class="btn btn-subtle" id="btn-start-over">
-                <span class="btn-icon">&#8634;</span> Start Over
             </button>
         </div>
     </section>
