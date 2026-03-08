@@ -1,4 +1,4 @@
-# MapArr — Web Project (v1.5.0)
+# MapArr — Web Project (v2.0.0-dev)
 
 ## What This Is
 Path Mapping Problem Solver for Docker *arr apps. Web UI with FastAPI backend.
@@ -9,7 +9,7 @@ Recognizes 207+ Docker images across 7 families via a JSON Image DB.
 ## Stack
 - **Backend:** Python 3.11, FastAPI (>=0.115.0), uvicorn (>=0.30.0), PyYAML (>=6.0.2), python-multipart (>=0.0.18)
 - **Frontend:** Vanilla HTML/CSS/JS (single-page, no framework, no build step)
-- **Tests:** pytest (546+ tests), run with `pytest tests/ -p no:capture` on Windows
+- **Tests:** pytest (577+ tests), run with `pytest tests/ -p no:capture` on Windows
 - **Docker:** Multi-stage build, gosu for PUID/PGID, Docker CLI + compose plugin
 
 ## Architecture
@@ -17,7 +17,9 @@ Recognizes 207+ Docker images across 7 families via a JSON Image DB.
 ### Backend Modules (`backend/`)
 | File | Purpose |
 |------|---------|
-| `main.py` | FastAPI app, 11 API routes, session state, rate limiter middleware, registry init |
+| `main.py` | FastAPI app, 13 API routes, session state, rate limiter middleware, registry init |
+| `apply_multi.py` | Batch apply-fix: validate all → backup all → write all (atomic-ish) |
+| `redeploy.py` | Docker Compose redeploy via subprocess (list-form args, 120s timeout) |
 | `image_registry.py` | **Image DB** — `ImageRegistry` class, JSON-driven service classification |
 | `pipeline.py` | **Core innovation** — full-directory scan, unified media service map |
 | `analyzer.py` | Per-stack 4-pass analysis: path conflicts, hardlinks, permissions, platform |
@@ -30,9 +32,9 @@ Recognizes 207+ Docker images across 7 families via a JSON Image DB.
 | `log_handler.py` | In-memory ring buffer + SSE streaming for logs |
 
 ### Frontend (`frontend/`)
-- `index.html` — Single-page app, all inline onclick handlers migrated to addEventListener (CSP-ready)
-- `app.js` — ~6500+ lines, entire frontend logic, aria-labels on interactive elements
-- `styles.css` — Full CSS with dark theme
+- `index.html` — Pipeline Dashboard SPA: service groups, health banner, conflict cards, paste bar
+- `app.js` — ~6600 lines, pipeline dashboard + analysis detail cards (old mode UI removed)
+- `styles.css` — Full CSS with dark theme, role-colored service groups, fix plan rows
 
 ### Data & Scripts
 | File | Purpose |
@@ -63,6 +65,8 @@ Recognizes 207+ Docker images across 7 families via a JSON Image DB.
 | POST | `/api/analyze` | Full stack analysis (4-pass) | 20/min |
 | POST | `/api/smart-match` | Error-to-stack matching | 60/min |
 | POST | `/api/apply-fix` | Write corrected YAML (with backup) | 10/min |
+| POST | `/api/apply-fixes` | Batch multi-file apply (validate all → backup → write) | 10/min |
+| POST | `/api/redeploy` | Docker Compose redeploy (up -d with timeout) | 10/min |
 | GET | `/api/logs` | Fetch log entries | 60/min |
 | GET | `/api/logs/stream` | SSE live log stream | 60/min |
 
@@ -166,15 +170,33 @@ Two-layer JSON at `data/images.json` (207 images, 7 families), seeded from LSIO 
 **Roles:** `arr`, `download_client`, `media_server`, `request`, `other`
 **Families:** linuxserver, hotio, jlesage, binhex, official_plex, official_jellyfin, seerr
 
+### Pipeline Dashboard (v2.0)
+Service-first UI replacing the old stack-grid/mode-selector. All media services
+grouped by role (arr, download_client, media_server, request, other) with:
+- **Health banner**: aggregate pipeline health, Fix All shortcut
+- **Service rows**: health dot + name + family + file location, expandable detail
+- **Conflict cards**: severity-badged issues with multi-file fix plans
+- **Fix plans**: per-file rows with checkboxes, Apply/Apply All, YAML preview with diff
+- **Redeploy prompt**: role-based risk warnings, Docker Compose up -d or manual commands
+- **Paste bar**: sticky bottom, paste an error → highlights matching services + scrolls to conflict
+- **Three-state health**: `healthy` | `issue` | `awaiting` (fix applied, awaiting rescan)
+- **Directory selection**: inline header path editor, first-launch welcome screen
+
+**Key functions in app.js:**
+`runPipelineScan()` → `renderDashboard()` → `renderServiceGroups()` / `renderConflictCards()`
+`generateFixPlans()` → `renderFixPlan()` → `applySingleFix()` / `applyAllFixes()`
+`showRedeployPrompt()` → `doRedeploy()` / `showManualRedeploy()`
+`enablePasteBar()` → `handlePasteError()` → `highlightServices()`
+
 ### Quick-Switch Combobox
 All 3 stack search inputs (fix mode filter, browse collapsed bar, bottom-of-card)
 use shared `populateQuickSwitch()` + `wireQuickSwitchCombobox()` helpers.
 Click to browse all stacks, type to filter. Shows health dots + service counts.
 
 ### Navigation
-- `backToStackList()` — returns to full stack grid from analysis results
-- "Show all stacks" link in collapsed bar uses same function
-- Browse mode bottom actions include "Back to Stack List" button
+- `backToDashboard()` — returns to pipeline dashboard from analysis detail cards
+- Analysis card bottom actions use same function for all back-navigation
+- Old mode-based functions (backToStackList, analyzeAnother) removed in v2.0
 
 ### Multi-Error Detection
 `parse_errors()` splits pasted text on double-newlines, log-level prefixes, and
@@ -246,5 +268,6 @@ docker compose up --build
 | `PGID` | `1000` | Group ID to run as |
 
 ## Branch
-`main` — all development happens here (merged from v1.0-web-pivot, 2026-03-08).
+`feature/pipeline-dashboard` — Pipeline Dashboard v2.0 development branch.
+`main` — stable v1.5.0 (merged from v1.0-web-pivot, 2026-03-08).
 The Go/Charm TUI lives at `maparr_charm/` (embedded repo, separate Go module).
