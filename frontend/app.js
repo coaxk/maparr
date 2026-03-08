@@ -2321,12 +2321,16 @@ function showSolution(data) {
     section.querySelectorAll(".solution-tracks, .track-content-quick, .track-content-proper, .infra-warning").forEach((el) => el.remove());
 
     // Detect infrastructure-level conflicts that YAML changes alone cannot fix.
-    // Remote filesystem (SMB/CIFS/NFS) and mixed mount types require the user
-    // to change their actual storage setup, not just edit compose files.
-    const infraTypes = ["remote_filesystem", "mixed_mount_types", "wsl2_cross_fs"];
+    // Remote filesystem (SMB/CIFS/NFS), mixed mount types, and WSL2 performance
+    // require the user to change their actual storage/OS setup, not just compose files.
+    const infraTypes = ["remote_filesystem", "mixed_mount_types", "wsl2_performance"];
     const conflicts = data.conflicts || [];
     const infraConflicts = conflicts.filter((c) => infraTypes.includes(c.type));
     const hasOnlyInfra = infraConflicts.length > 0 && conflicts.every((c) => infraTypes.includes(c.type));
+
+    // Types that are YAML-fixable but require manual follow-up actions afterward
+    const postFixTypes = ["root_execution", "cross_stack_puid_mismatch"];
+    const postFixConflicts = conflicts.filter((c) => postFixTypes.includes(c.type));
 
     if (infraConflicts.length > 0) {
         const warning = document.createElement("div");
@@ -2346,6 +2350,11 @@ function showSolution(data) {
                 "regardless of how your volumes are configured. You need to either move your data to local storage, or ensure ALL " +
                 "services access the exact same NFS export. The YAML fix below restructures your volume paths, but the hardlink " +
                 "issue will persist until the underlying storage is changed.";
+        } else if (infraConflicts.some((c) => c.type === "wsl2_performance")) {
+            explain.textContent =
+                "Your media data is stored on Windows drives accessed through WSL2's 9P bridge (/mnt/c/, /mnt/d/). This works " +
+                "but is significantly slower than native Linux storage for large media libraries. For best performance, store " +
+                "media data on a native Linux partition or ext4 virtual disk within WSL2.";
         } else {
             explain.textContent =
                 "Some of your services use different storage types (local vs remote). Hardlinks cannot cross filesystem " +
@@ -2355,6 +2364,33 @@ function showSolution(data) {
         warning.appendChild(explain);
 
         summaryEl.after(warning);
+    }
+
+    // Show post-fix action notes for conflicts that need manual follow-up
+    if (postFixConflicts.length > 0 && infraConflicts.length === 0) {
+        const note = document.createElement("div");
+        note.className = "infra-warning callout callout-info";
+
+        const title = document.createElement("strong");
+        title.textContent = "After applying the YAML fix, you'll need to take additional steps:";
+        note.appendChild(title);
+
+        const list = document.createElement("ul");
+        list.style.cssText = "margin: 0.4rem 0 0; padding-left: 1.2rem; font-size: 0.85rem;";
+
+        if (postFixConflicts.some((c) => c.type === "root_execution")) {
+            const li = document.createElement("li");
+            li.textContent = "After changing PUID/PGID from root, fix ownership of existing files: chown -R <PUID>:<PGID> /path/to/data";
+            list.appendChild(li);
+        }
+        if (postFixConflicts.some((c) => c.type === "cross_stack_puid_mismatch")) {
+            const li = document.createElement("li");
+            li.textContent = "This fix only applies to the current stack. Other stacks sharing these paths also need their PUID/PGID updated to match.";
+            list.appendChild(li);
+        }
+
+        note.appendChild(list);
+        summaryEl.after(note);
     }
 
     // Ensure YAML blocks are back in the section (they may have been moved into properContent)
