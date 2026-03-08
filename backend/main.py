@@ -42,7 +42,7 @@ class RateLimiter:
     """Per-IP sliding window rate limiter with tiered endpoint limits."""
 
     # Endpoint classification: (path_prefixes, requests_per_minute)
-    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/change-stacks-path")
+    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/change-stacks-path", "/api/redeploy")
     ANALYSIS_PATHS = ("/api/analyze", "/api/pipeline-scan")
     SKIP_PATHS = ("/api/health",)
     STATIC_PREFIXES = ("/", "/static")
@@ -976,6 +976,36 @@ async def api_apply_fixes(request: Request):
         return JSONResponse(result, status_code=400)
 
     return JSONResponse(result)
+
+
+# ─── API: Redeploy ───
+
+@app.post("/api/redeploy")
+async def api_redeploy(request: Request):
+    """Redeploy Docker stacks after applying fixes."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    stacks = body.get("stacks", [])
+    if not isinstance(stacks, list):
+        return JSONResponse({"error": "stacks must be a list"}, status_code=400)
+    if len(stacks) > 10:
+        return JSONResponse({"error": "Maximum 10 stacks per batch"}, status_code=400)
+
+    stacks_root = _get_stacks_root()
+    if not stacks_root:
+        return JSONResponse(
+            {"error": "Redeploy requires MAPARR_STACKS_PATH to be set for security."},
+            status_code=403,
+        )
+
+    from backend.redeploy import redeploy_stacks
+    result = redeploy_stacks(stacks, stacks_root)
+
+    status_code = 200 if result["status"] != "error" else 500
+    return JSONResponse(result, status_code=status_code)
 
 
 # ─── API: Health ───
