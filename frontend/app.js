@@ -605,11 +605,16 @@ async function parseError() {
             return;
         }
 
-        state.parsedError = await resp.json();
-        showParseResult(state.parsedError);
+        const data = await resp.json();
 
-        // Auto-match: find stacks containing the detected service
-        await autoMatchStacks(state.parsedError);
+        if (data.multiple_errors && data.multiple_errors.length > 1) {
+            // Multiple errors detected — let user pick which to analyze
+            showMultiErrorPicker(data.multiple_errors);
+        } else {
+            state.parsedError = data;
+            showParseResult(data);
+            await autoMatchStacks(data);
+        }
     } catch (err) {
         alert("Could not reach the backend. Is MapArr running?");
     } finally {
@@ -862,6 +867,88 @@ function makeParseField(label, value) {
     row.appendChild(val);
 
     return row;
+}
+
+// ─── Multi-Error Picker ───
+
+function showMultiErrorPicker(errors) {
+    const container = document.getElementById("step-parse-result");
+    const details = document.getElementById("parse-details");
+    details.replaceChildren();
+
+    // Header
+    const header = document.createElement("div");
+    header.className = "multi-error-header";
+    header.textContent = "We found " + errors.length + " errors in your input. Select which to diagnose:";
+    details.appendChild(header);
+
+    // Error list
+    const list = document.createElement("div");
+    list.className = "multi-error-list";
+
+    errors.forEach((err, i) => {
+        const item = document.createElement("button");
+        item.className = "multi-error-item";
+        item.type = "button";
+
+        // Error number
+        const num = document.createElement("span");
+        num.className = "multi-error-num";
+        num.textContent = "#" + (i + 1);
+        item.appendChild(num);
+
+        const body = document.createElement("div");
+        body.className = "multi-error-body";
+
+        // Top line: service + error type badges
+        const meta = document.createElement("div");
+        meta.className = "multi-error-meta";
+        if (err.service) {
+            const svcBadge = document.createElement("span");
+            svcBadge.className = "multi-error-svc";
+            svcBadge.textContent = err.service;
+            meta.appendChild(svcBadge);
+        }
+        if (err.error_type) {
+            const typeBadge = document.createElement("span");
+            typeBadge.className = "multi-error-type";
+            typeBadge.textContent = err.error_type.replace(/_/g, " ");
+            meta.appendChild(typeBadge);
+        }
+        if (!err.service && !err.error_type) {
+            const unknown = document.createElement("span");
+            unknown.className = "multi-error-type";
+            unknown.textContent = "unrecognized";
+            meta.appendChild(unknown);
+        }
+        body.appendChild(meta);
+
+        // Excerpt line
+        const excerpt = document.createElement("div");
+        excerpt.className = "multi-error-excerpt";
+        excerpt.textContent = err.excerpt;
+        body.appendChild(excerpt);
+
+        item.appendChild(body);
+
+        // Confidence indicator
+        const conf = document.createElement("span");
+        conf.className = "confidence-badge confidence-" + err.confidence;
+        conf.textContent = err.confidence;
+        item.appendChild(conf);
+
+        item.addEventListener("click", () => selectError(err));
+        list.appendChild(item);
+    });
+
+    details.appendChild(list);
+    container.classList.remove("hidden");
+}
+
+async function selectError(err) {
+    state.parsedError = err;
+    showParseResult(err);
+    await autoMatchStacks(err);
 }
 
 // ─── Service Name Constants ───

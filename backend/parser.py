@@ -63,6 +63,60 @@ class ParsedError:
         }
 
 
+# ─── Multi-Error Splitting ───
+
+# Delimiters that indicate separate errors in user-pasted text.
+# Users often paste multiple log lines, Activity > Queue entries, or
+# System > Status health checks in one block.
+_ERROR_SPLIT_PATTERNS = [
+    r'\n\s*\n',                          # Double newline (paragraph break)
+    r'\n(?=\[(?:WARN|ERROR|INFO)\])',     # Log-style lines: [WARN] ... [ERROR] ...
+    r'\n(?=(?:Import|Download)\s+(?:failed|error))',  # Repeated error prefixes
+]
+
+_SPLIT_REGEX = re.compile('|'.join(_ERROR_SPLIT_PATTERNS), re.IGNORECASE)
+
+
+def split_errors(text: str) -> list[str]:
+    """
+    Split user input into individual error blocks.
+
+    Returns a list of non-empty stripped strings. If no split points are
+    found, returns the original text as a single-element list.
+    """
+    if not text or not text.strip():
+        return []
+
+    chunks = _SPLIT_REGEX.split(text.strip())
+    # Filter out empty/whitespace-only chunks and very short fragments
+    result = [c.strip() for c in chunks if c and c.strip() and len(c.strip()) > 10]
+
+    return result if result else [text.strip()]
+
+
+def parse_errors(text: str) -> list[dict]:
+    """
+    Parse potentially multiple errors from user input.
+
+    Returns a list of ParsedError dicts. Each has an additional 'index'
+    field (0-based) and 'excerpt' field (first 80 chars for UI display).
+    """
+    chunks = split_errors(text)
+    results = []
+
+    for i, chunk in enumerate(chunks):
+        parsed = parse_error(chunk)
+        d = parsed.to_dict()
+        d["index"] = i
+        d["excerpt"] = chunk[:80] + ("..." if len(chunk) > 80 else "")
+        results.append(d)
+
+    logger.info("Multi-error parse: %d chunk%s from %d chars input",
+                len(results), "s" if len(results) != 1 else "", len(text))
+
+    return results
+
+
 def parse_error(text: str) -> ParsedError:
     """
     Parse user-provided error text and extract actionable information.

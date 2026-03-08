@@ -22,7 +22,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.parser import parse_error
+from backend.parser import parse_error, parse_errors
 from backend.discovery import discover_stacks
 from backend.resolver import resolve_compose, ResolveError
 from backend.analyzer import analyze_stack
@@ -154,15 +154,24 @@ async def api_parse_error(request: Request):
             status_code=400,
         )
 
-    # Parse — always succeeds, returns confidence level
+    # Parse — check for multiple errors first
+    all_results = parse_errors(error_text)
+
+    # Primary result is the first (or only) error
     result = parse_error(error_text)
-    _session["parsed_error"] = result.to_dict()
+    primary = result.to_dict()
+    _session["parsed_error"] = primary
+
+    # Include multi-error data when >1 error detected
+    if len(all_results) > 1:
+        primary["multiple_errors"] = all_results
+        primary["error_count"] = len(all_results)
 
     logger.info("Parse error: service=%s path=%s type=%s confidence=%s",
                 result.service or "?", result.path or "?",
                 result.error_type or "?", result.confidence)
 
-    return result.to_dict()
+    return primary
 
 
 # ─── API: Discover Stacks ───
