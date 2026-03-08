@@ -204,6 +204,7 @@ class AnalysisResult:
     cross_stack: Optional[dict] = None  # Cross-stack analysis result (when incomplete + siblings found)
     pipeline: Optional[dict] = None  # Pipeline context (role, health, sibling awareness)
     rpm_mappings: List[dict] = field(default_factory=list)  # RPM calculator output for wizard
+    image_db_matches: List[dict] = field(default_factory=list)  # What the Image DB classified for each service
 
     def to_dict(self) -> dict:
         # Determine status: pipeline-aware > conflicts > cross-stack > incomplete > healthy
@@ -270,6 +271,7 @@ class AnalysisResult:
                 for s in self.services
                 if s.role in ("arr", "download_client", "media_server")
             ],
+            "image_db_matches": self.image_db_matches,
         }
 
 
@@ -320,6 +322,27 @@ def analyze_stack(
 
     # Step 2: Extract and classify services
     services = _extract_services(resolved_compose)
+
+    # Build Image DB match list — surfaces what the registry classified for each service
+    registry = _get_registry()
+    image_db_matches = []
+    for svc in services:
+        classification = registry.classify(svc.name, svc.image)
+        if classification.get("name"):  # Only include recognized services
+            image_db_matches.append({
+                "service": svc.name,
+                "name": classification["name"],
+                "role": classification["role"],
+                "family": classification.get("family_name") or "Independent",
+                "hardlink_capable": classification.get("hardlink_capable", False),
+            })
+    if image_db_matches:
+        match_parts = [
+            f"{m['service']} \u2192 {m['name']} ({m['role']}, {m['family']})"
+            for m in image_db_matches
+        ]
+        logger.info("ImageDB: %s", " | ".join(match_parts))
+
     for svc in services:
         vol_summary = ", ".join(f"{v.source}→{v.target}" for v in svc.volumes if v.is_bind_mount and not _is_config_mount(v.target))
         logger.info("Service: %s → role=%s, %d volumes%s",
@@ -633,6 +656,7 @@ def analyze_stack(
         cross_stack=cross_stack_result,
         pipeline=pipeline_data,
         rpm_mappings=rpm_mappings,
+        image_db_matches=image_db_matches,
     )
 
 

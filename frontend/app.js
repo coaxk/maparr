@@ -2453,6 +2453,7 @@ function showProblem(data) {
 
     if (data.fix_summary) {
         const summary = document.createElement("p");
+        summary.className = "step-desc";
         summary.textContent = data.fix_summary;
         details.appendChild(summary);
     }
