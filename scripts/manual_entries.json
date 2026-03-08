@@ -3,6 +3,7 @@
   "families": {
     "linuxserver": {
       "name": "LinuxServer.io",
+      "image_patterns": ["lscr.io/linuxserver/", "linuxserver/", "ghcr.io/linuxserver/"],
       "uid_env": "PUID",
       "gid_env": "PGID",
       "umask_env": "UMASK",
@@ -12,6 +13,7 @@
     },
     "hotio": {
       "name": "Hotio",
+      "image_patterns": ["hotio/", "cr.hotio.dev/hotio/", "ghcr.io/hotio/"],
       "uid_env": "PUID",
       "gid_env": "PGID",
       "umask_env": "UMASK",
@@ -21,6 +23,7 @@
     },
     "jlesage": {
       "name": "jlesage",
+      "image_patterns": ["jlesage/"],
       "uid_env": "USER_ID",
       "gid_env": "GROUP_ID",
       "umask_env": "UMASK",
@@ -30,6 +33,7 @@
     },
     "binhex": {
       "name": "Binhex",
+      "image_patterns": ["binhex/"],
       "uid_env": "PUID",
       "gid_env": "PGID",
       "umask_env": "UMASK",
@@ -39,6 +43,7 @@
     },
     "official_plex": {
       "name": "Official Plex",
+      "image_patterns": ["plexinc/pms-docker"],
       "uid_env": "PLEX_UID",
       "gid_env": "PLEX_GID",
       "umask_env": null,
@@ -48,6 +53,7 @@
     },
     "official_jellyfin": {
       "name": "Official Jellyfin",
+      "image_patterns": ["jellyfin/jellyfin"],
       "uid_env": null,
       "gid_env": null,
       "umask_env": null,
@@ -57,6 +63,7 @@
     },
     "seerr": {
       "name": "Seerr",
+      "image_patterns": ["sctx/overseerr", "fallenbagel/jellyseerr"],
       "uid_env": null,
       "gid_env": null,
       "umask_env": null,
