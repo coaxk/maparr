@@ -242,6 +242,7 @@ class AnalysisResult:
     pipeline: Optional[dict] = None  # Pipeline context (role, health, sibling awareness)
     rpm_mappings: List[dict] = field(default_factory=list)  # RPM calculator output for wizard
     image_db_matches: List[dict] = field(default_factory=list)  # What the Image DB classified for each service
+    observations: List[dict] = field(default_factory=list)  # Category D informational items (no health impact)
     env_solution_yaml: Optional[str] = None  # Copy-pasteable YAML fix for permission/env conflicts
     env_solution_changed_lines: List[int] = field(default_factory=list)  # 1-indexed changed lines in env_solution_yaml
 
@@ -313,7 +314,74 @@ class AnalysisResult:
             "image_db_matches": self.image_db_matches,
             "env_solution_yaml": self.env_solution_yaml,
             "env_solution_changed_lines": self.env_solution_changed_lines,
+            "observations": self.observations,
         }
+
+
+# ─── Category D: Observations ───
+# Informational items that don't affect health dots or generate fix YAML.
+# They render in a collapsed section at the bottom of the analysis view.
+
+MEDIA_ROLES = ("arr", "download_client", "media_server")
+
+
+def _collect_observations(
+    resolved_compose: Dict[str, Any], services: List[ServiceInfo],
+) -> List[dict]:
+    """Collect Category D observations — informational only, no health impact.
+
+    These are noticed-but-not-actioned items.  They don't affect health dots,
+    don't generate fix YAML, and render in a collapsed section at the bottom.
+    """
+    observations: List[dict] = []
+    raw_services = resolved_compose.get("services", {})
+
+    # Build a lookup: service name → ServiceInfo (for role checks)
+    svc_lookup = {s.name: s for s in services}
+
+    for svc_name, svc_data in raw_services.items():
+        if not isinstance(svc_data, dict):
+            continue
+
+        # 1. Missing restart policy
+        restart = svc_data.get("restart")
+        if not restart:
+            observations.append({
+                "type": "missing_restart_policy",
+                "service": svc_name,
+                "message": f"{svc_name} doesn't have a restart policy — it won't come back after a reboot",
+            })
+
+        # 2. Latest tag usage
+        image = svc_data.get("image", "")
+        if image:
+            if image.endswith(":latest") or ":" not in image:
+                observations.append({
+                    "type": "latest_tag_usage",
+                    "service": svc_name,
+                    "message": f"{svc_name} uses the :latest tag — pinning to a version prevents surprise updates",
+                })
+
+        # 3. Missing TZ — only for media-role services
+        info = svc_lookup.get(svc_name)
+        if info and info.role in MEDIA_ROLES:
+            env = _extract_env(svc_data.get("environment", {}))
+            if "TZ" not in env:
+                observations.append({
+                    "type": "missing_tz",
+                    "service": svc_name,
+                    "message": f"{svc_name} has no TZ set — it'll default to UTC which might confuse scheduling",
+                })
+
+        # 4. Privileged mode
+        if svc_data.get("privileged") is True:
+            observations.append({
+                "type": "privileged_mode",
+                "service": svc_name,
+                "message": f"{svc_name} runs in privileged mode — this gives it full host access",
+            })
+
+    return observations
 
 
 # ─── Main Entry Point ───
@@ -701,6 +769,9 @@ def analyze_stack(
     logger.info("Analysis complete: %s → %s (%d services, %d conflicts)",
                  stack_name, status_preview, len(services), len(conflicts))
 
+    # Collect Category D observations (informational only, no health impact)
+    observations = _collect_observations(resolved_compose, services)
+
     steps.append({"icon": "done", "text": "Analysis complete"})
 
     return AnalysisResult(
@@ -723,6 +794,7 @@ def analyze_stack(
         pipeline=pipeline_data,
         rpm_mappings=rpm_mappings,
         image_db_matches=image_db_matches,
+        observations=observations,
         env_solution_yaml=env_solution_yaml,
         env_solution_changed_lines=env_solution_changed_lines,
     )
