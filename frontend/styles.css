@@ -2011,6 +2011,12 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .service-volume-table .svc-name {
     font-weight: 600;
     color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.service-volume-table .svc-name .service-icon {
+    vertical-align: middle;
+    margin-right: 0.3rem;
 }
 
 .service-volume-table .svc-role {
@@ -3667,6 +3673,17 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     color: var(--text-muted);
     font-family: var(--font-mono);
     flex-shrink: 0;
+}
+
+/* ─── Service Icon (bundled app logos) ─── */
+
+.service-icon {
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    object-fit: contain;
 }
 
 /* ─── Other Services (non-media, collapsible) ─── */

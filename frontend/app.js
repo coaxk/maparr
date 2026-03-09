@@ -706,6 +706,30 @@ function renderServiceGroups(servicesByRole) {
  * Uses a lookup table for common media stack services, falls back to
  * first two characters with smart capitalization.
  */
+// Map service names to bundled icon filenames.
+// Icons sourced from dashboard-icons (CC-BY-4.0). Services without a
+// dedicated icon get the generic fallback.
+const SERVICE_ICONS = {
+    sonarr: "sonarr", radarr: "radarr", lidarr: "lidarr",
+    readarr: "readarr", prowlarr: "prowlarr", bazarr: "bazarr",
+    whisparr: "whisparr", qbittorrent: "qbittorrent", deluge: "deluge",
+    transmission: "transmission", sabnzbd: "sabnzbd", nzbget: "nzbget",
+    flood: "flood", plex: "plex", jellyfin: "jellyfin", emby: "emby",
+    overseerr: "overseerr", jellyseerr: "jellyseerr", ombi: "ombi",
+    tautulli: "tautulli", nzbhydra2: "nzbhydra2", jackett: "jackett",
+};
+
+function getServiceIconUrl(serviceName) {
+    const lower = (serviceName || "").toLowerCase();
+    const match = SERVICE_ICONS[lower];
+    if (match) return "img/services/" + match + ".svg";
+    // Check partial matches (e.g. "nzbhydra" matches "nzbhydra2")
+    for (const [key, file] of Object.entries(SERVICE_ICONS)) {
+        if (lower.includes(key) || key.includes(lower)) return "img/services/" + file + ".svg";
+    }
+    return "img/services/generic.svg";
+}
+
 function renderServiceRow(svc) {
     const row = document.createElement("div");
     row.className = "service-row";
@@ -716,6 +740,16 @@ function renderServiceRow(svc) {
     dot.className = "health-dot " + getServiceHealth(svc);
     dot.setAttribute("data-tooltip", _healthDotTooltip(getServiceHealth(svc)));
     row.appendChild(dot);
+
+    // Service icon
+    const icon = document.createElement("img");
+    icon.className = "service-icon";
+    icon.src = getServiceIconUrl(svc.service_name);
+    icon.alt = "";
+    icon.width = 20;
+    icon.height = 20;
+    icon.loading = "lazy";
+    row.appendChild(icon);
 
     // Service info
     const info = document.createElement("div");
@@ -2690,7 +2724,15 @@ function showCurrentSetup(data) {
 
         const nameCell = document.createElement("td");
         nameCell.className = "svc-name";
-        nameCell.textContent = svc.name;
+        const svcIcon = document.createElement("img");
+        svcIcon.className = "service-icon";
+        svcIcon.src = getServiceIconUrl(svc.name || svc.service_name);
+        svcIcon.alt = "";
+        svcIcon.width = 16;
+        svcIcon.height = 16;
+        svcIcon.loading = "lazy";
+        nameCell.appendChild(svcIcon);
+        nameCell.appendChild(document.createTextNode(" " + svc.name));
         row.appendChild(nameCell);
 
         const roleCell = document.createElement("td");
