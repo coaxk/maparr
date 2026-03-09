@@ -3385,6 +3385,12 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     opacity: 0.7;
 }
 
+.path-display-icon {
+    font-size: 0.85rem;
+    opacity: 0.6;
+    flex-shrink: 0;
+}
+
 .path-display {
     display: flex;
     align-items: center;
@@ -3511,8 +3517,8 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 }
 
 .health-banner-icon.health-problem {
-    background: var(--warning);
-    box-shadow: 0 0 6px rgba(210, 153, 34, 0.5);
+    background: var(--error);
+    box-shadow: 0 0 6px rgba(248, 81, 73, 0.5);
 }
 
 .health-banner-text {
@@ -3617,6 +3623,12 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 .health-dot.issue {
     background: var(--warning);
+    box-shadow: 0 0 4px rgba(210, 153, 34, 0.4);
+}
+
+.health-dot.problem {
+    background: var(--error);
+    box-shadow: 0 0 4px rgba(248, 81, 73, 0.4);
 }
 
 .health-dot.awaiting {
@@ -3639,11 +3651,11 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 .service-name {
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
 }
 
 .service-meta {
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3651,7 +3663,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 }
 
 .service-file {
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     color: var(--text-muted);
     font-family: var(--font-mono);
     flex-shrink: 0;
@@ -3660,9 +3672,11 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 /* ─── Service Detail Panel (accordion) ─── */
 
 .service-detail-panel {
-    padding: 0.75rem 1rem 0.75rem 2.5rem;
-    background: rgba(15, 17, 23, 0.5);
-    border-bottom: 1px solid var(--border);
+    padding: 1rem 1.25rem 1rem 2.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
     animation: slideDown 0.15s ease-out;
 }
 
@@ -3674,38 +3688,43 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .detail-row {
     display: flex;
     gap: 0.75rem;
-    padding: 0.2rem 0;
-    font-size: 0.82rem;
+    padding: 0.3rem 0;
+    font-size: 0.85rem;
 }
 
 .detail-label {
-    color: var(--text-muted);
-    min-width: 60px;
+    color: var(--accent);
+    min-width: 70px;
     flex-shrink: 0;
+    font-weight: 500;
 }
 
 .detail-value {
     color: var(--text-primary);
     font-family: var(--font-mono);
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     word-break: break-all;
 }
 
 .detail-section-header {
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.4px;
-    color: var(--text-secondary);
-    margin-top: 0.5rem;
-    margin-bottom: 0.25rem;
+    color: var(--accent);
+    margin-top: 0.75rem;
+    margin-bottom: 0.3rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
 }
 
 .detail-volume {
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     font-family: var(--font-mono);
-    padding: 0.15rem 0;
+    padding: 0.2rem 0 0.2rem 0.5rem;
     color: var(--text-secondary);
+    border-left: 2px solid var(--border);
+    margin-left: 0.25rem;
 }
 
 /* ─── Conflict Cards ─── */
@@ -4070,7 +4089,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 /* ─── Dashboard Welcome ─── */
 .dashboard-welcome {
-    font-size: 0.88rem;
+    font-size: 0.92rem;
     color: var(--text-secondary);
     margin: 0 0 1rem 0;
     line-height: 1.5;
@@ -4106,7 +4125,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     margin: 0 0 0.35rem 0;
 }
 .fork-card-desc {
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     color: var(--text-muted);
     line-height: 1.45;
     margin: 0;
@@ -4146,7 +4165,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     border-radius: var(--radius);
     background: var(--bg-card);
     border: 1px solid var(--border);
-    font-size: 0.82rem;
+    font-size: 0.88rem;
     color: var(--text-secondary);
     flex-wrap: wrap;
 }
@@ -4173,7 +4192,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     gap: 0.75rem;
     padding: 0.5rem 1rem;
     margin-bottom: 0.75rem;
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     color: var(--text-muted);
     flex-wrap: wrap;
 }
@@ -4200,7 +4219,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 }
 .conflict-card.collapsed .conflict-card-chevron { transform: rotate(-90deg); }
 .conflict-card-affected-count {
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     color: var(--text-muted);
     margin-left: 0.5rem;
     flex-shrink: 0;
@@ -4252,18 +4271,21 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 /* ─── Service Detail Enrichment ─── */
 .detail-conflicts {
-    margin-top: 0.5rem;
-    padding: 0.4rem 0.6rem;
-    background: rgba(210, 153, 34, 0.06);
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(248, 81, 73, 0.08);
     border-radius: var(--radius-sm);
-    border: 1px solid rgba(210, 153, 34, 0.12);
-    font-size: 0.78rem;
-    color: var(--warning);
+    border: 1px solid rgba(248, 81, 73, 0.2);
+    font-size: 0.82rem;
+    color: var(--error);
+    font-weight: 500;
 }
 .detail-action-row {
     display: flex;
     gap: 0.5rem;
-    margin-top: 0.5rem;
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
 }
 
 /* ─── Tooltips ─── */
@@ -4274,15 +4296,18 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     bottom: calc(100% + 6px);
     left: 50%;
     transform: translateX(-50%);
-    padding: 0.35rem 0.6rem;
+    padding: 0.4rem 0.65rem;
     border-radius: 4px;
     background: var(--bg-tooltip, #1c2333);
     color: var(--text-primary);
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     font-weight: 400;
-    max-width: 280px;
+    width: max-content;
+    max-width: 320px;
     white-space: normal;
-    line-height: 1.35;
+    word-wrap: break-word;
+    line-height: 1.4;
+    text-align: left;
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.15s;
@@ -4295,11 +4320,24 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     bottom: auto;
     top: calc(100% + 6px);
 }
+/* Prevent tooltip overflow off-screen for right-aligned elements */
+.header-right [data-tooltip]::after {
+    left: auto;
+    right: 0;
+    transform: none;
+}
+/* Left-aligned elements: anchor tooltip to left edge instead of centering */
+.service-detail-panel [data-tooltip]::after,
+.detail-action-row [data-tooltip]::after,
+.conflict-card-body [data-tooltip]::after {
+    left: 0;
+    transform: none;
+}
 
 /* ─── Browse Button ─── */
 .path-browse {
-    font-size: 1.1rem;
-    padding: 0.25rem 0.4rem;
+    font-size: 0.78rem;
+    padding: 0.25rem 0.6rem;
     line-height: 1;
 }
 
@@ -4342,4 +4380,65 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .health-banner-icon.health-caution-banner {
     background: var(--warning);
     box-shadow: 0 0 6px rgba(210, 153, 34, 0.5);
+}
+
+/* ─── Category-Aware Conflict Rendering ─── */
+
+/* Handrail: plain-English explanation below technical conflict description */
+.conflict-handrail {
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    margin-top: 0.5rem;
+    line-height: 1.5;
+    font-style: italic;
+}
+
+/* Info badge for Category C (infrastructure) conflicts */
+.badge-info {
+    background: #3b82f6;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* Recommendation card for Category C guidance */
+.recommendation-card {
+    border-left: 3px solid #3b82f6;
+    background: var(--bg-card);
+    padding: 1rem;
+    border-radius: var(--radius);
+    margin-top: 0.75rem;
+}
+
+.recommendation-card + .recommendation-card {
+    margin-top: 0.5rem;
+}
+
+/* Guidance text inside recommendation cards */
+.guidance-text {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+/* Category C guidance container */
+.cat-c-guidance {
+    margin-top: 0.75rem;
+}
+
+/* Environment solution intro text */
+.env-solution-intro {
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    margin-bottom: 0.75rem;
+    line-height: 1.5;
+}
+
+/* Ensure env tab button matches other solution tabs */
+.solution-tab.solution-tab-env {
+    /* Inherits from .solution-tab — no additional styles needed */
 }

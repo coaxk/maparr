@@ -51,6 +51,31 @@ const state = {
     lastAnalyzed: {},
 };
 
+// ─── Conflict Handrails — plain-English explanations for each conflict type ───
+// Voice: knowledgeable friend explaining the root cause simply.
+const CONFLICT_HANDRAILS = {
+    // Category A: Path Conflicts
+    no_shared_mount: "Your download client saves files to one folder, but your *arr app is looking in a different folder. They can't see each other's files.",
+    different_host_paths: "These services think they're sharing the same folder, but on the host they're actually pointing at different directories.",
+    named_volume_data: "Docker named volumes are isolated from each other. Files in one volume are invisible to services using a different volume.",
+    path_unreachable: "The error path doesn't match any mount in your compose \u2014 the app can't reach the file it's looking for.",
+    // Category B: Permission Conflicts
+    puid_pgid_mismatch: "Your services run as different Linux users. Files created by one app can't be read by another.",
+    missing_puid_pgid: "Without explicit PUID/PGID, these containers default to an internal user that probably doesn't match your other services.",
+    root_execution: "Running as root (UID 0) means files are owned by root. Other services running as a normal user can't modify them \u2014 and it's a security risk.",
+    umask_inconsistent: "UMASK controls who can access newly created files. Different values mean some apps can't read files created by others.",
+    umask_restrictive: "Your UMASK is more restrictive than usual. Files created by this service may not be readable by others.",
+    tz_mismatch: "Services in different timezones will schedule grabs at unexpected times and show confusing timestamps in logs.",
+    cross_stack_puid_mismatch: "This service runs as a different Linux user than services in other stacks. Files won't be accessible across your setup.",
+    // Category C: Infrastructure
+    wsl2_performance: "Your media data lives on a Windows drive accessed through WSL2's filesystem bridge. This works but is significantly slower than native Linux storage.",
+    remote_filesystem: "Your data is on a network share. Hardlinks don't work across network boundaries.",
+    mixed_mount_types: "Some services use local storage, others use network storage. Hardlinks can't cross that boundary.",
+    windows_path_in_compose: "Windows-style paths work but forward slashes and native Linux paths perform better in Docker.",
+    // Category D: Observations (informational, no fix needed)
+    pipeline_permission_mismatch: "This service runs as a different Linux user than services in other stacks. Cross-stack file sharing may not work.",
+};
+
 // Load persisted custom dirs from localStorage
 try {
     const saved = localStorage.getItem("maparr_custom_dirs");
@@ -527,23 +552,30 @@ function renderConflictSummary(conflicts) {
     el.replaceChildren();
     if (conflicts.length === 0) { el.classList.add("hidden"); return; }
 
-    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    // Category-aware summary: group by category for more meaningful labels
+    const catCounts = { A: 0, B: 0, C: 0 };
     for (const c of conflicts) {
-        const sev = (c.severity || "high").toLowerCase();
-        if (counts[sev] !== undefined) counts[sev]++;
-        else counts.high++;
+        const cat = (c.category || "").toUpperCase();
+        if (cat === "A") catCounts.A++;
+        else if (cat === "B") catCounts.B++;
+        else if (cat === "C") catCounts.C++;
+        else {
+            // Fallback: infer category from severity for backward compatibility
+            const sev = (c.severity || "high").toLowerCase();
+            if (sev === "critical" || sev === "high") catCounts.A++;
+            else catCounts.B++;
+        }
     }
 
-    const severities = [
-        { key: "critical", label: "critical", cls: "summary-critical" },
-        { key: "high", label: "high", cls: "summary-high" },
-        { key: "medium", label: "medium", cls: "summary-medium" },
-        { key: "low", label: "low", cls: "summary-low" },
+    const categories = [
+        { key: "A", label: "path issue", plural: "path issues", cls: "summary-high" },
+        { key: "B", label: "permission mismatch", plural: "permission mismatches", cls: "summary-medium" },
+        { key: "C", label: "infrastructure note", plural: "infrastructure notes", cls: "summary-low" },
     ];
 
     let first = true;
-    for (const { key, label, cls } of severities) {
-        if (counts[key] === 0) continue;
+    for (const { key, label, plural, cls } of categories) {
+        if (catCounts[key] === 0) continue;
         if (!first) {
             const sep = document.createElement("span");
             sep.className = "conflict-summary-separator";
@@ -552,7 +584,7 @@ function renderConflictSummary(conflicts) {
         }
         const item = document.createElement("span");
         item.className = "conflict-summary-count " + cls;
-        item.textContent = counts[key] + " " + label;
+        item.textContent = catCounts[key] + " " + (catCounts[key] === 1 ? label : plural);
         el.appendChild(item);
         first = false;
     }
@@ -560,6 +592,9 @@ function renderConflictSummary(conflicts) {
     const allServices = new Set();
     for (const c of conflicts) {
         for (const s of (c.services || [])) allServices.add(s);
+        if (c.service_name && (!c.services || c.services.length === 0)) {
+            allServices.add(c.service_name);
+        }
     }
     const total = document.createElement("span");
     total.className = "conflict-summary-total";
@@ -597,8 +632,11 @@ function renderHealthBanner(pipeline) {
         icon.className = "health-banner-icon health-ok";
         text.textContent = "All " + svcCount + " services healthy";
     } else {
-        const hasSevere = conflicts.some(c =>
-            ["critical", "high"].includes((c.severity || "high").toLowerCase())
+        // Category-aware severity: Cat A = red, Cat B = yellow, Cat C/D = yellow
+        const hasCatA = conflicts.some(c => (c.category || "").toUpperCase() === "A");
+        // Fallback for conflicts without category field
+        const hasSevere = hasCatA || conflicts.some(c =>
+            !c.category && ["critical", "high"].includes((c.severity || "high").toLowerCase())
         );
         icon.className = "health-banner-icon " + (hasSevere ? "health-problem" : "health-caution-banner");
         text.textContent = conflicts.length + " issue" + (conflicts.length !== 1 ? "s" : "") +
@@ -709,11 +747,28 @@ function getServiceHealth(svc) {
     const composePath = svc.compose_file || "";
     if (state.fixProgress[composePath] === "applied") return "awaiting";
 
-    // Check if service is involved in any conflict
+    // Check if service is involved in any conflict — match via services array or service_name.
+    // Category-aware: Cat A = problem (red), Cat B = issue (yellow), Cat C/D = healthy (no dot change).
     const conflicts = (state.pipeline && state.pipeline.conflicts) || [];
+    const matchedCategories = new Set();
     for (const c of conflicts) {
-        if ((c.services || []).includes(svc.service_name)) return "issue";
+        const services = c.services || [];
+        const matchesByName = c.service_name === svc.service_name;
+        if (services.includes(svc.service_name) || matchesByName) {
+            const cat = (c.category || "").toUpperCase();
+            if (cat) matchedCategories.add(cat);
+            // Fallback for conflicts without category: use severity
+            if (!cat) {
+                const sev = (c.severity || "high").toLowerCase();
+                if (sev === "critical" || sev === "high") matchedCategories.add("A");
+                else matchedCategories.add("B");
+            }
+        }
     }
+    if (matchedCategories.has("A")) return "problem";     // Red — path conflicts
+    if (matchedCategories.has("B")) return "issue";        // Yellow — permission issues
+    // Cat C/D don't affect health dot
+    if (matchedCategories.size > 0) return "healthy";
 
     return "healthy";
 }
@@ -793,7 +848,7 @@ function toggleServiceDetail(svc) {
 
     // Conflict summary for this service
     const svcConflicts = (state.pipeline && state.pipeline.conflicts || []).filter(c =>
-        (c.services || []).includes(svc.service_name)
+        (c.services || []).includes(svc.service_name) || c.service_name === svc.service_name
     );
     if (svcConflicts.length > 0) {
         const conflictDiv = document.createElement("div");
@@ -896,14 +951,22 @@ function renderConflictCard(conflict, index) {
     card.className = "conflict-card conflict-" + (conflict.severity || "high") + " collapsed";
     card.setAttribute("data-conflict-index", index);
 
-    // Header: severity badge + description + affected count + chevron
+    // Header: severity/category badge + description + affected count + chevron
     const header = document.createElement("div");
     header.className = "conflict-card-header";
 
+    const cat = (conflict.category || "").toUpperCase();
     const badge = document.createElement("span");
-    badge.className = "conflict-severity severity-" + (conflict.severity || "high");
-    badge.textContent = (conflict.severity || "HIGH").toUpperCase();
-    badge.setAttribute("data-tooltip", _severityTooltip(conflict.severity));
+    if (cat === "C") {
+        // Category C uses info badge instead of severity badge
+        badge.className = "badge-info";
+        badge.textContent = "INFO";
+        badge.setAttribute("data-tooltip", "Infrastructure recommendation \u2014 not fixable via compose YAML");
+    } else {
+        badge.className = "conflict-severity severity-" + (conflict.severity || "high");
+        badge.textContent = (conflict.severity || "HIGH").toUpperCase();
+        badge.setAttribute("data-tooltip", _severityTooltip(conflict.severity));
+    }
     header.appendChild(badge);
 
     const desc = document.createElement("span");
@@ -911,10 +974,14 @@ function renderConflictCard(conflict, index) {
     desc.textContent = conflict.description || conflict.type || "Mount conflict";
     header.appendChild(desc);
 
-    if (conflict.services && conflict.services.length > 0) {
+    const affectedServices = (conflict.services && conflict.services.length > 0)
+        ? conflict.services
+        : (conflict.service_name ? [conflict.service_name] : []);
+
+    if (affectedServices.length > 0) {
         const count = document.createElement("span");
         count.className = "conflict-card-affected-count";
-        count.textContent = conflict.services.length + " service" + (conflict.services.length !== 1 ? "s" : "");
+        count.textContent = affectedServices.length + " service" + (affectedServices.length !== 1 ? "s" : "");
         header.appendChild(count);
     }
 
@@ -930,10 +997,10 @@ function renderConflictCard(conflict, index) {
     const body = document.createElement("div");
     body.className = "conflict-card-body";
 
-    if (conflict.services && conflict.services.length > 0) {
+    if (affectedServices.length > 0) {
         const affected = document.createElement("div");
         affected.className = "conflict-affected";
-        affected.textContent = "Affects: " + conflict.services.join(", ");
+        affected.textContent = "Affects: " + affectedServices.join(", ");
         body.appendChild(affected);
     }
 
@@ -944,6 +1011,15 @@ function renderConflictCard(conflict, index) {
         why.className = "conflict-why";
         why.textContent = whyText;
         body.appendChild(why);
+    }
+
+    // Handrail: plain-English explanation for the conflict type
+    const handrail = CONFLICT_HANDRAILS[conflict.type];
+    if (handrail) {
+        const handrailEl = document.createElement("p");
+        handrailEl.className = "conflict-handrail";
+        handrailEl.textContent = handrail;
+        body.appendChild(handrailEl);
     }
 
     // Fix plan container (populated async)
@@ -996,16 +1072,16 @@ function _conflictWhyText(conflict) {
 }
 
 function drillIntoConflict(conflict) {
-    const svcName = (conflict.services || [])[0];
+    const svcName = (conflict.services || [])[0] || conflict.service_name || "";
     const svc = state.services.find(s => s.service_name === svcName);
     if (!svc) {
-        showSimpleToast("Could not find stack for " + (svcName || "unknown"), "error");
+        showSimpleToast("Could not find service '" + svcName + "' in pipeline data", "error");
         return;
     }
     const stack = {
         path: svc.stack_path || "",
         compose_file: svc.compose_file || "docker-compose.yml",
-        services: (conflict.services || []),
+        services: conflict.services && conflict.services.length > 0 ? conflict.services : [svcName],
     };
     hide("pipeline-dashboard");
     state.parsedError = state.pastedError;
@@ -1557,12 +1633,16 @@ async function handlePasteError() {
 function findConflictForService(serviceName) {
     const conflicts = (state.pipeline && state.pipeline.conflicts) || [];
     for (let i = 0; i < conflicts.length; i++) {
-        if ((conflicts[i].services || []).some(s =>
+        const c = conflicts[i];
+        const services = c.services || [];
+        const matchArray = services.some(s =>
             s.toLowerCase().includes(serviceName.toLowerCase()) ||
             serviceName.toLowerCase().includes(s.toLowerCase())
-        )) {
-            return i;
-        }
+        );
+        const matchName = c.service_name &&
+            (c.service_name.toLowerCase().includes(serviceName.toLowerCase()) ||
+             serviceName.toLowerCase().includes(c.service_name.toLowerCase()));
+        if (matchArray || matchName) return i;
     }
     return null;
 }
@@ -2641,6 +2721,32 @@ function showProblem(data) {
     const details = document.getElementById("problem-details");
     details.replaceChildren();
 
+    // Determine which categories are present
+    const conflicts = data.conflicts || [];
+    const categories = new Set(conflicts.map(c => (c.category || "").toUpperCase()));
+    const hasCatA = categories.has("A");
+    const hasCatB = categories.has("B");
+    const hasCatC = categories.has("C");
+    const catCOnly = hasCatC && !hasCatA && !hasCatB;
+
+    // Category C only: change header to "Recommendation" with info-style badge
+    const headerEl = section.querySelector(".step-header h2");
+    const iconEl = section.querySelector(".step-number");
+    if (catCOnly) {
+        if (headerEl) headerEl.textContent = "Recommendation";
+        if (iconEl) {
+            iconEl.className = "step-number info-icon";
+            iconEl.textContent = "i";
+        }
+    } else {
+        // Reset to default for non-C-only cases
+        if (headerEl) headerEl.textContent = "The Problem";
+        if (iconEl) {
+            iconEl.className = "step-number problem-icon";
+            iconEl.textContent = "!";
+        }
+    }
+
     if (data.fix_summary) {
         const summary = document.createElement("p");
         summary.className = "step-desc";
@@ -2648,13 +2754,22 @@ function showProblem(data) {
         details.appendChild(summary);
     }
 
-    (data.conflicts || []).forEach((conflict) => {
+    conflicts.forEach((conflict) => {
+        const cat = (conflict.category || "").toUpperCase();
+        const isCatC = cat === "C";
+
         const item = document.createElement("div");
         item.className = "conflict-item conflict-" + conflict.severity;
 
+        // Category C uses info badge instead of severity badge
         const badge = document.createElement("span");
-        badge.className = "conflict-severity severity-" + conflict.severity;
-        badge.textContent = conflict.severity;
+        if (isCatC) {
+            badge.className = "badge-info";
+            badge.textContent = "INFO";
+        } else {
+            badge.className = "conflict-severity severity-" + conflict.severity;
+            badge.textContent = conflict.severity;
+        }
         item.appendChild(badge);
 
         const desc = document.createElement("div");
@@ -2667,6 +2782,15 @@ function showProblem(data) {
             detail.className = "conflict-detail";
             detail.textContent = conflict.detail;
             item.appendChild(detail);
+        }
+
+        // Handrail: plain-English explanation below technical description
+        const handrail = CONFLICT_HANDRAILS[conflict.type];
+        if (handrail) {
+            const handrailEl = document.createElement("p");
+            handrailEl.className = "conflict-handrail";
+            handrailEl.textContent = handrail;
+            item.appendChild(handrailEl);
         }
 
         // RPM hint: if this conflict is an RPM scenario, show an insight callout
@@ -2759,13 +2883,18 @@ function showSolution(data) {
     const recommendedBlock = document.getElementById("solution-block-recommended");
 
     // Clean up any previously injected elements from a prior render
-    section.querySelectorAll(".solution-tracks, .track-content-quick, .track-content-proper, .infra-warning").forEach((el) => el.remove());
+    section.querySelectorAll(".solution-tracks, .track-content-quick, .track-content-proper, .infra-warning, .cat-c-guidance, .env-solution-block, .solution-tab-env").forEach((el) => el.remove());
+
+    // Determine which categories are present
+    const conflicts = data.conflicts || [];
+    const categories = new Set(conflicts.map(c => (c.category || "").toUpperCase()));
+    const hasCatA = categories.has("A");
+    const hasCatB = categories.has("B");
+    const hasCatC = categories.has("C");
+    const catCOnly = hasCatC && !hasCatA && !hasCatB;
 
     // Detect infrastructure-level conflicts that YAML changes alone cannot fix.
-    // Remote filesystem (SMB/CIFS/NFS), mixed mount types, and WSL2 performance
-    // require the user to change their actual storage/OS setup, not just compose files.
     const infraTypes = ["remote_filesystem", "mixed_mount_types", "wsl2_performance"];
-    const conflicts = data.conflicts || [];
     const infraConflicts = conflicts.filter((c) => infraTypes.includes(c.type));
     const hasOnlyInfra = infraConflicts.length > 0 && conflicts.every((c) => infraTypes.includes(c.type));
 
@@ -2773,13 +2902,74 @@ function showSolution(data) {
     const postFixTypes = ["root_execution", "cross_stack_puid_mismatch"];
     const postFixConflicts = conflicts.filter((c) => postFixTypes.includes(c.type));
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Category C only: replace solution section with "What You Can Do" card
+    // ────────────────────────────────────────────────────────────────────────
+    if (catCOnly) {
+        // Update header to match the advisory tone
+        const headerEl = section.querySelector(".step-header h2");
+        const iconEl = section.querySelector(".step-number");
+        if (headerEl) headerEl.textContent = "What You Can Do";
+        if (iconEl) {
+            iconEl.className = "step-number info-icon";
+            iconEl.textContent = "i";
+        }
+
+        summaryEl.textContent = "This isn't something MapArr can fix in your compose file \u2014 it's about where your data lives.";
+
+        // Hide the YAML tabs and blocks — not relevant for Cat C
+        const solutionTabs = document.getElementById("solution-tabs");
+        if (solutionTabs) solutionTabs.classList.add("hidden");
+        if (recommendedBlock) recommendedBlock.classList.add("hidden");
+        if (originalBlock) originalBlock.classList.add("hidden");
+
+        // Render each Cat C conflict's fix text as a guidance card
+        const guidanceWrap = document.createElement("div");
+        guidanceWrap.className = "cat-c-guidance";
+
+        for (const c of conflicts) {
+            const card = document.createElement("div");
+            card.className = "recommendation-card";
+
+            const fixText = c.fix || c.detail || c.description || "";
+            const p = document.createElement("p");
+            p.className = "guidance-text";
+            p.textContent = fixText;
+            card.appendChild(p);
+
+            guidanceWrap.appendChild(card);
+        }
+
+        summaryEl.after(guidanceWrap);
+        section.classList.remove("hidden");
+        return;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Reset header for non-C-only cases (may have been changed by previous render)
+    // ────────────────────────────────────────────────────────────────────────
+    const headerEl = section.querySelector(".step-header h2");
+    const iconEl = section.querySelector(".step-number");
+    if (headerEl) headerEl.textContent = "The Solution";
+    if (iconEl) {
+        iconEl.className = "step-number ok";
+        iconEl.textContent = "\u2713";
+    }
+
+    // Show YAML tabs again (may have been hidden by Cat C render)
+    const solutionTabsEl = document.getElementById("solution-tabs");
+    if (solutionTabsEl) solutionTabsEl.classList.remove("hidden");
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Infrastructure warnings (Cat C mixed with A/B)
+    // ────────────────────────────────────────────────────────────────────────
     if (infraConflicts.length > 0) {
         const warning = document.createElement("div");
         warning.className = "infra-warning callout callout-warning";
 
         const title = document.createElement("strong");
         title.textContent = hasOnlyInfra
-            ? "This issue requires infrastructure changes — not just YAML edits"
+            ? "This issue requires infrastructure changes \u2014 not just YAML edits"
             : "Some issues require infrastructure changes beyond YAML edits";
         warning.appendChild(title);
 
@@ -2846,17 +3036,109 @@ function showSolution(data) {
         recommendedBlock.after(originalBlock);
     }
 
-    // Check if RPM wizard should be offered as an alternative.
-    // Two triggers: (1) rpm_mappings with possible entries from mount overlap,
-    // or (2) an rpm_hint on a conflict (error path matches a DC container path).
+    // ────────────────────────────────────────────────────────────────────────
+    // "Fix Permissions" tab — shown when Cat B AND env_solution_yaml exists
+    // ────────────────────────────────────────────────────────────────────────
+    const envTab = document.querySelector('.solution-tab-env');
+    if (envTab) envTab.remove();
+    const envBlock = document.querySelector('.env-solution-block');
+    if (envBlock) envBlock.remove();
+
+    if (hasCatB && data.env_solution_yaml) {
+        // Add "Fix Permissions" tab button
+        const tabBar = document.getElementById("solution-tabs");
+        if (tabBar) {
+            const envTabBtn = document.createElement("button");
+            envTabBtn.className = "solution-tab solution-tab-env";
+            envTabBtn.dataset.tab = "env";
+            envTabBtn.textContent = "Fix Permissions";
+            // Insert before the "Your Config" tab if it exists, otherwise at end
+            const origTabBtn = tabBar.querySelector('[data-tab="original"]');
+            if (origTabBtn) {
+                tabBar.insertBefore(envTabBtn, origTabBtn);
+            } else {
+                tabBar.appendChild(envTabBtn);
+            }
+
+            envTabBtn.addEventListener("click", () => switchSolutionTab("env"));
+        }
+
+        // Add env solution code block
+        const envSolutionBlock = document.createElement("div");
+        envSolutionBlock.className = "code-block hidden env-solution-block";
+        envSolutionBlock.id = "solution-block-env";
+
+        const envIntro = document.createElement("p");
+        envIntro.className = "env-solution-intro";
+        envIntro.textContent = "These environment variable changes align your services to the same user identity.";
+        envSolutionBlock.appendChild(envIntro);
+
+        const envPre = document.createElement("pre");
+        envPre.id = "solution-yaml-env";
+        renderYamlWithHighlights(envPre, data.env_solution_yaml, data.env_solution_changed_lines || []);
+        envSolutionBlock.appendChild(envPre);
+
+        const envCopyBtn = document.createElement("button");
+        envCopyBtn.className = "copy-btn";
+        envCopyBtn.textContent = "Copy to Clipboard";
+        envCopyBtn.addEventListener("click", () => {
+            navigator.clipboard.writeText(data.env_solution_yaml).then(() => {
+                envCopyBtn.textContent = "Copied!";
+                setTimeout(() => { envCopyBtn.textContent = "Copy to Clipboard"; }, 2000);
+            });
+        });
+        envSolutionBlock.appendChild(envCopyBtn);
+
+        // Insert after originalBlock (or recommendedBlock if originalBlock missing)
+        const insertAfter = originalBlock || recommendedBlock;
+        if (insertAfter) {
+            insertAfter.after(envSolutionBlock);
+        } else {
+            section.appendChild(envSolutionBlock);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Tab visibility gates based on category
+    // ────────────────────────────────────────────────────────────────────────
+    const recTab = document.getElementById("tab-recommended");
+
+    // "Recommended Fix" tab: only show when Cat A AND solution_yaml exists
+    if (!hasCatA || !data.solution_yaml) {
+        if (recTab) recTab.classList.add("hidden");
+        if (recommendedBlock) recommendedBlock.classList.add("hidden");
+    } else {
+        if (recTab) recTab.classList.remove("hidden");
+        if (recommendedBlock) recommendedBlock.classList.remove("hidden");
+    }
+
+    // "Your Config (Corrected)" tab: show when original_corrected_yaml exists
+    if (data.original_corrected_yaml && originalTab && originalYamlEl) {
+        originalTab.classList.remove("hidden");
+    } else if (originalTab) {
+        originalTab.classList.add("hidden");
+    }
+
+    // Determine default active tab
+    let defaultTab = "recommended";
+    if (!hasCatA || !data.solution_yaml) {
+        if (hasCatB && data.env_solution_yaml) {
+            defaultTab = "env";
+        } else if (data.original_corrected_yaml) {
+            defaultTab = "original";
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // RPM Wizard — only show when Cat A AND RPM mappings exist with possible: true
+    // ────────────────────────────────────────────────────────────────────────
     const rpmMappings = data.rpm_mappings || [];
     const hasPossibleRpm = rpmMappings.some((m) => m.possible);
     const hasRpmHint = (data.conflicts || []).some((c) => c.rpm_hint);
 
-    if (hasPossibleRpm || hasRpmHint) {
+    if (hasCatA && (hasPossibleRpm || hasRpmHint)) {
         // Show track selector: Quick Fix (RPM) vs Proper Fix (YAML restructure)
-        // The RPM wizard goes above the existing YAML solution
-        summaryEl.textContent = "Two fix approaches available — Quick Fix keeps your current mounts and bridges the gaps with Remote Path Mappings. Proper Fix restructures your volumes to eliminate the problem permanently.";
+        summaryEl.textContent = "Two fix approaches available \u2014 Quick Fix keeps your current mounts and bridges the gaps with Remote Path Mappings. Proper Fix restructures your volumes to eliminate the problem permanently.";
 
         const trackWrap = document.createElement("div");
         trackWrap.className = "solution-tracks";
@@ -2922,10 +3204,13 @@ function showSolution(data) {
         renderRpmWizard(data, quickContent);
 
         // Move existing YAML solution elements into Proper Fix track
-        const solutionTabs = document.getElementById("solution-tabs");
-        if (solutionTabs) properContent.appendChild(solutionTabs);
+        const solutionTabs2 = document.getElementById("solution-tabs");
+        if (solutionTabs2) properContent.appendChild(solutionTabs2);
         if (recommendedBlock) properContent.appendChild(recommendedBlock);
         if (originalBlock) properContent.appendChild(originalBlock);
+        // Move env solution block into Proper Fix track too
+        const envSolBlock = document.querySelector(".env-solution-block");
+        if (envSolBlock) properContent.appendChild(envSolBlock);
         // Move apply-confirm modal too
         const applyConfirm = document.getElementById("apply-confirm");
         if (applyConfirm) properContent.appendChild(applyConfirm);
@@ -2945,12 +3230,21 @@ function showSolution(data) {
         } else if (originalTab) {
             originalTab.classList.add("hidden");
         }
-        switchSolutionTab("recommended");
+        switchSolutionTab(defaultTab);
     } else {
-        // No RPM available — show standard YAML solution only
-        summaryEl.textContent =
-            "The Recommended Fix tab shows the ideal volume mount snippet for your services. " +
-            "Switch to Your Config (Corrected) to see your full docker-compose.yml with the fixes applied — that's the version you can apply directly to your stack.";
+        // No RPM available — show standard solution tabs
+        if (hasCatB && !hasCatA && data.env_solution_yaml) {
+            summaryEl.textContent =
+                "The Fix Permissions tab shows the environment variable changes needed to align your services. " +
+                "Switch to Your Config (Corrected) to see your full docker-compose.yml with the fixes applied.";
+        } else if (hasCatA) {
+            summaryEl.textContent =
+                "The Recommended Fix tab shows the ideal volume mount snippet for your services. " +
+                "Switch to Your Config (Corrected) to see your full docker-compose.yml with the fixes applied \u2014 that's the version you can apply directly to your stack.";
+        } else {
+            summaryEl.textContent =
+                "Review the suggested changes below and apply them to your compose configuration.";
+        }
 
         if (data.solution_yaml) {
             renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
@@ -2966,7 +3260,7 @@ function showSolution(data) {
             originalTab.classList.add("hidden");
         }
 
-        switchSolutionTab("recommended");
+        switchSolutionTab(defaultTab);
     }
 
     section.classList.remove("hidden");
@@ -5165,12 +5459,20 @@ function switchSolutionTab(tab) {
 
     const recBlock = document.getElementById("solution-block-recommended");
     const origBlock = document.getElementById("solution-block-original");
-    if (tab === "recommended") {
+    const envBlock = document.getElementById("solution-block-env");
+
+    // Hide all blocks first
+    if (recBlock) recBlock.classList.add("hidden");
+    if (origBlock) origBlock.classList.add("hidden");
+    if (envBlock) envBlock.classList.add("hidden");
+
+    // Show the selected block
+    if (tab === "recommended" && recBlock) {
         recBlock.classList.remove("hidden");
-        origBlock.classList.add("hidden");
-    } else {
-        recBlock.classList.add("hidden");
+    } else if (tab === "original" && origBlock) {
         origBlock.classList.remove("hidden");
+    } else if (tab === "env" && envBlock) {
+        envBlock.classList.remove("hidden");
     }
 }
 
@@ -5522,8 +5824,11 @@ function wireQuickSwitchCombobox(input, dropdown, opts) {
 function _healthDotTooltip(health) {
     const tips = {
         healthy: "No issues detected \u2014 mount paths are consistent",
-        issue: "This service has a path conflict \u2014 click to see details",
+        "health-caution": "Internally OK but misaligned with your broader pipeline",
+        issue: "This service has a configuration concern \u2014 click to see details",
+        problem: "This service has broken mount paths \u2014 hardlinks will not work",
         awaiting: "Fix has been applied \u2014 restart the container to take effect",
+        "health-unknown": "Scanning or not applicable",
     };
     return tips[health] || "Status unknown";
 }

@@ -19,8 +19,9 @@
     </div>
     <div class="header-right">
         <div class="path-selector" id="path-selector">
-            <span class="path-icon">&#128193;</span>
-            <button class="path-display" id="header-path" aria-label="Change stacks directory">
+            <button class="path-display" id="header-path" aria-label="Change stacks directory"
+                    data-tooltip="Click to change your Docker stacks directory" data-tooltip-pos="below">
+                <span class="path-display-icon">&#128193;</span>
                 <span id="header-path-text">No directory selected</span>
                 <span class="path-chevron">&#9662;</span>
             </button>
@@ -31,9 +32,10 @@
                        data-tooltip="The root directory containing your Docker Compose stacks"
                        data-tooltip-pos="below" />
                 <button class="btn btn-primary btn-sm" id="header-path-go">Scan</button>
+                <button class="btn btn-ghost btn-sm path-browse" id="header-path-browse"
+                        data-tooltip="Open folder picker" data-tooltip-pos="below"
+                        aria-label="Browse for stacks directory">Browse</button>
             </div>
-            <button class="btn btn-ghost btn-sm path-browse" id="header-path-browse"
-                    data-tooltip="Open folder picker" aria-label="Browse for stacks directory">&#128194;</button>
         </div>
         <span class="service-count" id="service-count"></span>
         <div class="header-status" id="health-status"></div>
@@ -169,8 +171,9 @@
         <div class="health-legend" id="health-legend">
             <span class="legend-label">Health:</span>
             <span class="legend-item"><span class="health-dot healthy"></span> Healthy</span>
-            <span class="legend-item"><span class="health-dot health-caution"></span> Caution</span>
-            <span class="legend-item"><span class="health-dot issue"></span> Problem</span>
+            <span class="legend-item"><span class="health-dot health-caution"></span> Pipeline mismatch</span>
+            <span class="legend-item"><span class="health-dot issue"></span> Issue</span>
+            <span class="legend-item"><span class="health-dot problem"></span> Problem</span>
             <span class="legend-item"><span class="health-dot awaiting"></span> Fix applied</span>
             <span class="legend-item"><span class="health-dot health-unknown"></span> Scanning</span>
         </div>
