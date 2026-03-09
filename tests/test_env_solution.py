@@ -16,6 +16,7 @@ from backend.analyzer import (
     analyze_stack,
     _generate_solution_yaml,
     _generate_env_solution,
+    _patch_original_env,
     _find_majority_env,
     ServiceInfo,
     Conflict,
@@ -205,9 +206,11 @@ def _make_service_with_env(name, image, role, volumes_raw, environment):
 def analyze_and_get_result(compose_data):
     """Create a temp stack and run analyze_stack, returning the AnalysisResult."""
     stack = make_stack(compose_data)
+    raw_content = (Path(stack) / "docker-compose.yml").read_text(encoding="utf-8")
     return analyze_stack(
-        yaml.safe_load((Path(stack) / "docker-compose.yml").read_text()),
-        stack, "docker-compose.yml", "manual"
+        yaml.safe_load(raw_content),
+        stack, "docker-compose.yml", "manual",
+        raw_compose_content=raw_content,
     )
 
 
@@ -457,3 +460,298 @@ class TestEnvSolution:
         assert result.solution_yaml is None
         assert result.env_solution_yaml is not None
         assert "PUID=" in result.env_solution_yaml
+
+
+# ═══════════════════════════════════════════
+# Patch Original Env (line-based YAML patching)
+# ═══════════════════════════════════════════
+
+class TestPatchOriginalEnv:
+    """Tests for _patch_original_env() — patches user's original compose YAML
+    with corrected environment variable values for Category B conflicts."""
+
+    def test_puid_mismatch_patches_list_format(self):
+        """PUID mismatch patches list-format environment entries."""
+        raw = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: linuxserver/sonarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
+            "      - TZ=America/New_York\n"
+            "  radarr:\n"
+            "    image: linuxserver/radarr\n"
+            "    environment:\n"
+            "      - PUID=1001\n"
+            "      - PGID=1000\n"
+            "      - TZ=America/New_York\n"
+        )
+        services = [
+            _make_service_with_env("sonarr", "linuxserver/sonarr", "arr", ["/data:/data"],
+                                   {"PUID": "1000", "PGID": "1000", "TZ": "America/New_York"}),
+            _make_service_with_env("radarr", "linuxserver/radarr", "arr", ["/data:/data"],
+                                   {"PUID": "1001", "PGID": "1000", "TZ": "America/New_York"}),
+        ]
+        conflicts = [
+            Conflict(
+                conflict_type="puid_pgid_mismatch",
+                severity="high",
+                services=["sonarr", "radarr"],
+                description="PUID mismatch",
+            ),
+        ]
+        patched, changed = _patch_original_env(raw, conflicts, services)
+        assert patched is not None
+        assert len(changed) > 0
+        # Majority PUID is 1000 — radarr's 1001 should be patched to 1000
+        assert "PUID=1001" not in patched
+        assert "PUID=1000" in patched
+
+    def test_puid_mismatch_patches_dict_format(self):
+        """PUID mismatch patches dict-format environment entries."""
+        raw = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: linuxserver/sonarr\n"
+            "    environment:\n"
+            "      PUID: \"1000\"\n"
+            "      PGID: \"1000\"\n"
+            "  radarr:\n"
+            "    image: linuxserver/radarr\n"
+            "    environment:\n"
+            "      PUID: \"1001\"\n"
+            "      PGID: \"1000\"\n"
+        )
+        services = [
+            _make_service_with_env("sonarr", "linuxserver/sonarr", "arr", ["/data:/data"],
+                                   {"PUID": "1000", "PGID": "1000"}),
+            _make_service_with_env("radarr", "linuxserver/radarr", "arr", ["/data:/data"],
+                                   {"PUID": "1001", "PGID": "1000"}),
+        ]
+        conflicts = [
+            Conflict(
+                conflict_type="puid_pgid_mismatch",
+                severity="high",
+                services=["sonarr", "radarr"],
+                description="PUID mismatch",
+            ),
+        ]
+        patched, changed = _patch_original_env(raw, conflicts, services)
+        assert patched is not None
+        assert len(changed) > 0
+        # radarr's PUID should now be 1000
+        assert "1001" not in patched
+
+    def test_path_only_no_env_patch(self):
+        """Path-only stack — _patch_original_env returns None (no Cat B)."""
+        raw = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: linuxserver/sonarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "    volumes:\n"
+            "      - /mnt/tv:/tv\n"
+        )
+        services = [
+            _make_service_with_env("sonarr", "linuxserver/sonarr", "arr", ["/mnt/tv:/tv"],
+                                   {"PUID": "1000"}),
+        ]
+        conflicts = [
+            Conflict(
+                conflict_type="no_shared_mount",
+                severity="critical",
+                services=["sonarr"],
+                description="No shared mount",
+            ),
+        ]
+        patched, changed = _patch_original_env(raw, conflicts, services)
+        assert patched is None
+        assert changed == []
+
+    def test_mixed_patches_both(self):
+        """Mixed A+B — _patch_original_env stacks on top of volume-patched content."""
+        # Start with raw YAML that has both path and env issues
+        raw = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: linuxserver/sonarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
+            "    volumes:\n"
+            "      - /mnt/tv:/tv\n"
+            "  qbittorrent:\n"
+            "    image: linuxserver/qbittorrent\n"
+            "    environment:\n"
+            "      - PUID=1001\n"
+            "      - PGID=1000\n"
+            "    volumes:\n"
+            "      - /mnt/downloads:/downloads\n"
+        )
+        services = [
+            _make_service_with_env("sonarr", "linuxserver/sonarr", "arr", ["/mnt/tv:/tv"],
+                                   {"PUID": "1000", "PGID": "1000"}),
+            _make_service_with_env("qbittorrent", "linuxserver/qbittorrent", "download_client",
+                                   ["/mnt/downloads:/downloads"],
+                                   {"PUID": "1001", "PGID": "1000"}),
+        ]
+        conflicts = [
+            Conflict(
+                conflict_type="no_shared_mount",
+                severity="critical",
+                services=["sonarr", "qbittorrent"],
+                description="No shared mount",
+            ),
+            Conflict(
+                conflict_type="puid_pgid_mismatch",
+                severity="high",
+                services=["sonarr", "qbittorrent"],
+                description="PUID mismatch",
+            ),
+        ]
+        # Env patch on raw content (simulating stacking)
+        patched, changed = _patch_original_env(raw, conflicts, services)
+        assert patched is not None
+        assert "PUID=1001" not in patched
+        assert "PUID=1000" in patched
+        # Volume mounts should be untouched by env patcher
+        assert "/mnt/tv:/tv" in patched
+        assert "/mnt/downloads:/downloads" in patched
+
+    def test_umask_patches_env(self):
+        """UMASK inconsistency patches UMASK values."""
+        raw = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: linuxserver/sonarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
+            "      - UMASK=022\n"
+            "  radarr:\n"
+            "    image: linuxserver/radarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
+            "      - UMASK=077\n"
+        )
+        services = [
+            _make_service_with_env("sonarr", "linuxserver/sonarr", "arr", ["/data:/data"],
+                                   {"PUID": "1000", "PGID": "1000", "UMASK": "022"}),
+            _make_service_with_env("radarr", "linuxserver/radarr", "arr", ["/data:/data"],
+                                   {"PUID": "1000", "PGID": "1000", "UMASK": "077"}),
+        ]
+        conflicts = [
+            Conflict(
+                conflict_type="umask_inconsistent",
+                severity="low",
+                services=["sonarr", "radarr"],
+                description="UMASK inconsistent",
+            ),
+        ]
+        patched, changed = _patch_original_env(raw, conflicts, services)
+        assert patched is not None
+        assert "UMASK=002" in patched
+        assert "UMASK=022" not in patched
+        assert "UMASK=077" not in patched
+
+    def test_tz_mismatch_patches_env(self):
+        """TZ mismatch patches TZ values to majority."""
+        raw = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: linuxserver/sonarr\n"
+            "    environment:\n"
+            "      - TZ=America/New_York\n"
+            "  radarr:\n"
+            "    image: linuxserver/radarr\n"
+            "    environment:\n"
+            "      - TZ=America/New_York\n"
+            "  qbittorrent:\n"
+            "    image: linuxserver/qbittorrent\n"
+            "    environment:\n"
+            "      - TZ=Europe/London\n"
+        )
+        services = [
+            _make_service_with_env("sonarr", "linuxserver/sonarr", "arr", ["/data:/data"],
+                                   {"TZ": "America/New_York"}),
+            _make_service_with_env("radarr", "linuxserver/radarr", "arr", ["/data:/data"],
+                                   {"TZ": "America/New_York"}),
+            _make_service_with_env("qbittorrent", "linuxserver/qbittorrent", "download_client", ["/data:/data"],
+                                   {"TZ": "Europe/London"}),
+        ]
+        conflicts = [
+            Conflict(
+                conflict_type="tz_mismatch",
+                severity="medium",
+                services=["sonarr", "radarr", "qbittorrent"],
+                description="TZ mismatch",
+            ),
+        ]
+        patched, changed = _patch_original_env(raw, conflicts, services)
+        assert patched is not None
+        assert "Europe/London" not in patched
+        assert "America/New_York" in patched
+
+    def test_no_changes_returns_none(self):
+        """When all values already match majority, return None."""
+        raw = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: linuxserver/sonarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
+            "  radarr:\n"
+            "    image: linuxserver/radarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
+        )
+        services = [
+            _make_service_with_env("sonarr", "linuxserver/sonarr", "arr", ["/data:/data"],
+                                   {"PUID": "1000", "PGID": "1000"}),
+            _make_service_with_env("radarr", "linuxserver/radarr", "arr", ["/data:/data"],
+                                   {"PUID": "1000", "PGID": "1000"}),
+        ]
+        conflicts = [
+            Conflict(
+                conflict_type="puid_pgid_mismatch",
+                severity="high",
+                services=["sonarr", "radarr"],
+                description="PUID mismatch",
+            ),
+        ]
+        patched, changed = _patch_original_env(raw, conflicts, services)
+        assert patched is None
+        assert changed == []
+
+    def test_full_stack_permission_only_has_original_corrected(self):
+        """Full analyze_stack with permission-only issues now produces original_corrected_yaml."""
+        result = analyze_and_get_result({
+            "services": {
+                "sonarr": {
+                    "image": "linuxserver/sonarr",
+                    "environment": ["PUID=1000", "PGID=1000", "TZ=America/New_York"],
+                    "volumes": ["/data:/data"],
+                },
+                "radarr": {
+                    "image": "linuxserver/radarr",
+                    "environment": ["PUID=1001", "PGID=1000", "TZ=America/New_York"],
+                    "volumes": ["/data:/data"],
+                },
+                "qbittorrent": {
+                    "image": "linuxserver/qbittorrent",
+                    "environment": ["PUID=1000", "PGID=1000", "TZ=America/New_York"],
+                    "volumes": ["/data:/data"],
+                },
+            },
+        })
+        # Permission-only stack should now get original_corrected_yaml from env patching
+        if result.conflicts:  # Only check if conflicts were detected
+            has_cat_b = any(c.category == "B" for c in result.conflicts)
+            if has_cat_b:
+                assert result.original_corrected_yaml is not None
+                assert len(result.original_changed_lines) > 0

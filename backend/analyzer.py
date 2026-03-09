@@ -525,13 +525,26 @@ def analyze_stack(
         steps.append({"icon": "ok", "text": "Generated permission fix recommendation"})
 
     # Step 7: Generate corrected version of user's original compose
+    # Category-aware: patch volumes for Cat A, patch env for Cat B, stack both
     original_corrected_yaml = None
     original_changed_lines: List[int] = []
-    if solution_yaml and raw_compose_content:
-        original_corrected_yaml, original_changed_lines = _patch_original_yaml(
-            raw_compose_content, conflicts, services,
-            host_root_override=pipeline_host_root,
-        )
+    cat_a = any(c.category == "A" for c in conflicts)
+    cat_b = any(c.category == "B" for c in conflicts)
+
+    if raw_compose_content:
+        if cat_a:
+            original_corrected_yaml, original_changed_lines = _patch_original_yaml(
+                raw_compose_content, conflicts, services,
+                host_root_override=pipeline_host_root,
+            )
+        if cat_b:
+            env_patched, env_changed = _patch_original_env(
+                original_corrected_yaml or raw_compose_content,
+                conflicts, services,
+            )
+            if env_patched:
+                original_corrected_yaml = env_patched
+                original_changed_lines.extend(env_changed)
         if original_corrected_yaml:
             steps.append({"icon": "ok", "text": "Generated corrected version of your compose file"})
 
@@ -3310,6 +3323,178 @@ def _patch_original_yaml(
         yaml.safe_load(patched)
     except Exception:
         logger.warning("Patched YAML failed validation, discarding")
+        return None, []
+
+    return patched, changed_lines
+
+
+def _patch_original_env(
+    raw_content: str,
+    conflicts: List[Conflict],
+    services: List[ServiceInfo],
+) -> Tuple[Optional[str], List[int]]:
+    """
+    Patch the user's original compose YAML, replacing environment variable
+    values for Category B conflicts. Preserves all other content.
+
+    Strategy: line-based parsing. Find each affected service's environment:
+    block, replace PUID/PGID/UMASK/TZ lines with corrected values.
+
+    Handles both compose environment formats:
+    - List format: ``- PUID=1000``
+    - Dict format: ``PUID: "1000"`` or ``PUID: 1000``
+
+    Returns:
+        (patched_yaml, changed_lines) — the patched YAML and 1-indexed
+        line numbers of lines that were replaced.
+        Returns (None, []) if no changes needed or patching fails.
+    """
+    # Only process Category B (permission/env) conflicts
+    env_conflicts = [c for c in conflicts if c.category == "B"]
+    if not env_conflicts:
+        return None, []
+
+    # Determine which vars need fixing based on conflict types
+    conflict_types = {c.conflict_type for c in env_conflicts}
+    fix_puid = bool(conflict_types & _PUID_FIX_TYPES)
+    fix_umask = bool(conflict_types & _UMASK_FIX_TYPES)
+    fix_tz = bool(conflict_types & _TZ_FIX_TYPES)
+
+    if not (fix_puid or fix_umask or fix_tz):
+        return None, []
+
+    # Determine target values
+    target_vals: Dict[str, str] = {}
+    if fix_puid:
+        target_vals["PUID"] = _find_majority_env(services, "PUID", "1000")
+        target_vals["PGID"] = _find_majority_env(services, "PGID", "1000")
+    if fix_umask:
+        target_vals["UMASK"] = "002"
+    if fix_tz:
+        target_vals["TZ"] = _find_majority_env(services, "TZ", "America/New_York")
+
+    # Build set of affected service names — all media-role services
+    affected_names: Set[str] = set()
+    for svc in services:
+        if svc.role in ("arr", "download_client", "media_server"):
+            affected_names.add(svc.name)
+    if not affected_names:
+        return None, []
+
+    # Find the services: top-level key
+    lines = raw_content.splitlines()
+    services_line_idx = None
+    for idx, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("services:") and not line[0:1].isspace():
+            services_line_idx = idx
+            break
+
+    if services_line_idx is None:
+        return None, []
+
+    result: List[str] = []
+    changed_lines: List[int] = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+
+        # Detect service name at indent 2 inside services: block
+        if (i > services_line_idx and indent == 2
+                and stripped.endswith(":") and not stripped.startswith("#")
+                and not stripped.startswith("-")):
+
+            svc_name = stripped.rstrip(":").strip().strip("'\"")
+
+            if svc_name in affected_names:
+                result.append(line)
+                i += 1
+
+                # Scan this service's block for environment:
+                while i < len(lines):
+                    inner = lines[i]
+                    inner_stripped = inner.lstrip()
+                    inner_indent = len(inner) - len(inner_stripped)
+
+                    # Left of or at service-level indent = new service or top-level key
+                    if inner_stripped and not inner_stripped.startswith("#") and inner_indent <= 2:
+                        break
+
+                    if inner_stripped.rstrip(":").strip() == "environment":
+                        result.append(inner)
+                        env_key_indent = inner_indent
+                        i += 1
+
+                        # Process environment entries
+                        while i < len(lines):
+                            env_line = lines[i]
+                            env_stripped = env_line.lstrip()
+                            env_indent = len(env_line) - len(env_stripped)
+
+                            # Left the environment block?
+                            if env_stripped and not env_stripped.startswith("#"):
+                                # List format: "- KEY=val" can be at same indent
+                                # as "environment:" (yaml.dump style) or deeper.
+                                # Dict format: "KEY: val" is always deeper.
+                                if env_stripped.startswith("-"):
+                                    # List items below env_key_indent = left block
+                                    if env_indent < env_key_indent:
+                                        break
+                                elif env_indent <= env_key_indent:
+                                    break
+
+                            # Try to match list format: - KEY=value
+                            list_match = re.match(
+                                r'^(\s*-\s*)([A-Z_]+)=(.*)$', env_line
+                            )
+                            if list_match:
+                                prefix, key, old_val = list_match.groups()
+                                if key in target_vals and str(old_val) != str(target_vals[key]):
+                                    new_line = f"{prefix}{key}={target_vals[key]}"
+                                    result.append(new_line)
+                                    changed_lines.append(len(result))  # 1-indexed
+                                    i += 1
+                                    continue
+
+                            # Try to match dict format: KEY: value or KEY: "value"
+                            dict_match = re.match(
+                                r'^(\s*)([A-Z_]+):\s*["\']?([^"\']*)["\']?\s*$', env_line
+                            )
+                            if dict_match:
+                                prefix, key, old_val = dict_match.groups()
+                                if key in target_vals and str(old_val).strip() != str(target_vals[key]):
+                                    new_line = f"{prefix}{key}: \"{target_vals[key]}\""
+                                    result.append(new_line)
+                                    changed_lines.append(len(result))  # 1-indexed
+                                    i += 1
+                                    continue
+
+                            # Not a matching env var line — keep as-is
+                            result.append(env_line)
+                            i += 1
+
+                        continue
+
+                    result.append(inner)
+                    i += 1
+                continue
+
+        result.append(line)
+        i += 1
+
+    if not changed_lines:
+        return None, []
+
+    patched = "\n".join(result)
+
+    # Validate: ensure the patched YAML is still parseable
+    try:
+        yaml.safe_load(patched)
+    except Exception:
+        logger.warning("Env-patched YAML failed validation, discarding")
         return None, []
 
     return patched, changed_lines
