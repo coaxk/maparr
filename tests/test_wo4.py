@@ -456,3 +456,49 @@ class TestMountClassificationDict:
         assert d["mount_type"] == "cifs"
         assert d["is_remote"] is True
         assert d["hardlink_compatible"] is False
+
+
+# ═══════════════════════════════════════════
+# WSL2 Regex Precision (WO4 Task 2)
+# ═══════════════════════════════════════════
+
+class TestWsl2RegexPrecision:
+    """Ensure WSL2 detection only matches real Windows drive mounts (c-z with subdirectory)."""
+
+    def test_mnt_n_is_wsl2(self):
+        """Single letter n is in c-z range, so /mnt/n/ is a valid WSL2 drive mount.
+        NAS paths should use multi-letter names like /mnt/nas/ to avoid ambiguity."""
+        mc = classify_path("/mnt/n/export")
+        assert mc.mount_type == "wsl2"
+
+    def test_mnt_a_is_not_wsl2(self):
+        """Floppy drive letter A should not be classified as WSL2."""
+        mc = classify_path("/mnt/a/something")
+        assert mc.mount_type != "wsl2"
+
+    def test_mnt_b_is_not_wsl2(self):
+        """Floppy drive letter B should not be classified as WSL2."""
+        mc = classify_path("/mnt/b/data")
+        assert mc.mount_type != "wsl2"
+
+    def test_mnt_c_users_is_wsl2(self):
+        mc = classify_path("/mnt/c/Users/media")
+        assert mc.mount_type == "wsl2"
+
+    def test_mnt_d_downloads_is_wsl2(self):
+        mc = classify_path("/mnt/d/Downloads")
+        assert mc.mount_type == "wsl2"
+
+    def test_mnt_z_data_is_wsl2(self):
+        mc = classify_path("/mnt/z/data")
+        assert mc.mount_type == "wsl2"
+
+    def test_mnt_c_alone_is_not_wsl2(self):
+        """Bare /mnt/c without subdirectory is ambiguous — should not match WSL2."""
+        mc = classify_path("/mnt/c")
+        assert mc.mount_type != "wsl2"
+
+    def test_mnt_nas_is_local(self):
+        """Multi-letter names under /mnt/ are not WSL2 drive mounts."""
+        mc = classify_path("/mnt/nas/media")
+        assert mc.mount_type == "local"
