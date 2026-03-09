@@ -303,7 +303,14 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
     if result.shared_mount and result.mount_root:
         mount_status = f" | shared mount: {result.mount_root}"
     elif result.conflicts:
-        mount_status = f" | {len(result.conflicts)} mount conflict{'s' if len(result.conflicts) != 1 else ''}"
+        mount_count = len([c for c in result.conflicts if c.get("type") == "pipeline_mount_mismatch"])
+        perm_count = len([c for c in result.conflicts if c.get("type") == "pipeline_permission_mismatch"])
+        parts = []
+        if mount_count:
+            parts.append(f"{mount_count} mount conflict{'s' if mount_count != 1 else ''}")
+        if perm_count:
+            parts.append(f"{perm_count} permission mismatch{'es' if perm_count != 1 else ''}")
+        mount_status = f" | {', '.join(parts)}" if parts else ""
 
     result.summary = f"{len(all_services)} media services across {len(by_stack)} stacks{mount_status}"
     logger.info("Pipeline scan complete: %s (health=%s)", result.summary, result.health)
