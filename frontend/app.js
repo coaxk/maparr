@@ -706,44 +706,6 @@ function renderServiceGroups(servicesByRole) {
  * Uses a lookup table for common media stack services, falls back to
  * first two characters with smart capitalization.
  */
-function getServiceAbbr(name) {
-    const known = {
-        sonarr: "So", radarr: "Ra", lidarr: "Li", readarr: "Re",
-        prowlarr: "Pr", bazarr: "Ba", whisparr: "Wh",
-        qbittorrent: "qB", deluge: "De", transmission: "Tr",
-        sabnzbd: "Sa", nzbget: "Nz", jdownloader: "JD",
-        plex: "Px", jellyfin: "Jf", emby: "Em", tautulli: "Ta",
-        overseerr: "Ov", jellyseerr: "Js", ombi: "Om", petio: "Pe",
-    };
-    const lower = name.toLowerCase();
-    if (known[lower]) return known[lower];
-    // Fallback: first char uppercase + second char lowercase
-    return name.substring(0, 1).toUpperCase() + name.substring(1, 2);
-}
-
-/**
- * Create a colored initial badge for a service.
- * Color is determined by the service's pipeline role.
- */
-function getServiceIcon(serviceName, role) {
-    const abbr = getServiceAbbr(serviceName);
-    const roleColors = {
-        arr: "#e5a00d",
-        download_client: "#3b82f6",
-        media_server: "#8b5cf6",
-        request: "#10b981",
-        other: "#6b7280",
-    };
-    const color = roleColors[role] || roleColors.other;
-
-    const icon = document.createElement("span");
-    icon.className = "service-icon";
-    icon.textContent = abbr;
-    icon.style.backgroundColor = color + "20"; // 12% opacity background
-    icon.style.color = color;
-    return icon;
-}
-
 function renderServiceRow(svc) {
     const row = document.createElement("div");
     row.className = "service-row";
@@ -754,9 +716,6 @@ function renderServiceRow(svc) {
     dot.className = "health-dot " + getServiceHealth(svc);
     dot.setAttribute("data-tooltip", _healthDotTooltip(getServiceHealth(svc)));
     row.appendChild(dot);
-
-    // Service icon (colored initials badge)
-    row.appendChild(getServiceIcon(svc.service_name, svc.role));
 
     // Service info
     const info = document.createElement("div");
@@ -2776,10 +2735,7 @@ function showCurrentSetup(data) {
         list.className = "other-services-list";
         for (const svc of nonMediaServices) {
             const li = document.createElement("li");
-            li.appendChild(getServiceIcon(svc.name || svc.service_name, "other"));
-            const nameSpan = document.createElement("span");
-            nameSpan.textContent = svc.name || svc.service_name;
-            li.appendChild(nameSpan);
+            li.textContent = svc.name || svc.service_name;
             list.appendChild(li);
         }
         otherSection.appendChild(list);
@@ -6037,7 +5993,7 @@ function _legendDot(health, label) {
 function _effectiveHealth(stack) {
     const base = stack.health || "unknown";
 
-    // Only upgrade ok → caution. Don't touch warning/problem/unknown.
+    // Only upgrade ok → something worse. Don't touch warning/problem/unknown.
     if (base !== "ok") return base;
 
     // If this stack was analyzed or fixed this session, trust the deep result.
@@ -6049,18 +6005,26 @@ function _effectiveHealth(stack) {
     const p = state.pipeline;
     if (!p || !p.conflicts || p.conflicts.length === 0) return base;
 
-    const hasConflict = p.conflicts.some(
-        (c) => c.stack_name === stackName
-    );
+    // Category-aware: Cat A = problem (red), Cat B = warning (yellow)
+    let worstCategory = null;
+    for (const c of p.conflicts) {
+        if (c.stack_name === stackName) {
+            const cat = (c.category || "").toUpperCase();
+            if (cat === "A") { worstCategory = "A"; break; }
+            if (cat === "B" && worstCategory !== "A") worstCategory = "B";
+        }
+    }
 
-    return hasConflict ? "caution" : base;
+    if (worstCategory === "A") return "problem";
+    if (worstCategory === "B") return "warning";
+    return base;
 }
 
 function _healthTooltip(health, hint) {
     const criteria = {
         ok: "GREEN: All media services share a common host mount path. Hardlinks and atomic moves should work.",
         caution: "BLINKING YELLOW: This stack is internally healthy, but its mount paths differ from the rest of your pipeline. Click to see details.",
-        warning: "YELLOW: Only one media service found, or unable to fully determine. Click to run full analysis.",
+        warning: "YELLOW: Permission mismatch or incomplete setup detected. Click to run full analysis.",
         problem: "RED: Media services mount different host directories. Hardlinks cannot work across separate bind mounts.",
         unknown: "GREY: No media services detected in this stack. Not applicable for hardlink analysis.",
     };

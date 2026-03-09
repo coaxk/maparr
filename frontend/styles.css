@@ -3669,21 +3669,6 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     flex-shrink: 0;
 }
 
-/* ─── Service Icon (colored initials badge) ─── */
-
-.service-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
-    border-radius: 6px;
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-}
-
 /* ─── Other Services (non-media, collapsible) ─── */
 
 .other-services-section {
@@ -4123,13 +4108,6 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
     .service-row {
         padding: 0.5rem 0.75rem;
-    }
-
-    .service-icon {
-        width: 24px;
-        height: 24px;
-        min-width: 24px;
-        font-size: 0.65rem;
     }
 
     .paste-bar {

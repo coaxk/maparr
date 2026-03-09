@@ -411,14 +411,40 @@ def _check_pipeline_permissions(
     """
     Lightweight permission check: flag when PUID/PGID groups diverge across pipeline.
 
-    Groups services by their PUID:PGID pair. If more than one group exists,
-    the minority groups are flagged as conflicts with 'high' severity.
-    Services without PUID/PGID set are silently skipped.
+    Groups services by their effective PUID:PGID pair. Services without explicit
+    PUID/PGID are resolved via their image family defaults (e.g. LinuxServer.io
+    images default to 911:911). If more than one group exists, the minority groups
+    are flagged as conflicts with 'high' severity.
     """
+    registry = get_registry()
+
+    # Build a lookup from service_name → stack_name for conflict reporting
+    svc_to_stack: Dict[str, str] = {}
+    for svc in all_services:
+        svc_to_stack[svc.service_name] = svc.stack_name
+
     puid_groups: Dict[str, List[str]] = {}
     for svc in all_services:
+        family = registry.get_family(svc.image) if svc.image else None
+
+        # Check standard PUID/PGID first, then family-specific env var names
         puid = svc.environment.get("PUID", "")
         pgid = svc.environment.get("PGID", "")
+        if family and (not puid or not pgid):
+            uid_env = family.get("uid_env", "PUID")
+            gid_env = family.get("gid_env", "PGID")
+            if not puid and uid_env != "PUID":
+                puid = svc.environment.get(uid_env, "")
+            if not pgid and gid_env != "PGID":
+                pgid = svc.environment.get(gid_env, "")
+
+        # Fall back to family defaults for services without any explicit UID/GID
+        if family and (not puid or not pgid):
+            if not puid:
+                puid = str(family.get("default_uid", ""))
+            if not pgid:
+                pgid = str(family.get("default_gid", ""))
+
         if puid and pgid:
             key = f"{puid}:{pgid}"
             puid_groups.setdefault(key, []).append(svc.service_name)
@@ -435,6 +461,7 @@ def _check_pipeline_permissions(
                     "category": "B",
                     "severity": "high",
                     "service_name": name,
+                    "stack_name": svc_to_stack.get(name, ""),
                     "services": [name],
                     "description": f"{name} runs as {key} but majority use {majority_key}",
                 })
