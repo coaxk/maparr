@@ -1797,7 +1797,7 @@ def _check_cross_stack_permissions(
     current_uid, current_gid = current_majority
 
     # Build profiles for pipeline siblings
-    sibling_services = pipeline_context.get("media_services", [])
+    sibling_services = pipeline_context.get("sibling_services", [])
     if not sibling_services:
         return []
 

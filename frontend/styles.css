@@ -3686,40 +3686,64 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     object-fit: contain;
 }
 
-/* ─── Other Services (non-media, collapsible) ─── */
+/* ─── Other Services (non-media, visible section) ─── */
 
-.other-services-section {
-    margin-top: 1rem;
+.other-services-section.visible {
+    margin-top: 1.5rem;
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 0.5rem 0.75rem;
+    padding: 1rem 1.25rem;
+    background: var(--bg-secondary);
 }
 
-.other-services-section summary {
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    font-weight: 500;
-    user-select: none;
-}
-
-.other-services-section summary:hover {
+.other-services-heading {
+    font-size: 0.9rem;
+    font-weight: 600;
     color: var(--text-secondary);
-}
-
-.other-services-list {
-    list-style: none;
-    padding: 0;
-    margin-top: 0.5rem;
-}
-
-.other-services-list li {
+    margin-bottom: 0.35rem;
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.25rem 0;
-    font-size: 0.85rem;
+}
+
+.other-services-heading::before {
+    content: "";
+    display: inline-block;
+    width: 3px;
+    height: 1em;
+    background: var(--text-muted);
+    border-radius: 2px;
+}
+
+.other-services-note {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0 0 0.75rem 0;
+    line-height: 1.5;
+}
+
+.other-services-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0;
+    margin: 0;
+}
+
+.other-service-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.6rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.82rem;
     color: var(--text-secondary);
+}
+
+.other-service-name {
+    white-space: nowrap;
 }
 
 /* ─── Service Detail Panel (accordion) ─── */

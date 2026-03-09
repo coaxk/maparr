@@ -701,22 +701,91 @@ function renderServiceGroups(servicesByRole) {
     }
 }
 
-/**
- * Generate a 2-letter abbreviation for a service name.
- * Uses a lookup table for common media stack services, falls back to
- * first two characters with smart capitalization.
- */
 // Map service names to bundled icon filenames.
 // Icons sourced from dashboard-icons (CC-BY-4.0). Services without a
 // dedicated icon get the generic fallback.
 const SERVICE_ICONS = {
+    // Media management (arr suite)
     sonarr: "sonarr", radarr: "radarr", lidarr: "lidarr",
     readarr: "readarr", prowlarr: "prowlarr", bazarr: "bazarr",
-    whisparr: "whisparr", qbittorrent: "qbittorrent", deluge: "deluge",
-    transmission: "transmission", sabnzbd: "sabnzbd", nzbget: "nzbget",
-    flood: "flood", plex: "plex", jellyfin: "jellyfin", emby: "emby",
+    whisparr: "whisparr", recyclarr: "recyclarr", notifiarr: "notifiarr",
+    requestrr: "requestrr", doplarr: "doplarr", autobrr: "autobrr",
+    // Download clients
+    qbittorrent: "qbittorrent", deluge: "deluge", transmission: "transmission",
+    sabnzbd: "sabnzbd", nzbget: "nzbget", flood: "flood",
+    rutorrent: "rutorrent", nzbhydra2: "nzbhydra2", jackett: "jackett",
+    // Media servers & players
+    plex: "plex", jellyfin: "jellyfin", emby: "emby",
     overseerr: "overseerr", jellyseerr: "jellyseerr", ombi: "ombi",
-    tautulli: "tautulli", nzbhydra2: "nzbhydra2", jackett: "jackett",
+    tautulli: "tautulli", navidrome: "navidrome", funkwhale: "funkwhale",
+    audiobookshelf: "audiobookshelf", stash: "stash", kavita: "kavita",
+    // Media tools
+    filebot: "filebot", handbrake: "handbrake", metube: "metube",
+    // Photo & documents
+    immich: "immich", photoprism: "photoprism",
+    "paperless-ngx": "paperless-ngx", "stirling-pdf": "stirling-pdf",
+    "calibre-web": "calibre-web",
+    // Networking & reverse proxy
+    nginx: "nginx", traefik: "traefik", caddy: "caddy",
+    "nginx-proxy-manager": "nginx-proxy-manager",
+    wireguard: "wireguard", tailscale: "tailscale", gluetun: "gluetun",
+    flaresolverr: "flaresolverr", cloudflare: "cloudflare",
+    ddclient: "ddclient", duckdns: "duckdns",
+    zerotier: "zerotier", headscale: "headscale", netbird: "netbird",
+    crowdsec: "crowdsec",
+    // Databases & admin
+    mariadb: "mariadb", postgres: "postgres", redis: "redis",
+    mongodb: "mongodb", mysql: "mysql", minio: "minio", pgadmin: "pgadmin",
+    adminer: "adminer", phpmyadmin: "phpmyadmin",
+    // Monitoring & logging
+    grafana: "grafana", prometheus: "prometheus", "uptime-kuma": "uptime-kuma",
+    loki: "loki", netdata: "netdata", vector: "vector",
+    glances: "glances", dozzle: "dozzle", scrutiny: "scrutiny",
+    healthchecks: "healthchecks", librespeed: "librespeed",
+    plausible: "plausible", umami: "umami", matomo: "matomo",
+    gatus: "gatus", openspeedtest: "openspeedtest", netbox: "netbox",
+    "speedtest-tracker": "speedtest-tracker",
+    // Auth & security
+    authelia: "authelia", authentik: "authentik", vaultwarden: "vaultwarden",
+    bitwarden: "bitwarden", vault: "vault", consul: "consul",
+    // Docker management
+    portainer: "portainer", watchtower: "watchtower", dockge: "dockge",
+    // Backup & sync
+    backrest: "backrest", duplicati: "duplicati", syncthing: "syncthing",
+    "resilio-sync": "resilio-sync",
+    // Home & productivity
+    "actual-budget": "actual-budget", mealie: "mealie", grocy: "grocy",
+    nextcloud: "nextcloud", gitea: "gitea", homarr: "homarr", homer: "homer",
+    filebrowser: "filebrowser", "yt-dlp": "yt-dlp",
+    changedetection: "changedetection", bookstack: "bookstack",
+    "wiki-js": "wiki-js", wordpress: "wordpress", obsidian: "obsidian",
+    trilium: "trilium", excalidraw: "excalidraw", hedgedoc: "hedgedoc",
+    privatebin: "privatebin", drawio: "drawio", etherpad: "etherpad",
+    // Notifications & messaging
+    gotify: "gotify", ntfy: "ntfy", mosquitto: "mosquitto",
+    signal: "signal", mattermost: "mattermost",
+    discord: "discord", slack: "slack",
+    rocketchat: "rocketchat", element: "element", matrix: "matrix",
+    // Automation & CI/CD
+    "node-red": "node-red", n8n: "n8n", jenkins: "jenkins",
+    semaphore: "semaphore", drone: "drone", huginn: "huginn",
+    ansible: "ansible", terraform: "terraform",
+    // Development
+    "code-server": "code-server",
+    // Home automation
+    "home-assistant": "home-assistant", homeassistant: "home-assistant",
+    // Ad blocking & DNS
+    "adguard-home": "adguard-home", pihole: "pihole",
+    // RSS & news
+    miniflux: "miniflux", freshrss: "freshrss",
+    // Search
+    searxng: "searxng",
+    // Email
+    mailcow: "mailcow",
+    // Recipes
+    tandoor: "tandoor",
+    // Torrents (alternate names)
+    rtorrent: "rtorrent",
 };
 
 function getServiceIconUrl(serviceName) {
@@ -2760,25 +2829,45 @@ function showCurrentSetup(data) {
     table.appendChild(tbody);
     details.appendChild(table);
 
-    // Collapsible section for non-media services (role = "other" with no volumes,
-    // or any "other" service not already shown in the table above)
+    // Non-media services section — always visible with icons and explanation
     const nonMediaServices = (data.services || []).filter(
-        (s) => s.role === "other" && (s.volumes || []).length === 0
+        (s) => s.role === "other"
     );
     if (nonMediaServices.length > 0) {
-        const otherSection = document.createElement("details");
-        otherSection.className = "other-services-section";
-        const summary = document.createElement("summary");
-        summary.textContent =
-            "Other services in this stack (" + nonMediaServices.length + ")";
-        otherSection.appendChild(summary);
+        const otherSection = document.createElement("div");
+        otherSection.className = "other-services-section visible";
 
-        const list = document.createElement("ul");
+        const heading = document.createElement("div");
+        heading.className = "other-services-heading";
+        heading.textContent = "Other Services (" + nonMediaServices.length + ")";
+        otherSection.appendChild(heading);
+
+        const note = document.createElement("p");
+        note.className = "other-services-note";
+        note.textContent =
+            "These services are part of this stack but aren\u2019t involved in the media pipeline. " +
+            "MapArr focuses on arr apps, download clients, and media servers \u2014 " +
+            "so these won\u2019t appear in conflict analysis.";
+        otherSection.appendChild(note);
+
+        const list = document.createElement("div");
         list.className = "other-services-list";
         for (const svc of nonMediaServices) {
-            const li = document.createElement("li");
-            li.textContent = svc.name || svc.service_name;
-            list.appendChild(li);
+            const item = document.createElement("div");
+            item.className = "other-service-item";
+            const icon = document.createElement("img");
+            icon.className = "service-icon";
+            icon.src = getServiceIconUrl(svc.name || svc.service_name);
+            icon.alt = "";
+            icon.width = 20;
+            icon.height = 20;
+            icon.loading = "lazy";
+            item.appendChild(icon);
+            const name = document.createElement("span");
+            name.className = "other-service-name";
+            name.textContent = svc.name || svc.service_name;
+            item.appendChild(name);
+            list.appendChild(item);
         }
         otherSection.appendChild(list);
         details.appendChild(otherSection);
@@ -3152,6 +3241,9 @@ function showSolution(data) {
         renderYamlWithHighlights(envPre, data.env_solution_yaml, data.env_solution_changed_lines || []);
         envSolutionBlock.appendChild(envPre);
 
+        const envActions = document.createElement("div");
+        envActions.className = "solution-actions";
+
         const envCopyBtn = document.createElement("button");
         envCopyBtn.className = "copy-btn";
         envCopyBtn.textContent = "Copy to Clipboard";
@@ -3161,7 +3253,19 @@ function showSolution(data) {
                 setTimeout(() => { envCopyBtn.textContent = "Copy to Clipboard"; }, 2000);
             });
         });
-        envSolutionBlock.appendChild(envCopyBtn);
+        envActions.appendChild(envCopyBtn);
+
+        // Apply Fix button — uses the full patched compose from original_corrected_yaml
+        if (data.original_corrected_yaml && data.compose_file_path) {
+            const envApplyBtn = document.createElement("button");
+            envApplyBtn.className = "apply-btn";
+            envApplyBtn.id = "btn-apply-env-fix";
+            envApplyBtn.textContent = "Apply Fix";
+            envApplyBtn.addEventListener("click", () => applyFix());
+            envActions.appendChild(envApplyBtn);
+        }
+
+        envSolutionBlock.appendChild(envActions);
 
         // Insert after originalBlock (or recommendedBlock if originalBlock missing)
         const insertAfter = originalBlock || recommendedBlock;
@@ -5711,12 +5815,14 @@ async function doApplyFix() {
             resultEl.classList.remove("hidden");
             showSimpleToast("Fix applied successfully!", "success");
 
-            // Update the apply button
-            const applyBtn = document.getElementById("btn-apply-fix");
-            if (applyBtn) {
-                applyBtn.textContent = "Applied";
-                applyBtn.disabled = true;
-                applyBtn.classList.add("applied");
+            // Update all apply buttons (Cat A + Cat B tabs)
+            for (const id of ["btn-apply-fix", "btn-apply-env-fix"]) {
+                const btn = document.getElementById(id);
+                if (btn) {
+                    btn.textContent = "Applied";
+                    btn.disabled = true;
+                    btn.classList.add("applied");
+                }
             }
 
             // Show "Analyze Another Stack" button for quick navigation
