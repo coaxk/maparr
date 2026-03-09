@@ -2795,9 +2795,15 @@ def _generate_solution_yaml(
     if not conflicts:
         return None, []
 
-    # Collect affected services
+    # Only process Category A (path) conflicts — volume restructure YAML is
+    # irrelevant for permission mismatches, TZ issues, or infrastructure warnings.
+    path_conflicts = [c for c in conflicts if c.category == "A"]
+    if not path_conflicts:
+        return None, []
+
+    # Collect affected services from path conflicts only
     affected_names = set()
-    for conflict in conflicts:
+    for conflict in path_conflicts:
         affected_names.update(conflict.services)
 
     if not affected_names:
