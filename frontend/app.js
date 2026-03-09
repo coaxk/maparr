@@ -5463,7 +5463,7 @@ function renderBottomActions(container) {
     soIcon.textContent = "\u21BA";
     startOverBtn.appendChild(soIcon);
     startOverBtn.appendChild(document.createTextNode(" Start Over"));
-    startOverBtn.addEventListener("click", () => startOver());
+    startOverBtn.addEventListener("click", () => backToDashboard());
     buttons.appendChild(startOverBtn);
 
     wrapper.appendChild(buttons);
