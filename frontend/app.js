@@ -722,12 +722,12 @@ const SERVICE_ICONS = {
 function getServiceIconUrl(serviceName) {
     const lower = (serviceName || "").toLowerCase();
     const match = SERVICE_ICONS[lower];
-    if (match) return "img/services/" + match + ".svg";
+    if (match) return "/static/img/services/" + match + ".svg";
     // Check partial matches (e.g. "nzbhydra" matches "nzbhydra2")
     for (const [key, file] of Object.entries(SERVICE_ICONS)) {
-        if (lower.includes(key) || key.includes(lower)) return "img/services/" + file + ".svg";
+        if (lower.includes(key) || key.includes(lower)) return "/static/img/services/" + file + ".svg";
     }
-    return "img/services/generic.svg";
+    return "/static/img/services/generic.svg";
 }
 
 function renderServiceRow(svc) {
