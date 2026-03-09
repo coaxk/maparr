@@ -656,8 +656,11 @@ def analyze_stack(
     # RPM calculation: compute Remote Path Mapping entries for all
     # (download_client, arr_app) pairs.  The wizard uses these to guide users
     # through bridging container-path mismatches without restructuring mounts.
+    # Only relevant when Category A (path) conflicts exist — permission or
+    # infrastructure issues don't benefit from RPM workarounds.
     rpm_mappings = []
-    if pipeline_context:
+    has_cat_a = any(c.category == "A" for c in conflicts)
+    if pipeline_context and has_cat_a:
         rpm_mappings = _calculate_rpm_mappings(services, pipeline_context, stack_path=stack_path)
         if rpm_mappings:
             possible_count = sum(1 for m in rpm_mappings if m["possible"])
