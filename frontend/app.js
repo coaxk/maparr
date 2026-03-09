@@ -701,6 +701,49 @@ function renderServiceGroups(servicesByRole) {
     }
 }
 
+/**
+ * Generate a 2-letter abbreviation for a service name.
+ * Uses a lookup table for common media stack services, falls back to
+ * first two characters with smart capitalization.
+ */
+function getServiceAbbr(name) {
+    const known = {
+        sonarr: "So", radarr: "Ra", lidarr: "Li", readarr: "Re",
+        prowlarr: "Pr", bazarr: "Ba", whisparr: "Wh",
+        qbittorrent: "qB", deluge: "De", transmission: "Tr",
+        sabnzbd: "Sa", nzbget: "Nz", jdownloader: "JD",
+        plex: "Px", jellyfin: "Jf", emby: "Em", tautulli: "Ta",
+        overseerr: "Ov", jellyseerr: "Js", ombi: "Om", petio: "Pe",
+    };
+    const lower = name.toLowerCase();
+    if (known[lower]) return known[lower];
+    // Fallback: first char uppercase + second char lowercase
+    return name.substring(0, 1).toUpperCase() + name.substring(1, 2);
+}
+
+/**
+ * Create a colored initial badge for a service.
+ * Color is determined by the service's pipeline role.
+ */
+function getServiceIcon(serviceName, role) {
+    const abbr = getServiceAbbr(serviceName);
+    const roleColors = {
+        arr: "#e5a00d",
+        download_client: "#3b82f6",
+        media_server: "#8b5cf6",
+        request: "#10b981",
+        other: "#6b7280",
+    };
+    const color = roleColors[role] || roleColors.other;
+
+    const icon = document.createElement("span");
+    icon.className = "service-icon";
+    icon.textContent = abbr;
+    icon.style.backgroundColor = color + "20"; // 12% opacity background
+    icon.style.color = color;
+    return icon;
+}
+
 function renderServiceRow(svc) {
     const row = document.createElement("div");
     row.className = "service-row";
@@ -711,6 +754,9 @@ function renderServiceRow(svc) {
     dot.className = "health-dot " + getServiceHealth(svc);
     dot.setAttribute("data-tooltip", _healthDotTooltip(getServiceHealth(svc)));
     row.appendChild(dot);
+
+    // Service icon (colored initials badge)
+    row.appendChild(getServiceIcon(svc.service_name, svc.role));
 
     // Service info
     const info = document.createElement("div");
@@ -2712,6 +2758,33 @@ function showCurrentSetup(data) {
     });
     table.appendChild(tbody);
     details.appendChild(table);
+
+    // Collapsible section for non-media services (role = "other" with no volumes,
+    // or any "other" service not already shown in the table above)
+    const nonMediaServices = (data.services || []).filter(
+        (s) => s.role === "other" && (s.volumes || []).length === 0
+    );
+    if (nonMediaServices.length > 0) {
+        const otherSection = document.createElement("details");
+        otherSection.className = "other-services-section";
+        const summary = document.createElement("summary");
+        summary.textContent =
+            "Other services in this stack (" + nonMediaServices.length + ")";
+        otherSection.appendChild(summary);
+
+        const list = document.createElement("ul");
+        list.className = "other-services-list";
+        for (const svc of nonMediaServices) {
+            const li = document.createElement("li");
+            li.appendChild(getServiceIcon(svc.name || svc.service_name, "other"));
+            const nameSpan = document.createElement("span");
+            nameSpan.textContent = svc.name || svc.service_name;
+            li.appendChild(nameSpan);
+            list.appendChild(li);
+        }
+        otherSection.appendChild(list);
+        details.appendChild(otherSection);
+    }
 
     section.classList.remove("hidden");
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });

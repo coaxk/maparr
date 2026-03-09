@@ -3669,6 +3669,57 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     flex-shrink: 0;
 }
 
+/* ─── Service Icon (colored initials badge) ─── */
+
+.service-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+/* ─── Other Services (non-media, collapsible) ─── */
+
+.other-services-section {
+    margin-top: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+}
+
+.other-services-section summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    user-select: none;
+}
+
+.other-services-section summary:hover {
+    color: var(--text-secondary);
+}
+
+.other-services-list {
+    list-style: none;
+    padding: 0;
+    margin-top: 0.5rem;
+}
+
+.other-services-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
 /* ─── Service Detail Panel (accordion) ─── */
 
 .service-detail-panel {
@@ -4072,6 +4123,13 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
     .service-row {
         padding: 0.5rem 0.75rem;
+    }
+
+    .service-icon {
+        width: 24px;
+        height: 24px;
+        min-width: 24px;
+        font-size: 0.65rem;
     }
 
     .paste-bar {
