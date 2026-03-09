@@ -4442,3 +4442,53 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .solution-tab.solution-tab-env {
     /* Inherits from .solution-tab — no additional styles needed */
 }
+
+/* ─── Observations (Category D — informational, collapsed by default) ─── */
+
+.observations-section {
+    margin-top: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+}
+
+.observations-summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-weight: 500;
+    user-select: none;
+}
+
+.observations-summary:hover {
+    color: var(--text-secondary);
+}
+
+.observations-list {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.8;
+    padding-left: 1.2rem;
+    margin-top: 0.5rem;
+}
+
+.observations-list li {
+    margin-bottom: 0.25rem;
+}
+
+.observations-footer {
+    color: var(--text-dim, var(--text-muted));
+    font-size: 0.78rem;
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+}
+
+.observations-footer a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.observations-footer a:hover {
+    text-decoration: underline;
+}

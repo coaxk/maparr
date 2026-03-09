@@ -2552,6 +2552,7 @@ function showAnalysisResult(data) {
     showWhyItWorks(data);
     showNextSteps(data);
     showTrashAdvisory(data);
+    renderObservations(data);
     showAgainButton();
     // Store analysis data for the auto-apply feature
     setAnalysisForApply(data);
@@ -3535,6 +3536,48 @@ function detectTrashCompliance(data) {
     return "non-compliant";
 }
 
+// ─── Observations (Category D — informational, collapsed by default) ───
+
+function renderObservations(data) {
+    const observations = data.observations;
+    const container = document.getElementById("observations-container");
+    if (!container) return;
+    container.replaceChildren();
+
+    if (!observations || observations.length === 0) return;
+
+    // Build the <details> element with DOM APIs (textContent for XSS safety)
+    const details = document.createElement("details");
+    details.className = "observations-section";
+
+    const summary = document.createElement("summary");
+    summary.className = "observations-summary";
+    summary.textContent = "A few other things we noticed (" + observations.length + ")";
+    details.appendChild(summary);
+
+    const list = document.createElement("ul");
+    list.className = "observations-list";
+    for (const obs of observations) {
+        const li = document.createElement("li");
+        li.textContent = obs.message;
+        list.appendChild(li);
+    }
+    details.appendChild(list);
+
+    const footer = document.createElement("p");
+    footer.className = "observations-footer";
+    footer.textContent = "For full compose hygiene analysis, check out ";
+    const link = document.createElement("a");
+    link.href = "https://github.com/coaxk/composearr";
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "ComposeArr";
+    footer.appendChild(link);
+    details.appendChild(footer);
+
+    container.appendChild(details);
+}
+
 function showTrashAdvisory(data) {
     const section = document.getElementById("step-trash");
     const details = document.getElementById("trash-details");
@@ -3833,6 +3876,7 @@ function showHealthyResult(data) {
     renderCategoryAdvisoryInto(details, data);
 
     section.classList.remove("hidden");
+    renderObservations(data);
     showAgainButton();
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -3907,6 +3951,7 @@ function showIncompleteResult(data) {
     }
 
     section.classList.remove("hidden");
+    renderObservations(data);
     showAgainButton();
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -4110,6 +4155,7 @@ function showCrossStackHealthy(data) {
     renderBottomActions(details);
 
     section.classList.remove("hidden");
+    renderObservations(data);
     section.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
@@ -5294,6 +5340,10 @@ function clearAnalysisResults() {
         const el = document.getElementById(id);
         if (el) el.classList.add("hidden");
     });
+
+    // Clear observations (Category D) from previous analysis
+    const obsContainer = document.getElementById("observations-container");
+    if (obsContainer) obsContainer.replaceChildren();
 
     // Deselect any selected stack
     document.querySelectorAll(".stack-item").forEach((el) =>
