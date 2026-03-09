@@ -40,7 +40,7 @@ def test_classify_path():
         ("/mnt/d/Downloads", "wsl2", "Windows D: drive via WSL2"),
         ("/mnt/nas", "local", "/mnt/nas — NAS mount, NOT WSL2"),  # BUG CHECK
         ("/mnt/nas/media", "local", "/mnt/nas/media — NAS subdir"),  # BUG CHECK
-        ("/mnt/n/export", "local", "/mnt/n — single letter but not Windows"),  # BUG CHECK
+        ("/mnt/n/export", "wsl2", "/mnt/n — valid drive letter (c-z), classified as WSL2"),
         ("/mnt/user/data", "local", "/mnt/user — multi-letter mount"),
         ("/data", "local", "Standard Linux data path"),
         ("/opt/media", "local", "Standard Linux opt path"),
