@@ -376,6 +376,7 @@ def _build_mount_conflicts(
         for svc in svcs:
             conflict = {
                 "type": "pipeline_mount_mismatch",
+                "category": "A",
                 "severity": "critical",
                 "service_name": svc.service_name,
                 "stack_name": svc.stack_name,
@@ -431,6 +432,7 @@ def _check_pipeline_permissions(
             for name in svc_names:
                 result.conflicts.append({
                     "type": "pipeline_permission_mismatch",
+                    "category": "B",
                     "severity": "high",
                     "service_name": name,
                     "services": [name],

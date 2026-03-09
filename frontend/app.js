@@ -72,8 +72,10 @@ const CONFLICT_HANDRAILS = {
     remote_filesystem: "Your data is on a network share. Hardlinks don't work across network boundaries.",
     mixed_mount_types: "Some services use local storage, others use network storage. Hardlinks can't cross that boundary.",
     windows_path_in_compose: "Windows-style paths work but forward slashes and native Linux paths perform better in Docker.",
-    // Category D: Observations (informational, no fix needed)
+    // Pipeline/cross-stack conflict types (emitted as raw dicts, not Conflict dataclass)
+    pipeline_mount_mismatch: "This service mounts data from a different location than the majority of your other services. Hardlinks and atomic moves won't work across different mount roots.",
     pipeline_permission_mismatch: "This service runs as a different Linux user than services in other stacks. Cross-stack file sharing may not work.",
+    cross_stack_mount_mismatch: "This service's host mounts don't overlap with services in other stacks. Files saved by one can't be reached by the other.",
 };
 
 // Load persisted custom dirs from localStorage
