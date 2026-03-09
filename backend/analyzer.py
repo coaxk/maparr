@@ -242,6 +242,8 @@ class AnalysisResult:
     pipeline: Optional[dict] = None  # Pipeline context (role, health, sibling awareness)
     rpm_mappings: List[dict] = field(default_factory=list)  # RPM calculator output for wizard
     image_db_matches: List[dict] = field(default_factory=list)  # What the Image DB classified for each service
+    env_solution_yaml: Optional[str] = None  # Copy-pasteable YAML fix for permission/env conflicts
+    env_solution_changed_lines: List[int] = field(default_factory=list)  # 1-indexed changed lines in env_solution_yaml
 
     def to_dict(self) -> dict:
         # Determine status: pipeline-aware > conflicts > cross-stack > incomplete > healthy
@@ -309,6 +311,8 @@ class AnalysisResult:
                 if s.role in ("arr", "download_client", "media_server")
             ],
             "image_db_matches": self.image_db_matches,
+            "env_solution_yaml": self.env_solution_yaml,
+            "env_solution_changed_lines": self.env_solution_changed_lines,
         }
 
 
@@ -511,6 +515,15 @@ def analyze_stack(
                      solution_yaml.count("\n") + 1, len(solution_changed_lines))
         steps.append({"icon": "ok", "text": "Generated fix recommendation"})
 
+    # Step 6b: Generate environment solution for Category B conflicts
+    env_solution_yaml, env_solution_changed_lines = _generate_env_solution(
+        conflicts, services
+    )
+    if env_solution_yaml:
+        logger.info("Generated environment solution YAML (%d lines, %d changed)",
+                    env_solution_yaml.count("\n") + 1, len(env_solution_changed_lines))
+        steps.append({"icon": "ok", "text": "Generated permission fix recommendation"})
+
     # Step 7: Generate corrected version of user's original compose
     original_corrected_yaml = None
     original_changed_lines: List[int] = []
@@ -697,6 +710,8 @@ def analyze_stack(
         pipeline=pipeline_data,
         rpm_mappings=rpm_mappings,
         image_db_matches=image_db_matches,
+        env_solution_yaml=env_solution_yaml,
+        env_solution_changed_lines=env_solution_changed_lines,
     )
 
 
@@ -2863,6 +2878,143 @@ def _generate_solution_yaml(
                     lines.append(f"      - {vol.raw}")
             else:
                 lines.append("    # (no volumes)")
+
+        lines.append("")
+
+    return "\n".join(lines), changed_lines
+
+
+# ─── Environment Solution Generator ───
+# Parallel to _generate_solution_yaml() but for Category B (permission/env)
+# conflicts. Produces corrected environment blocks instead of volume restructuring.
+
+# Conflict types that indicate PUID/PGID needs fixing
+_PUID_FIX_TYPES = {"puid_pgid_mismatch", "missing_puid_pgid", "root_execution", "cross_stack_puid_mismatch"}
+
+# Conflict types that indicate UMASK needs fixing
+_UMASK_FIX_TYPES = {"umask_inconsistent", "umask_restrictive"}
+
+# Conflict types that indicate TZ needs fixing
+_TZ_FIX_TYPES = {"tz_mismatch"}
+
+
+def _find_majority_env(
+    services: List[ServiceInfo], key: str, default: str,
+) -> str:
+    """Find the most common value for an environment variable across services.
+
+    Only considers media-role services (arr, download_client, media_server).
+    Returns the most common non-empty value, or *default* if none found.
+    """
+    from collections import Counter
+    values: List[str] = []
+    for svc in services:
+        if svc.role not in ("arr", "download_client", "media_server"):
+            continue
+        val = svc.environment.get(key, "")
+        if val:
+            values.append(val)
+    if not values:
+        return default
+    counter = Counter(values)
+    return counter.most_common(1)[0][0]
+
+
+def _generate_env_solution(
+    conflicts: List[Conflict], services: List[ServiceInfo],
+) -> Tuple[Optional[str], List[int]]:
+    """
+    Generate corrected environment YAML for Category B (permission) conflicts.
+
+    Only processes conflicts with category == "B". Produces a complete
+    services section with corrected environment blocks for all media-role
+    services.
+
+    Returns:
+        (yaml_string, changed_lines) — the YAML and 1-indexed line numbers
+        of lines that differ from the original configuration.
+    """
+    if not conflicts:
+        return None, []
+
+    # Only process Category B (permission/env) conflicts
+    env_conflicts = [c for c in conflicts if c.category == "B"]
+    if not env_conflicts:
+        return None, []
+
+    # Determine which env vars need fixing based on conflict types present
+    conflict_types = {c.conflict_type for c in env_conflicts}
+    fix_puid = bool(conflict_types & _PUID_FIX_TYPES)
+    fix_umask = bool(conflict_types & _UMASK_FIX_TYPES)
+    fix_tz = bool(conflict_types & _TZ_FIX_TYPES)
+
+    # Collect participants — only media-role services
+    participants = [s for s in services if s.role in ("arr", "download_client", "media_server")]
+    if not participants:
+        return None, []
+
+    # Determine target values
+    target_puid = _find_majority_env(services, "PUID", "1000") if fix_puid else None
+    target_pgid = _find_majority_env(services, "PGID", "1000") if fix_puid else None
+    target_umask = "002" if fix_umask else None
+    target_tz = _find_majority_env(services, "TZ", "America/New_York") if fix_tz else None
+
+    # Build header comments
+    header_parts = []
+    if fix_puid:
+        header_parts.append(f"PUID={target_puid}, PGID={target_pgid}")
+    if fix_umask:
+        header_parts.append(f"UMASK={target_umask}")
+    if fix_tz:
+        header_parts.append(f"TZ={target_tz}")
+
+    lines = [
+        "# Corrected environment configuration for permission consistency",
+        f"# Fixes applied: {', '.join(header_parts)}",
+        "#",
+        "# All media services should use identical PUID/PGID/TZ values",
+        "# so files created by one service are readable by others.",
+        "#",
+        "",
+        "services:",
+    ]
+
+    changed_lines: List[int] = []
+
+    for svc in participants:
+        lines.append(f"  {svc.name}:")
+        lines.append("    environment:")
+
+        # Build the corrected env block for this service
+        env = dict(svc.environment)  # copy original
+
+        if fix_puid:
+            old_puid = env.get("PUID", "")
+            old_pgid = env.get("PGID", "")
+            env["PUID"] = target_puid
+            env["PGID"] = target_pgid
+
+        if fix_umask:
+            env["UMASK"] = target_umask
+
+        if fix_tz:
+            env["TZ"] = target_tz
+
+        # Emit env vars in a stable order: PUID, PGID, UMASK, TZ first, then rest
+        priority_keys = ["PUID", "PGID", "UMASK", "TZ"]
+        ordered_keys = [k for k in priority_keys if k in env]
+        ordered_keys += sorted(k for k in env if k not in priority_keys)
+
+        for key in ordered_keys:
+            val = env[key]
+            line = f"      - {key}={val}"
+            lines.append(line)
+            line_num = len(lines)  # 1-indexed
+
+            # Check if this value changed from original
+            original_val = svc.environment.get(key)
+            if original_val is None or str(original_val) != str(val):
+                changed_lines.append(line_num)
 
         lines.append("")
 
