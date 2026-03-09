@@ -1410,6 +1410,9 @@ def _check_permissions(
     # Check 4: UMASK inconsistency (low — hygiene / best practice)
     conflicts.extend(_check_umask_consistency(participants))
 
+    # Check 5b: TZ mismatch (low — scheduling confusion)
+    conflicts.extend(_check_tz_mismatch(participants))
+
     # Check 5: Cross-stack PUID/PGID mismatch (when pipeline available)
     if pipeline_context:
         conflicts.extend(
@@ -1615,6 +1618,50 @@ def _check_umask_consistency(participants: List[ServiceInfo]) -> List[Conflict]:
             pass
 
     return conflicts
+
+
+def _check_tz_mismatch(participants: List[ServiceInfo]) -> List[Conflict]:
+    """Detect mismatched TZ environment variables across services.
+
+    When services explicitly set different timezones, scheduled tasks (backup
+    windows, maintenance, import triggers) fire at unexpected times. Services
+    with NO TZ set are excluded — that's an observation (Category D), not a
+    mismatch.
+    """
+    tz_map: Dict[str, List[str]] = {}  # tz_value → [service_names]
+
+    for svc in participants:
+        tz_val = svc.environment.get("TZ")
+        if tz_val:
+            tz_map.setdefault(tz_val.strip(), []).append(svc.name)
+
+    if len(tz_map) <= 1:
+        return []  # All same TZ (or none set) — no mismatch
+
+    # Find the majority TZ for fix recommendation
+    majority_tz = max(tz_map, key=lambda k: len(tz_map[k]))
+    majority_names = tz_map[majority_tz]
+
+    outlier_parts = []
+    outlier_names = []
+    for tz_val, svc_names in tz_map.items():
+        if tz_val != majority_tz:
+            outlier_names.extend(svc_names)
+            for name in svc_names:
+                outlier_parts.append(f"{name} (TZ={tz_val})")
+
+    return [Conflict(
+        conflict_type="tz_mismatch",
+        severity="low",
+        services=outlier_names + majority_names,
+        description=(
+            f"Services use different timezones — "
+            f"{', '.join(majority_names)} use {majority_tz}, "
+            f"but {', '.join(outlier_parts)}. "
+            f"Scheduled tasks and logs will reference different times."
+        ),
+        detail=str(tz_map),
+    )]
 
 
 def _check_cross_stack_permissions(
@@ -1945,6 +1992,9 @@ def _generate_fixes(
         elif conflict.conflict_type in ("umask_inconsistent", "umask_restrictive"):
             conflict.fix = _fix_umask(conflict)
 
+        elif conflict.conflict_type == "tz_mismatch":
+            conflict.fix = _fix_tz_mismatch(conflict, participants)
+
         elif conflict.conflict_type == "cross_stack_puid_mismatch":
             conflict.fix = _fix_cross_stack_puid(conflict, participants)
 
@@ -2244,6 +2294,48 @@ def _fix_umask(conflict: Conflict) -> str:
 
     for svc_name in conflict.services:
         lines.append(f"  {svc_name}: set UMASK=002")
+
+    return "\n".join(lines)
+
+
+def _fix_tz_mismatch(
+    conflict: Conflict, participants: List[ServiceInfo]
+) -> str:
+    """Fix for mismatched TZ environment variables across services.
+
+    Recommends aligning all services to the majority timezone so
+    scheduled tasks, logs, and maintenance windows are consistent.
+    """
+    # Parse the majority TZ from the detail (which is the tz_map dict string)
+    # Safer to re-derive from participants
+    tz_map: Dict[str, List[str]] = {}
+    for svc in participants:
+        tz_val = svc.environment.get("TZ")
+        if tz_val:
+            tz_map.setdefault(tz_val.strip(), []).append(svc.name)
+
+    majority_tz = max(tz_map, key=lambda k: len(tz_map[k])) if tz_map else "America/New_York"
+
+    lines = [
+        f"RECOMMENDED FIX: Set TZ={majority_tz} on all services.",
+        "",
+        "All services in your media pipeline should use the same timezone",
+        "so scheduled tasks (backups, imports, maintenance) and log timestamps",
+        "are consistent.",
+        "",
+        "Add to each service's environment section:",
+        f"  TZ={majority_tz}",
+        "",
+        "Current values:",
+    ]
+
+    for svc in participants:
+        tz_val = svc.environment.get("TZ")
+        if tz_val:
+            marker = " ✓" if tz_val.strip() == majority_tz else " ← change"
+            lines.append(f"  {svc.name}: TZ={tz_val.strip()}{marker}")
+        else:
+            lines.append(f"  {svc.name}: TZ not set ← add TZ={majority_tz}")
 
     return "\n".join(lines)
 
