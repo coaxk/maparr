@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 from backend.analyzer import _classify_service
+from backend.image_registry import get_registry
 from backend.cross_stack import (
     _find_compose_file,
     _parse_sibling_services,
@@ -47,6 +48,7 @@ class PipelineService:
     volume_mounts: List[dict] = field(default_factory=list)  # [{source, target}] for RPM calc
     # Permissions analysis fields — populated from compose environment/user
     image: str = ""
+    family_name: str = ""
     environment: Dict[str, str] = field(default_factory=dict)
     compose_user: Optional[str] = None
 
@@ -60,6 +62,7 @@ class PipelineService:
             "compose_file": os.path.basename(self.compose_file),
             "volume_mounts": self.volume_mounts,
             "image": self.image,
+            "family_name": self.family_name,
             "environment": self.environment,
             "compose_user": self.compose_user,
         }
@@ -146,6 +149,7 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
     steps.append({"icon": "run", "text": f"Scanning {scan_dir} for media services..."})
 
     # Iterate all subdirectories
+    registry = get_registry()
     all_services: List[PipelineService] = []
     stacks_scanned = 0
 
@@ -175,6 +179,8 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
         # Parse this stack's media services (lightweight YAML only)
         parsed = _parse_sibling_services(compose_file)
         for svc_name, svc_info in parsed.items():
+            svc_image = svc_info.get("image", "")
+            classification = registry.classify(svc_name, svc_image)
             all_services.append(PipelineService(
                 stack_path=str(entry),
                 stack_name=entry.name,
@@ -183,7 +189,8 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
                 host_sources=svc_info["host_sources"],
                 compose_file=compose_file,
                 volume_mounts=svc_info.get("volume_mounts", []),
-                image=svc_info.get("image", ""),
+                image=svc_image,
+                family_name=classification.get("family_name") or "",
                 environment=svc_info.get("environment", {}),
                 compose_user=svc_info.get("compose_user"),
             ))
@@ -275,9 +282,17 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
         result.shared_mount = True  # Vacuously true
         steps.append({"icon": "info", "text": "Single media service — no cross-service mount check needed"})
 
-    # Determine overall health
-    if result.conflicts:
+    # Permission consistency check across all media services
+    _check_pipeline_permissions(result, all_services, steps)
+
+    # Determine overall health (category-aware)
+    mount_conflicts = [c for c in result.conflicts if c.get("type") == "pipeline_mount_mismatch"]
+    perm_conflicts = [c for c in result.conflicts if c.get("type") == "pipeline_permission_mismatch"]
+
+    if mount_conflicts:
         result.health = "problem"
+    elif perm_conflicts:
+        result.health = "warning"
     elif result.roles_missing:
         result.health = "warning"
     else:
@@ -357,6 +372,7 @@ def _build_mount_conflicts(
                 "severity": "critical",
                 "service_name": svc.service_name,
                 "stack_name": svc.stack_name,
+                "services": [svc.service_name],
                 "service_sources": sorted(svc.host_sources),
                 "majority_root": majority_root,
                 "majority_services": [s.service_name for s in majority_svcs],
@@ -374,6 +390,48 @@ def _build_mount_conflicts(
         "icon": "warn",
         "text": f"Mount conflict: {len(result.conflicts)} service{'s' if len(result.conflicts) != 1 else ''} "
                 f"differ from the majority ({majority_root})",
+    })
+
+
+# ─── Permission Consistency Detection ───
+
+def _check_pipeline_permissions(
+    result: PipelineResult,
+    all_services: List[PipelineService],
+    steps: List[dict],
+) -> None:
+    """
+    Lightweight permission check: flag when PUID/PGID groups diverge across pipeline.
+
+    Groups services by their PUID:PGID pair. If more than one group exists,
+    the minority groups are flagged as conflicts with 'high' severity.
+    Services without PUID/PGID set are silently skipped.
+    """
+    puid_groups: Dict[str, List[str]] = {}
+    for svc in all_services:
+        puid = svc.environment.get("PUID", "")
+        pgid = svc.environment.get("PGID", "")
+        if puid and pgid:
+            key = f"{puid}:{pgid}"
+            puid_groups.setdefault(key, []).append(svc.service_name)
+
+    if len(puid_groups) <= 1:
+        return
+
+    majority_key = max(puid_groups, key=lambda k: len(puid_groups[k]))
+    for key, svc_names in puid_groups.items():
+        if key != majority_key:
+            for name in svc_names:
+                result.conflicts.append({
+                    "type": "pipeline_permission_mismatch",
+                    "severity": "high",
+                    "service_name": name,
+                    "services": [name],
+                    "description": f"{name} runs as {key} but majority use {majority_key}",
+                })
+    steps.append({
+        "icon": "warn",
+        "text": f"Permission mismatch: {len(puid_groups)} different PUID:PGID groups",
     })
 
 

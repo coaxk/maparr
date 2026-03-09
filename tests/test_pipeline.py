@@ -440,3 +440,98 @@ class TestPipelineAPI:
         data = resp2.json()
         # Pipeline data should be present
         assert data.get("pipeline") is not None or data.get("status") in ("healthy_pipeline", "healthy")
+
+
+# ═══════════════════════════════════════════
+# Unit Tests: Pipeline Permission Awareness
+# ═══════════════════════════════════════════
+
+class TestPipelinePermissionAwareness:
+    """Pipeline-level PUID/PGID consistency checks."""
+
+    def test_cross_stack_puid_mismatch_health_warning(self, make_pipeline_dir):
+        """Two stacks with different PUID → pipeline health=warning."""
+        from backend.pipeline import run_pipeline_scan
+        scan_dir = make_pipeline_dir({
+            "sonarr": """
+                services:
+                  sonarr:
+                    image: lscr.io/linuxserver/sonarr:latest
+                    environment:
+                      - PUID=1000
+                      - PGID=1000
+                    volumes:
+                      - /data:/data
+            """,
+            "radarr": """
+                services:
+                  radarr:
+                    image: lscr.io/linuxserver/radarr:latest
+                    environment:
+                      - PUID=1001
+                      - PGID=1001
+                    volumes:
+                      - /data:/data
+            """,
+        })
+        result = run_pipeline_scan(scan_dir).to_dict()
+        perm_conflicts = [c for c in result["conflicts"] if c["type"] == "pipeline_permission_mismatch"]
+        assert len(perm_conflicts) > 0
+        assert result["health"] == "warning"
+
+    def test_matching_puid_no_permission_conflict(self, make_pipeline_dir):
+        """All stacks same PUID → no permission conflicts."""
+        from backend.pipeline import run_pipeline_scan
+        scan_dir = make_pipeline_dir({
+            "sonarr": """
+                services:
+                  sonarr:
+                    image: lscr.io/linuxserver/sonarr:latest
+                    environment:
+                      - PUID=1000
+                      - PGID=1000
+                    volumes:
+                      - /data:/data
+            """,
+            "radarr": """
+                services:
+                  radarr:
+                    image: lscr.io/linuxserver/radarr:latest
+                    environment:
+                      - PUID=1000
+                      - PGID=1000
+                    volumes:
+                      - /data:/data
+            """,
+        })
+        result = run_pipeline_scan(scan_dir).to_dict()
+        perm_conflicts = [c for c in result["conflicts"] if c["type"] == "pipeline_permission_mismatch"]
+        assert len(perm_conflicts) == 0
+
+    def test_mount_conflict_overrides_perm_warning(self, make_pipeline_dir):
+        """Mount conflicts (problem) take priority over permission mismatch (warning)."""
+        from backend.pipeline import run_pipeline_scan
+        scan_dir = make_pipeline_dir({
+            "sonarr": """
+                services:
+                  sonarr:
+                    image: lscr.io/linuxserver/sonarr:latest
+                    environment:
+                      - PUID=1000
+                      - PGID=1000
+                    volumes:
+                      - /srv/tv:/data
+            """,
+            "radarr": """
+                services:
+                  radarr:
+                    image: lscr.io/linuxserver/radarr:latest
+                    environment:
+                      - PUID=1001
+                      - PGID=1001
+                    volumes:
+                      - /home/user/downloads:/data
+            """,
+        })
+        result = run_pipeline_scan(scan_dir).to_dict()
+        assert result["health"] == "problem"  # Mount conflict wins
