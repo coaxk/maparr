@@ -35,6 +35,37 @@ from backend.mounts import classify_path, check_hardlink_compatibility, MountCla
 logger = logging.getLogger("maparr.analyzer")
 
 
+# ─── Conflict Categories ───
+# Maps every conflict_type string to a category letter for pipeline grouping.
+# A = path conflicts, B = permission/env, C = infrastructure, D = observations.
+CONFLICT_CATEGORIES: Dict[str, str] = {
+    # Category A — Path conflicts
+    "no_shared_mount": "A",
+    "different_host_paths": "A",
+    "named_volume_data": "A",
+    "path_unreachable": "A",
+    # Category B — Permission / environment
+    "puid_pgid_mismatch": "B",
+    "missing_puid_pgid": "B",
+    "root_execution": "B",
+    "umask_inconsistent": "B",
+    "umask_restrictive": "B",
+    "cross_stack_puid_mismatch": "B",
+    "tz_mismatch": "B",
+    # Category C — Infrastructure
+    "wsl2_performance": "C",
+    "mixed_mount_types": "C",
+    "windows_path_in_compose": "C",
+    "remote_filesystem": "C",
+    # Category D — Observations
+    "missing_restart_policy": "D",
+    "latest_tag_usage": "D",
+    "missing_tz": "D",
+    "privileged_mode": "D",
+    "no_healthcheck": "D",
+}
+
+
 # ─── Image Registry ───
 # Service classification and image family intelligence is provided by the
 # ImageRegistry, loaded from data/images.json on boot. See image_registry.py.
@@ -168,6 +199,11 @@ class Conflict:
     fix: Optional[str] = None  # Suggested fix (set by fix generator)
     rpm_hint: Optional[dict] = None  # If set, this conflict is an RPM scenario
 
+    @property
+    def category(self) -> Optional[str]:
+        """Return the category letter (A-D) for this conflict type, or None if unknown."""
+        return CONFLICT_CATEGORIES.get(self.conflict_type)
+
     def to_dict(self) -> dict:
         d = {
             "type": self.conflict_type,
@@ -176,6 +212,7 @@ class Conflict:
             "description": self.description,
             "detail": self.detail,
             "fix": self.fix,
+            "category": self.category,
         }
         if self.rpm_hint:
             d["rpm_hint"] = self.rpm_hint
