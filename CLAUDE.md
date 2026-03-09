@@ -33,8 +33,9 @@ Recognizes 207+ Docker images across 7 families via a JSON Image DB.
 
 ### Frontend (`frontend/`)
 - `index.html` — Pipeline Dashboard SPA: service groups, health banner, conflict cards, paste bar
-- `app.js` — ~6600 lines, pipeline dashboard + analysis detail cards (old mode UI removed)
+- `app.js` — ~6800 lines, pipeline dashboard + analysis detail cards (old mode UI removed)
 - `styles.css` — Full CSS with dark theme, role-colored service groups, fix plan rows
+- `img/services/` — 145 bundled SVG service icons (CC-BY-4.0 from dashboard-icons), `generic.svg` fallback
 
 ### Data & Scripts
 | File | Purpose |
@@ -139,7 +140,15 @@ When user pastes an error, overrides pre-flight warning on a healthy stack:
 - Green `RESULT` banner dominates visual hierarchy
 - Key principle: NEVER report false issues, even if user did something dumb
 
-### Apply Fix Pipeline Refresh
+### Service Icons
+`SERVICE_ICONS` constant in app.js maps 115+ service names to bundled SVGs.
+`getServiceIconUrl()` does exact match → fuzzy partial match → `generic.svg` fallback.
+Icons sourced from homarr-labs/dashboard-icons (CC-BY-4.0), see `img/services/ATTRIBUTION.md`.
+
+### Apply Fix (Cat A + Cat B)
+Apply Fix works for both volume restructuring (Cat A) and permission env fixes (Cat B).
+Both tabs have Copy + Apply buttons. Backend `_patch_original_env()` patches the user's
+full compose file (not the snippet), chains with volume patches for mixed A+B stacks.
 After Apply Fix writes corrected YAML:
 1. Frontend calls `/api/pipeline-scan` to refresh cache
 2. Backend safety net: if compose mtime > pipeline scanned_at, forces inline rescan
