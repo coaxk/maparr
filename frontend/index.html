@@ -27,9 +27,13 @@
             <div class="path-editor hidden" id="path-editor">
                 <input type="text" id="header-path-input" class="path-input"
                        placeholder="/path/to/stacks" spellcheck="false"
-                       aria-label="Enter new stacks path" />
+                       aria-label="Enter new stacks path"
+                       data-tooltip="The root directory containing your Docker Compose stacks"
+                       data-tooltip-pos="below" />
                 <button class="btn btn-primary btn-sm" id="header-path-go">Scan</button>
             </div>
+            <button class="btn btn-ghost btn-sm path-browse" id="header-path-browse"
+                    data-tooltip="Open folder picker" aria-label="Browse for stacks directory">&#128194;</button>
         </div>
         <span class="service-count" id="service-count"></span>
         <div class="header-status" id="health-status"></div>
@@ -116,29 +120,64 @@
             <div class="health-banner-actions" id="health-banner-actions"></div>
         </div>
 
-        <!-- Service Groups (populated by JS — one group per role) -->
-        <div id="service-groups"></div>
+        <!-- Dashboard Welcome -->
+        <p class="dashboard-welcome" id="dashboard-welcome"></p>
 
-        <!-- Conflict Cards (populated by JS when issues detected) -->
-        <div id="conflict-cards"></div>
+        <!-- Two-Action Fork -->
+        <div class="action-fork" id="action-fork">
+            <div class="fork-card fork-paste" id="fork-paste">
+                <div class="fork-card-icon">&#128203;</div>
+                <h3 class="fork-card-title">Paste an Error</h3>
+                <p class="fork-card-desc">Got an error from Sonarr, Radarr, or another app? Paste it here and MapArr will trace it to the root cause.</p>
+            </div>
+            <div class="fork-card fork-explore" id="fork-explore">
+                <div class="fork-card-icon">&#128269;</div>
+                <h3 class="fork-card-title">Explore Pipeline</h3>
+                <p class="fork-card-desc">Browse your full media pipeline &mdash; see how services connect, where volumes map, and what needs attention.</p>
+            </div>
+        </div>
 
-        <!-- Error Paste Bar — persistent, always visible -->
-        <div class="paste-bar" id="paste-bar">
+        <!-- Error Paste Area (initially hidden, shown when fork-paste clicked) -->
+        <div class="paste-area hidden" id="paste-area">
+            <div class="paste-area-header">
+                <h3>Paste Your Error</h3>
+                <button class="btn btn-ghost btn-sm" id="paste-area-close" aria-label="Close paste area">&times;</button>
+            </div>
             <div class="paste-bar-input">
-                <textarea id="paste-error-input" rows="1"
-                          placeholder="Select a directory to get started"
-                          aria-label="Paste error text" disabled></textarea>
-                <button id="paste-error-go" class="btn btn-primary btn-sm" disabled>Go</button>
+                <textarea id="paste-error-input" rows="3"
+                          placeholder="Paste an error from your *arr app &mdash; Sonarr, Radarr, Lidarr, etc."
+                          aria-label="Paste error text from your media app"></textarea>
+                <button id="paste-error-go" class="btn btn-primary" disabled>Analyze</button>
             </div>
             <div class="paste-bar-examples" id="paste-bar-examples">
-                <span class="example-label">Try:</span>
-                <button class="example-pill paste-pill" data-example="import">Import failed</button>
-                <button class="example-pill paste-pill" data-example="hardlink">Hardlink issue</button>
-                <button class="example-pill paste-pill" data-example="permission">Permission denied</button>
-                <button class="example-pill paste-pill" data-example="remote">Remote path</button>
+                <span class="example-label">Try an example:</span>
+                <button class="example-pill paste-pill" data-example="import" data-tooltip="Sonarr/Radarr can't find a downloaded file">Import failed</button>
+                <button class="example-pill paste-pill" data-example="hardlink" data-tooltip="App is copying instead of hardlinking — wastes disk space">Hardlink issue</button>
+                <button class="example-pill paste-pill" data-example="permission" data-tooltip="App can't read or write a file due to UID/GID mismatch">Permission denied</button>
+                <button class="example-pill paste-pill" data-example="remote" data-tooltip="Download client and *arr app see different paths for the same files">Remote path</button>
             </div>
             <div class="paste-bar-result hidden" id="paste-bar-result"></div>
         </div>
+
+        <!-- Conflict Summary Bar -->
+        <div class="conflict-summary hidden" id="conflict-summary"></div>
+
+        <!-- Conflict Cards -->
+        <div id="conflict-cards"></div>
+
+        <!-- Health Legend -->
+        <div class="health-legend" id="health-legend">
+            <span class="legend-label">Health:</span>
+            <span class="legend-item"><span class="health-dot healthy"></span> Healthy</span>
+            <span class="legend-item"><span class="health-dot health-caution"></span> Caution</span>
+            <span class="legend-item"><span class="health-dot issue"></span> Problem</span>
+            <span class="legend-item"><span class="health-dot awaiting"></span> Fix applied</span>
+            <span class="legend-item"><span class="health-dot health-unknown"></span> Scanning</span>
+        </div>
+
+        <!-- Service Groups -->
+        <div id="service-groups"></div>
+
     </section>
 
     <!-- ═══════════════════════════════════════════════ -->

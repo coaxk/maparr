@@ -454,25 +454,118 @@ async function runPipelineScan() {
 // ─── Dashboard Rendering ───
 
 function renderDashboard() {
-    // Update header
     updateHeaderPath(state.stacksPath);
     updateServiceCount(state.services.length);
-
-    // Health banner
     renderHealthBanner(state.pipeline);
-
-    // Service groups by role
+    renderWelcomeText(state.pipeline);
+    wireActionFork();
+    const conflicts = state.pipeline.conflicts || [];
+    renderConflictSummary(conflicts);
+    renderConflictCards(conflicts);
     renderServiceGroups(state.servicesByRole);
-
-    // Conflict cards (if any)
-    renderConflictCards(state.pipeline.conflicts || []);
-
-    // Enable paste bar
     enablePasteBar();
-
-    // Show dashboard, hide analysis detail cards
     show("pipeline-dashboard");
     hideAnalysisCards();
+}
+
+function renderWelcomeText(pipeline) {
+    const el = document.getElementById("dashboard-welcome");
+    if (!el) return;
+    const svcCount = pipeline.media_service_count || state.services.length;
+    const stackCount = pipeline.stacks_scanned || 0;
+    const conflicts = pipeline.conflicts || [];
+    if (conflicts.length === 0) {
+        el.textContent = "Your media pipeline looks good \u2014 all " + svcCount +
+            " services across " + stackCount + " stacks share consistent mount paths.";
+    } else {
+        el.textContent = "MapArr scanned " + stackCount + " stacks and found " +
+            svcCount + " media services. " + conflicts.length +
+            " path issue" + (conflicts.length !== 1 ? "s" : "") +
+            " detected that may break hardlinks or cause import failures.";
+    }
+}
+
+function wireActionFork() {
+    const forkPaste = document.getElementById("fork-paste");
+    const forkExplore = document.getElementById("fork-explore");
+    const pasteArea = document.getElementById("paste-area");
+    const pasteClose = document.getElementById("paste-area-close");
+
+    if (forkPaste) {
+        const newPaste = forkPaste.cloneNode(true);
+        forkPaste.parentNode.replaceChild(newPaste, forkPaste);
+        newPaste.addEventListener("click", () => {
+            if (pasteArea) {
+                pasteArea.classList.remove("hidden");
+                const input = document.getElementById("paste-error-input");
+                if (input) { input.disabled = false; input.focus(); }
+            }
+        });
+    }
+
+    if (forkExplore) {
+        const newExplore = forkExplore.cloneNode(true);
+        forkExplore.parentNode.replaceChild(newExplore, forkExplore);
+        newExplore.addEventListener("click", () => {
+            const groups = document.getElementById("service-groups");
+            if (groups) groups.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+    }
+
+    if (pasteClose) {
+        const newClose = pasteClose.cloneNode(true);
+        pasteClose.parentNode.replaceChild(newClose, pasteClose);
+        newClose.addEventListener("click", () => {
+            if (pasteArea) pasteArea.classList.add("hidden");
+        });
+    }
+}
+
+function renderConflictSummary(conflicts) {
+    const el = document.getElementById("conflict-summary");
+    if (!el) return;
+    el.replaceChildren();
+    if (conflicts.length === 0) { el.classList.add("hidden"); return; }
+
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const c of conflicts) {
+        const sev = (c.severity || "high").toLowerCase();
+        if (counts[sev] !== undefined) counts[sev]++;
+        else counts.high++;
+    }
+
+    const severities = [
+        { key: "critical", label: "critical", cls: "summary-critical" },
+        { key: "high", label: "high", cls: "summary-high" },
+        { key: "medium", label: "medium", cls: "summary-medium" },
+        { key: "low", label: "low", cls: "summary-low" },
+    ];
+
+    let first = true;
+    for (const { key, label, cls } of severities) {
+        if (counts[key] === 0) continue;
+        if (!first) {
+            const sep = document.createElement("span");
+            sep.className = "conflict-summary-separator";
+            sep.textContent = "\u00B7";
+            el.appendChild(sep);
+        }
+        const item = document.createElement("span");
+        item.className = "conflict-summary-count " + cls;
+        item.textContent = counts[key] + " " + label;
+        el.appendChild(item);
+        first = false;
+    }
+
+    const allServices = new Set();
+    for (const c of conflicts) {
+        for (const s of (c.services || [])) allServices.add(s);
+    }
+    const total = document.createElement("span");
+    total.className = "conflict-summary-total";
+    total.textContent = allServices.size + " service" + (allServices.size !== 1 ? "s" : "") + " affected";
+    el.appendChild(total);
+    el.classList.remove("hidden");
 }
 
 function updateHeaderPath(path) {
@@ -504,15 +597,28 @@ function renderHealthBanner(pipeline) {
         icon.className = "health-banner-icon health-ok";
         text.textContent = "All " + svcCount + " services healthy";
     } else {
-        icon.className = "health-banner-icon health-problem";
-        text.textContent = conflicts.length + " issue" + (conflicts.length !== 1 ? "s" : "") + " found across " + svcCount + " services";
+        const hasSevere = conflicts.some(c =>
+            ["critical", "high"].includes((c.severity || "high").toLowerCase())
+        );
+        icon.className = "health-banner-icon " + (hasSevere ? "health-problem" : "health-caution-banner");
+        text.textContent = conflicts.length + " issue" + (conflicts.length !== 1 ? "s" : "") +
+            " found across " + svcCount + " services";
         const fixAll = document.createElement("button");
         fixAll.className = "btn btn-primary btn-sm";
-        fixAll.textContent = "Fix All";
+        fixAll.textContent = "View Issues";
+        fixAll.setAttribute("data-tooltip", "Scroll to the conflict details below");
         fixAll.addEventListener("click", () => scrollToConflicts());
         actions.appendChild(fixAll);
     }
 }
+
+const ROLE_DESCRIPTIONS = {
+    arr: "Media management apps \u2014 Sonarr, Radarr, Lidarr, etc.",
+    download_client: "Download clients \u2014 qBittorrent, SABnzbd, NZBGet, etc.",
+    media_server: "Media servers \u2014 Plex, Jellyfin, Emby",
+    request: "Request apps \u2014 Overseerr, Ombi, Petio",
+    other: "Other media-related services",
+};
 
 function renderServiceGroups(servicesByRole) {
     const container = document.getElementById("service-groups");
@@ -537,6 +643,7 @@ function renderServiceGroups(servicesByRole) {
         const header = document.createElement("div");
         header.className = "service-group-header";
         header.textContent = label + " (" + services.length + ")";
+        header.setAttribute("data-tooltip", ROLE_DESCRIPTIONS[key] || "");
         group.appendChild(header);
 
         const list = document.createElement("div");
@@ -547,6 +654,9 @@ function renderServiceGroups(servicesByRole) {
         }
 
         group.appendChild(list);
+        if (services.length > 6) {
+            list.classList.add("scrollable");
+        }
         container.appendChild(group);
     }
 }
@@ -559,6 +669,7 @@ function renderServiceRow(svc) {
     // Health dot
     const dot = document.createElement("span");
     dot.className = "health-dot " + getServiceHealth(svc);
+    dot.setAttribute("data-tooltip", _healthDotTooltip(getServiceHealth(svc)));
     row.appendChild(dot);
 
     // Service info
@@ -575,6 +686,8 @@ function renderServiceRow(svc) {
     const family = svc.family_name || "Unknown";
     const sources = (svc.host_sources || []).slice(0, 2).join(", ") || "no data mounts";
     meta.textContent = family + " \u00B7 " + sources;
+    const familyTip = _familyTooltip(svc.family_name);
+    if (familyTip) meta.setAttribute("data-tooltip", familyTip);
     info.appendChild(meta);
 
     row.appendChild(info);
@@ -655,13 +768,14 @@ function toggleServiceDetail(svc) {
     }
 
     // Pipeline context
+    let siblings = [];
     if (svc.host_sources && svc.host_sources.length > 0) {
         const ctxHeader = document.createElement("div");
         ctxHeader.className = "detail-section-header";
         ctxHeader.textContent = "Pipeline";
         panel.appendChild(ctxHeader);
 
-        const siblings = state.services.filter(s =>
+        siblings = state.services.filter(s =>
             s.service_name !== svc.service_name &&
             s.host_sources && svc.host_sources &&
             s.host_sources.some(h => svc.host_sources.includes(h))
@@ -671,8 +785,57 @@ function toggleServiceDetail(svc) {
         ctxLine.textContent = siblings.length > 0
             ? "Shares mount root with " + siblings.length + " sibling" + (siblings.length !== 1 ? "s" : "")
             : "Isolated from pipeline";
+        ctxLine.setAttribute("data-tooltip", siblings.length > 0
+            ? "Services sharing a mount root can hardlink files instead of copying"
+            : "This service doesn't share data directories with other media services");
         panel.appendChild(ctxLine);
     }
+
+    // Conflict summary for this service
+    const svcConflicts = (state.pipeline && state.pipeline.conflicts || []).filter(c =>
+        (c.services || []).includes(svc.service_name)
+    );
+    if (svcConflicts.length > 0) {
+        const conflictDiv = document.createElement("div");
+        conflictDiv.className = "detail-conflicts";
+        conflictDiv.textContent = "\u26A0 " + svcConflicts.length + " issue" +
+            (svcConflicts.length !== 1 ? "s" : "") + " affecting this service";
+        panel.appendChild(conflictDiv);
+    }
+
+    // Action buttons
+    const actionRow = document.createElement("div");
+    actionRow.className = "detail-action-row";
+
+    const analyzeBtn = document.createElement("button");
+    analyzeBtn.className = "btn btn-primary btn-sm";
+    analyzeBtn.textContent = "Analyze Stack \u2192";
+    analyzeBtn.setAttribute("data-tooltip", "Open full analysis with solution YAML, RPM wizard, and fix guidance");
+    analyzeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const stack = {
+            path: svc.stack_path || "",
+            compose_file: svc.compose_file || "docker-compose.yml",
+            services: [svc.service_name],
+        };
+        hide("pipeline-dashboard");
+        runAnalysis(stack);
+    });
+    actionRow.appendChild(analyzeBtn);
+
+    if (svcConflicts.length > 0) {
+        const viewIssue = document.createElement("button");
+        viewIssue.className = "btn btn-ghost btn-sm";
+        viewIssue.textContent = "View Issues";
+        viewIssue.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const idx = findConflictForService(svc.service_name);
+            if (idx !== null) scrollToConflict(idx);
+        });
+        actionRow.appendChild(viewIssue);
+    }
+
+    panel.appendChild(actionRow);
 
     // Insert after the row
     if (row) {
@@ -702,28 +865,45 @@ function renderConflictCards(conflicts) {
     const container = document.getElementById("conflict-cards");
     if (!container) return;
     container.replaceChildren();
-
     if (conflicts.length === 0) return;
 
+    const MAX_VISIBLE = 5;
     for (let i = 0; i < conflicts.length; i++) {
-        container.appendChild(renderConflictCard(conflicts[i], i));
+        const card = renderConflictCard(conflicts[i], i);
+        if (i >= MAX_VISIBLE) card.classList.add("hidden");
+        container.appendChild(card);
     }
 
-    // Generate fix plans for all conflicts
+    if (conflicts.length > MAX_VISIBLE) {
+        const more = document.createElement("div");
+        more.className = "conflicts-show-more";
+        more.id = "conflicts-show-more";
+        const btn = document.createElement("button");
+        btn.textContent = "Show " + (conflicts.length - MAX_VISIBLE) + " more issues";
+        btn.addEventListener("click", () => {
+            container.querySelectorAll(".conflict-card.hidden").forEach(c => c.classList.remove("hidden"));
+            more.remove();
+        });
+        more.appendChild(btn);
+        container.appendChild(more);
+    }
+
     generateFixPlans(conflicts);
 }
 
 function renderConflictCard(conflict, index) {
     const card = document.createElement("div");
-    card.className = "conflict-card conflict-" + (conflict.severity || "high");
+    card.className = "conflict-card conflict-" + (conflict.severity || "high") + " collapsed";
+    card.setAttribute("data-conflict-index", index);
 
-    // Header: severity badge + description
+    // Header: severity badge + description + affected count + chevron
     const header = document.createElement("div");
     header.className = "conflict-card-header";
 
     const badge = document.createElement("span");
     badge.className = "conflict-severity severity-" + (conflict.severity || "high");
     badge.textContent = (conflict.severity || "HIGH").toUpperCase();
+    badge.setAttribute("data-tooltip", _severityTooltip(conflict.severity));
     header.appendChild(badge);
 
     const desc = document.createElement("span");
@@ -731,23 +911,105 @@ function renderConflictCard(conflict, index) {
     desc.textContent = conflict.description || conflict.type || "Mount conflict";
     header.appendChild(desc);
 
+    if (conflict.services && conflict.services.length > 0) {
+        const count = document.createElement("span");
+        count.className = "conflict-card-affected-count";
+        count.textContent = conflict.services.length + " service" + (conflict.services.length !== 1 ? "s" : "");
+        header.appendChild(count);
+    }
+
+    const chevron = document.createElement("span");
+    chevron.className = "conflict-card-chevron";
+    chevron.textContent = "\u25BC";
+    header.appendChild(chevron);
+
+    header.addEventListener("click", () => { card.classList.toggle("collapsed"); });
     card.appendChild(header);
 
-    // Affected services
+    // Body (hidden when collapsed via CSS)
+    const body = document.createElement("div");
+    body.className = "conflict-card-body";
+
     if (conflict.services && conflict.services.length > 0) {
         const affected = document.createElement("div");
         affected.className = "conflict-affected";
         affected.textContent = "Affects: " + conflict.services.join(", ");
-        card.appendChild(affected);
+        body.appendChild(affected);
     }
 
-    // Fix plan container (populated async by generateFixPlans)
+    // "Why does this matter?" section
+    const whyText = _conflictWhyText(conflict);
+    if (whyText) {
+        const why = document.createElement("div");
+        why.className = "conflict-why";
+        why.textContent = whyText;
+        body.appendChild(why);
+    }
+
+    // Fix plan container (populated async)
     const fixPlan = document.createElement("div");
     fixPlan.className = "fix-plan";
     fixPlan.id = "fix-plan-" + index;
-    card.appendChild(fixPlan);
+    body.appendChild(fixPlan);
 
+    // "See Full Analysis →" link
+    const drillLink = document.createElement("span");
+    drillLink.className = "conflict-drill-link";
+    drillLink.textContent = "See Full Analysis \u2192";
+    drillLink.setAttribute("data-tooltip", "Open detailed analysis with solution YAML, RPM wizard, and step-by-step guidance");
+    drillLink.addEventListener("click", (e) => {
+        e.stopPropagation();
+        drillIntoConflict(conflict);
+    });
+    body.appendChild(drillLink);
+
+    card.appendChild(body);
     return card;
+}
+
+function _severityTooltip(severity) {
+    const tips = {
+        critical: "Critical issues break imports and hardlinks. Fix these first.",
+        high: "High severity \u2014 likely causing failed imports or wasted disk space.",
+        medium: "Medium severity \u2014 may cause issues in some configurations.",
+        low: "Low severity \u2014 a best-practice recommendation.",
+    };
+    return tips[(severity || "high").toLowerCase()] || tips.high;
+}
+
+function _conflictWhyText(conflict) {
+    const type = (conflict.type || "").toLowerCase();
+    if (type.includes("mount") || type.includes("path")) {
+        return "When services use different host paths for the same data, hardlinks can't be created between them. " +
+            "This forces the system to copy files instead, using double the disk space and slowing imports.";
+    }
+    if (type.includes("permission") || type.includes("puid") || type.includes("pgid")) {
+        return "Services running as different users can't read each other's files. " +
+            "Aligning PUID/PGID ensures all apps can access shared media and download directories.";
+    }
+    if (type.includes("remote") || type.includes("mapping")) {
+        return "The download client and *arr app see the downloaded file at different paths. " +
+            "A remote path mapping or shared volume mount resolves this mismatch.";
+    }
+    return "This configuration may cause import failures or prevent hardlinks between services. " +
+        "See the full analysis for a detailed explanation and fix.";
+}
+
+function drillIntoConflict(conflict) {
+    const svcName = (conflict.services || [])[0];
+    const svc = state.services.find(s => s.service_name === svcName);
+    if (!svc) {
+        showSimpleToast("Could not find stack for " + (svcName || "unknown"), "error");
+        return;
+    }
+    const stack = {
+        path: svc.stack_path || "",
+        compose_file: svc.compose_file || "docker-compose.yml",
+        services: (conflict.services || []),
+    };
+    hide("pipeline-dashboard");
+    state.parsedError = state.pastedError;
+    runAnalysis(stack);
 }
 
 function scrollToConflicts() {
@@ -1198,12 +1460,18 @@ function enablePasteBar() {
     if (!input || !btn) return;
 
     input.disabled = false;
-    input.placeholder = "Paste an error from your *arr app...";
-    btn.disabled = false;
+    input.placeholder = "Paste an error from your *arr app \u2014 Sonarr, Radarr, Lidarr, etc.";
 
-    // Wire up Go button (remove old listeners by cloning)
+    // Enable button based on input content
+    input.addEventListener("input", () => {
+        const goBtn = document.getElementById("paste-error-go");
+        if (goBtn) goBtn.disabled = !input.value.trim();
+    });
+
+    // Wire up Analyze button (remove old listeners by cloning)
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
+    newBtn.disabled = !input.value.trim();
     newBtn.addEventListener("click", handlePasteError);
 
     // Enter to submit
@@ -1216,10 +1484,14 @@ function enablePasteBar() {
 
     // Wire example pills
     document.querySelectorAll(".paste-pill").forEach(pill => {
-        pill.addEventListener("click", () => {
-            const type = pill.getAttribute("data-example");
+        const newPill = pill.cloneNode(true);
+        pill.parentNode.replaceChild(newPill, pill);
+        newPill.addEventListener("click", () => {
+            const type = newPill.getAttribute("data-example");
             input.value = getPasteExample(type);
             input.focus();
+            const goBtn = document.getElementById("paste-error-go");
+            if (goBtn) goBtn.disabled = false;
         });
     });
 }
@@ -1356,6 +1628,26 @@ function setupHeaderPath() {
             editor.classList.add("hidden");
         }
     });
+
+    // Browse button
+    const browseBtn = document.getElementById("header-path-browse");
+    if (browseBtn) {
+        browseBtn.addEventListener("click", async () => {
+            if (window.showDirectoryPicker) {
+                try {
+                    const handle = await window.showDirectoryPicker({ mode: "read" });
+                    if (input) input.value = handle.name;
+                    if (editor) editor.classList.remove("hidden");
+                    input.focus();
+                    showSimpleToast("Selected: " + handle.name + " \u2014 enter the full server path and click Scan", "info");
+                } catch (e) { /* user cancelled */ }
+            } else {
+                if (editor) editor.classList.remove("hidden");
+                if (input) { input.value = state.stacksPath; input.focus(); input.select(); }
+                showSimpleToast("Enter the full path to your Docker stacks directory", "info");
+            }
+        });
+    }
 }
 
 async function changeStacksPathTo(newPath) {
@@ -5226,6 +5518,27 @@ function wireQuickSwitchCombobox(input, dropdown, opts) {
 }
 
 // ─── Helpers ───
+
+function _healthDotTooltip(health) {
+    const tips = {
+        healthy: "No issues detected \u2014 mount paths are consistent",
+        issue: "This service has a path conflict \u2014 click to see details",
+        awaiting: "Fix has been applied \u2014 restart the container to take effect",
+    };
+    return tips[health] || "Status unknown";
+}
+
+function _familyTooltip(family) {
+    const tips = {
+        "LinuxServer.io": "Uses PUID/PGID environment variables for permissions",
+        "Hotio": "Uses PUID/PGID environment variables for permissions",
+        "jlesage": "Uses USER_ID/GROUP_ID environment variables",
+        "Binhex": "Uses PUID/PGID with additional VPN support",
+        "Official Plex": "Official Plex image \u2014 uses PLEX_UID/PLEX_GID",
+        "Jellyfin": "Official Jellyfin image \u2014 uses PUID/PGID or --user flag",
+    };
+    return tips[family] || "";
+}
 
 function showSimpleToast(message, type) {
     // type: "success" or "error" — used for Apply Fix and other simple messages.
