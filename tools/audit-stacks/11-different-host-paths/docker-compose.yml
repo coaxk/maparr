@@ -1,0 +1,28 @@
+## TEST: Same container path mapped to different host paths
+## EXPECTED: different_host_paths conflict (high)
+## BUG CHECK: Does fix text show nonsensical paths?
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /opt/media:/data
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/radarr:/config
+      - /mnt/storage/media:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - /home/user/downloads:/data

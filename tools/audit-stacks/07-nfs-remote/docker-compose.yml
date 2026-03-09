@@ -1,0 +1,27 @@
+## TEST: NFS remote mount — should trigger remote_filesystem warning
+## EXPECTED: remote_filesystem conflict (high severity)
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - nasserver:/export/media:/data
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/radarr:/config
+      - nasserver:/export/media:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - nasserver:/export/downloads:/data

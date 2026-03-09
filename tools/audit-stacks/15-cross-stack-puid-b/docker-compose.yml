@@ -1,0 +1,11 @@
+## TEST: Cross-stack PUID mismatch — Stack B uses UID 1001
+## EXPECTED: When scanned via pipeline with stack A (UID 1000), should detect cross_stack_puid_mismatch
+services:
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1001
+      - PGID=1001
+    volumes:
+      - ./config/radarr:/config
+      - /data:/data

@@ -1,0 +1,28 @@
+## TEST: Separate mount trees — no common root between services
+## EXPECTED: no_shared_mount conflict (critical)
+## SOLUTION SHOULD: Show unified /data restructure
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /media/tv:/tv
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/radarr:/config
+      - /movies/library:/movies
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - /downloads/complete:/downloads

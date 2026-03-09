@@ -1,0 +1,27 @@
+## TEST: Windows drive letter paths in compose
+## EXPECTED: windows_path_in_compose conflict (low)
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - C:\DockerContainers\sonarr\config:/config
+      - C:\Media:/data
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - C:\DockerContainers\radarr\config:/config
+      - C:\Media:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - C:\DockerContainers\qbit\config:/config
+      - C:\Downloads:/data

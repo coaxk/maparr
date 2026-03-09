@@ -1,0 +1,28 @@
+## TEST: /mnt/nas mount — should NOT trigger WSL2 warning
+## EXPECTED: No WSL2 conflict (this is NAS, not Windows drive)
+## BUG CHECK: Does classify_path() misclassify /mnt/nas as WSL2?
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /mnt/nas:/data
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/radarr:/config
+      - /mnt/nas:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - /mnt/nas:/data
