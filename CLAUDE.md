@@ -8,7 +8,7 @@ Recognizes 218+ Docker images across 7 families via a JSON Image DB.
 
 ## Stack
 - **Backend:** Python 3.11, FastAPI (>=0.115.0), uvicorn (>=0.30.0), PyYAML (>=6.0.2), python-multipart (>=0.0.18)
-- **Frontend:** Vanilla HTML/CSS/JS (single-page, no framework, no build step)
+- **Frontend:** Vanilla HTML/CSS/JS (single-page, no framework, no build step, ~7000 LOC)
 - **Tests:** pytest (682 unit + 73 E2E acceptance), run with `pytest tests/ -p no:capture` on Windows
 - **E2E:** Playwright (components + journeys), httpx (API contracts), Docker (deployment)
 - **Docker:** Multi-stage build, gosu for PUID/PGID, Docker CLI + compose plugin
@@ -133,10 +133,15 @@ mount restructuring. Lives entirely in frontend `app.js` (`renderRpmWizard()`).
 - Gate 5: Test verification (works/broken outcome)
 Backend provides `rpm_mappings` in analysis response via `_calculate_rpm_mappings()`.
 
-### Solution Track Selector
-Cross-stack conflicts show two tracks: Quick Fix (RPM Wizard) and Proper Fix
-(mount restructure). Track selector in `showCrossStackConflict()`. Defaults to
-Quick Fix when RPM is possible, Proper Fix when host paths don't overlap.
+### Solution Tabs (Unified Layout)
+All stacks use the same tab-based layout: Fix Paths | RPM Wizard | Fix Permissions | Fix All Issues.
+Tabs are shown/hidden based on what categories exist:
+- **Fix Paths** (Cat A): shown when `hasCatA && solution_yaml`
+- **RPM Wizard** (Cat A): shown when `hasCatA && hasPossibleRpm` — dynamically created tab+block
+- **Fix Permissions** (Cat B): shown when `hasCatB && env_solution_yaml`
+- **Fix All Issues** (Cat A+B): shown only when BOTH categories exist
+RPM tab is gated on feasibility (`rpm_mappings[].possible`), not just detection (`rpm_hint`).
+`_preferredSolutionTab` state hint consumed AFTER all tabs (incl. RPM) are created.
 
 ### Pre-flight Override & Source of Truth
 When user pastes an error, overrides pre-flight warning on a healthy stack:
@@ -202,7 +207,7 @@ grouped by role (arr, download_client, media_server, request, other) with:
 - **Conflict cards**: severity-badged issues with multi-file fix plans
 - **Fix plans**: per-file rows with checkboxes, Apply/Apply All, YAML preview with diff
 - **Redeploy prompt**: role-based risk warnings, Docker Compose up -d or manual commands
-- **Paste bar**: sticky bottom, paste an error → highlights matching services + scrolls to conflict
+- **Paste bar**: sticky bottom, paste an error → auto-drill into fix (RPM for Cat A, Fix Permissions for Cat B)
 - **Three-state health**: `healthy` | `issue` | `awaiting` (fix applied, awaiting rescan)
 - **Directory selection**: inline header path editor, first-launch welcome screen
 
@@ -210,7 +215,10 @@ grouped by role (arr, download_client, media_server, request, other) with:
 `runPipelineScan()` → `renderDashboard()` → `renderServiceGroups()` / `renderConflictCards()`
 `generateFixPlans()` → `renderFixPlan()` → `applySingleFix()` / `applyAllFixes()`
 `showRedeployPrompt()` → `doRedeploy()` / `showManualRedeploy()`
-`enablePasteBar()` → `handlePasteError()` → `highlightServices()`
+`enablePasteBar()` → `handlePasteError()` → `findConflictForService()` → `drillIntoConflict()`
+`findConflictForService()` — searches BOTH `pipeline.conflicts` AND `per_stack_conflicts`
+  Returns `{ source, index, conflict, stackName }` or null. Pipeline-level = cross-stack mount
+  mismatches; per-stack = permissions, within-stack path issues.
 
 ### Quick-Switch Combobox
 All 3 stack search inputs (fix mode filter, browse collapsed bar, bottom-of-card)
@@ -252,7 +260,7 @@ every successful analysis completion.
 - **`compose_file_path`** in analysis results is the full path (needed for apply-fix)
 - **Frontend XSS safety:** All user-derived content uses `textContent`, never `innerHTML`
 - **UNC paths on Windows:** `os.path.commonpath` raises `ValueError` for UNC paths — tests guard with `sys.platform == "win32"`
-- **Batch test failures:** 27 API tests fail in batch mode (session state bleed from path security checks) — pass individually. Pre-existing issue.
+- **Batch test failures:** Fixed in `95f6040` — session state bleed from path security checks. `_clear_session` now resets all keys + `RateLimiter.reset()`.
 - **CRLF:** `split_errors()` normalizes `\r\n` → `\n` before regex split (Windows paste)
 
 ## Session Discipline
