@@ -1,0 +1,30 @@
+# E2E Test Stack: umask-issue
+# Expected: umask_inconsistent (Cat B, low)
+# sonarr UMASK=022 (restrictive), qbittorrent UMASK=002 (permissive). Same PUID.
+
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - UMASK=022
+    volumes:
+      - /data:/data
+      - /config/sonarr:/config
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - UMASK=002
+    volumes:
+      - /data:/data
+      - /config/qbittorrent:/config
+    restart: unless-stopped

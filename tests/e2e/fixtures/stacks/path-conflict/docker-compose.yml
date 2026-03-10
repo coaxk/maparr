@@ -1,0 +1,28 @@
+# E2E Test Stack: path-conflict
+# Expected: no_shared_mount (Cat A, critical)
+# sonarr and qbittorrent mount completely different host paths with no shared parent.
+
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /host/tv:/data/tv
+      - /config/sonarr:/config
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /host/downloads:/downloads
+      - /config/qbittorrent:/config
+    restart: unless-stopped

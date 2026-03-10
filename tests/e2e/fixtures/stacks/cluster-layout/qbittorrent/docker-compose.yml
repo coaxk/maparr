@@ -1,0 +1,16 @@
+# E2E Test Stack: cluster-layout/qbittorrent
+# Expected: Part of cluster layout test. One service per subfolder.
+# Combined with sonarr subfolder, triggers no_shared_mount (Cat A) — /downloads vs /data.
+
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /downloads:/downloads
+      - /config/qbittorrent:/config
+    restart: unless-stopped

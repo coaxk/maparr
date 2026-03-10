@@ -1,0 +1,28 @@
+# E2E Test Stack: different-paths
+# Expected: different_host_paths (Cat A, high)
+# Both mount /data inside container but from different host directories.
+
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /mnt/disk1/media:/data
+      - /config/sonarr:/config
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /mnt/disk2/media:/data
+      - /config/radarr:/config
+    restart: unless-stopped

@@ -1,0 +1,28 @@
+# E2E Test Stack: mixed-mounts
+# Expected: mixed_mount_types (Cat C, medium)
+# sonarr uses local bind mount, qbittorrent uses remote network share.
+
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /data:/data
+      - /config/sonarr:/config
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - //192.168.1.10/media/downloads:/downloads
+      - /config/qbittorrent:/config
+    restart: unless-stopped
