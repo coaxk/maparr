@@ -9,7 +9,8 @@ Recognizes 218+ Docker images across 7 families via a JSON Image DB.
 ## Stack
 - **Backend:** Python 3.11, FastAPI (>=0.115.0), uvicorn (>=0.30.0), PyYAML (>=6.0.2), python-multipart (>=0.0.18)
 - **Frontend:** Vanilla HTML/CSS/JS (single-page, no framework, no build step)
-- **Tests:** pytest (682 tests), run with `pytest tests/ -p no:capture` on Windows
+- **Tests:** pytest (682 unit + 73 E2E acceptance), run with `pytest tests/ -p no:capture` on Windows
+- **E2E:** Playwright (components + journeys), httpx (API contracts), Docker (deployment)
 - **Docker:** Multi-stage build, gosu for PUID/PGID, Docker CLI + compose plugin
 
 ## Architecture
@@ -272,8 +273,17 @@ Cross-Claude communication via CLAUDE.md files and comprehensive code comments.
 # Development
 uvicorn backend.main:app --host 0.0.0.0 --port 9494 --reload
 
-# Tests
-pytest tests/ -v -p no:capture
+# Unit tests (682)
+pytest tests/ --ignore=tests/e2e -v -p no:capture
+
+# E2E API contract tests (28, no server needed)
+pytest tests/e2e/test_api_contracts.py -v -p no:capture
+
+# E2E Playwright tests (45, starts server automatically)
+pytest tests/e2e/test_components.py tests/e2e/test_journeys.py -v
+
+# E2E Docker tests (3, needs Docker)
+pytest tests/e2e/test_docker.py -v
 
 # Docker
 docker compose up --build
