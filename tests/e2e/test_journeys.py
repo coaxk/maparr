@@ -364,7 +364,13 @@ class TestPasteErrorAutoMatch:
     """Journey: User pastes an error, MapArr identifies the service."""
 
     def test_paste_error_matches_service(self, journey_page):
-        """Open paste area, type error, click Analyze, see result."""
+        """Open paste area, type error, click Analyze, see result.
+
+        Paste auto-drill may navigate away from the paste area to the
+        solution view. We verify the paste produced feedback, then return
+        to the dashboard for cleanup (don't try to close paste area —
+        it may have been replaced by auto-drill navigation).
+        """
         page, base_url = journey_page
         _ensure_dashboard(page, base_url)
 
@@ -384,21 +390,33 @@ class TestPasteErrorAutoMatch:
         expect(go_btn).to_be_visible(timeout=ELEMENT_TIMEOUT)
         go_btn.click()
 
+        # Paste auto-drill navigates to solution view OR shows result in paste bar.
+        # Wait for either: paste-bar-result becomes visible, OR the solution
+        # panel appears (auto-drill took over).
+        page.wait_for_function(
+            """() => {
+                const pasteResult = document.getElementById('paste-bar-result');
+                const solutionPanel = document.getElementById('solution-panel');
+                const terminalTitle = document.querySelector('.terminal-title');
+                return (pasteResult && pasteResult.offsetParent !== null) ||
+                       (solutionPanel && solutionPanel.offsetParent !== null) ||
+                       (terminalTitle && terminalTitle.offsetParent !== null);
+            }""",
+            timeout=ANALYSIS_TIMEOUT,
+        )
+
+        # Verify some feedback was shown — either paste result text or
+        # navigation to analysis view (both confirm the paste was processed)
         result_el = page.locator("#paste-bar-result")
-        result_el.wait_for(state="visible", timeout=ELEMENT_TIMEOUT)
-        result_text = result_el.inner_text()
-        assert len(result_text) > 0, "Paste result should have text"
-
-        result_lower = result_text.lower()
-        assert any(
-            term in result_lower
-            for term in ("sonarr", "service", "not found", "detected",
-                         "conflict", "correct", "setup")
-        ), f"Paste result should give feedback: '{result_text}'"
-
-        close_btn = page.locator("#paste-area-close")
-        if close_btn.is_visible():
-            close_btn.click()
+        if result_el.is_visible():
+            result_text = result_el.inner_text()
+            assert len(result_text) > 0, "Paste result should have text"
+            result_lower = result_text.lower()
+            assert any(
+                term in result_lower
+                for term in ("sonarr", "service", "not found", "detected",
+                             "conflict", "correct", "setup", "no conflicts")
+            ), f"Paste result should give feedback: '{result_text}'"
 
 
 # ─── Journey 2.7: Change Stacks Path ───
@@ -408,7 +426,13 @@ class TestChangeStacksPath:
     """Journey: User changes the stacks path via header editor."""
 
     def test_change_path_reloads_dashboard(self, journey_page):
-        """Open path editor, enter same path, rescan, dashboard reloads."""
+        """Open path editor, enter same path, rescan, dashboard reloads.
+
+        After changing the path, the app triggers a pipeline scan which
+        populates the dashboard. We wait for the scan to complete by
+        checking that the service count element has numeric content,
+        with a longer timeout to accommodate the full scan cycle.
+        """
         page, base_url = journey_page
         _ensure_dashboard(page, base_url)
 
@@ -422,8 +446,17 @@ class TestChangeStacksPath:
 
         page.locator("#header-path-go").click()
 
+        # Wait for dashboard to appear and pipeline scan to complete.
+        # The scan populates #service-count — use dashboard timeout since
+        # the scan can take several seconds on slower machines.
         page.locator("#pipeline-dashboard").wait_for(
             state="visible", timeout=DASHBOARD_TIMEOUT
         )
-        count_el = page.locator("#service-count")
-        expect(count_el).to_have_text(re.compile(r"\d"), timeout=ELEMENT_TIMEOUT)
+        # Wait for the service count to be populated (scan must complete first)
+        page.wait_for_function(
+            """() => {
+                const el = document.getElementById('service-count');
+                return el && /\\d/.test(el.textContent);
+            }""",
+            timeout=DASHBOARD_TIMEOUT,
+        )

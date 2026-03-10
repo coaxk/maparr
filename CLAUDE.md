@@ -9,7 +9,7 @@ Recognizes 218+ Docker images across 7 families via a JSON Image DB.
 ## Stack
 - **Backend:** Python 3.11, FastAPI (>=0.115.0), uvicorn (>=0.30.0), PyYAML (>=6.0.2), python-multipart (>=0.0.18)
 - **Frontend:** Vanilla HTML/CSS/JS (single-page, no framework, no build step, ~7000 LOC)
-- **Tests:** pytest (682 unit + 73 E2E acceptance), run with `pytest tests/ -p no:capture` on Windows
+- **Tests:** pytest (682 unit + 76 E2E acceptance), run with `pytest tests/ -p no:capture` on Windows
 - **E2E:** Playwright (components + journeys), httpx (API contracts), Docker (deployment)
 - **Docker:** Multi-stage build, gosu for PUID/PGID, Docker CLI + compose plugin
 
@@ -244,7 +244,9 @@ every successful analysis completion.
 - **Path traversal prevention:** `_is_path_within_stacks()` with `require_root` param for writes
 - **Write boundary:** Apply Fix requires `MAPARR_STACKS_PATH` to be set
 - **Compose filename whitelist:** Only writes to `COMPOSE_FILENAMES` set
-- **System directory denylist:** `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/sbin`, `/root`, `/home`, `C:\Windows`, `C:\Program Files`
+- **System directory denylist:** Unified `_BLOCKED_PREFIXES` constant — `/etc`, `/proc`, `/sys`, `/dev`, `/boot`, `/sbin`, `/root`, `/home`, `C:\Windows`, `C:\Program Files`
+- **Input size limits:** 100KB on error_text (`/api/parse-error`), 1MB on corrected_yaml (`/api/apply-fix`)
+- **Error message safety:** `_json_error_detail()`, `_categorize_os_error()`, `_relative_path_display()` — no raw `str(e)` in API responses
 - **XSS prevention:** All user content via `textContent`, zero `innerHTML` with untrusted data
 - **CSP readiness:** All inline onclick handlers migrated to addEventListener
 - **Safe YAML:** `yaml.safe_load()` only
@@ -310,5 +312,5 @@ docker compose up --build
 
 ## Branch
 `feature/pipeline-dashboard` — Pipeline Dashboard v2.0 development branch.
-`main` — stable v1.5.0 (merged from v1.0-web-pivot, 2026-03-08).
+`main` — stable v1.5.1 (v1.5.0 merged from v1.0-web-pivot 2026-03-08, v1.5.1 error hardening 2026-03-11).
 The Go/Charm TUI lives at `maparr_charm/` (embedded repo, separate Go module).

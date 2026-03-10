@@ -488,7 +488,7 @@ async function runPipelineScan() {
 
     } catch (err) {
         state.scanning = false;
-        if (bannerText) bannerText.textContent = "Scan failed: " + (err.message || "unknown error");
+        if (bannerText) bannerText.textContent = "Scan failed: " + friendlyError(err) + ". Try refreshing the page.";
         if (bannerIcon) bannerIcon.className = "health-banner-icon health-problem";
     }
 }
@@ -1327,7 +1327,7 @@ function drillIntoConflict(conflict) {
     const svcName = (conflict.services || [])[0] || conflict.service_name || "";
     const svc = state.services.find(s => s.service_name === svcName);
     if (!svc) {
-        showSimpleToast("Could not find service '" + svcName + "' in pipeline data", "error");
+        showSimpleToast("Could not find service '" + svcName + "' in pipeline data. Try rescanning your stacks.", "error");
         return;
     }
     const stack = {
@@ -2211,7 +2211,7 @@ async function handlePasteError() {
         const parsed = await resp.json();
 
         if (!parsed || !parsed.service) {
-            showPasteResult("Could not identify a service in this error.", "error");
+            showPasteResult("Could not identify a service in this error. Paste an error from Sonarr, Radarr, or another arr app.", "error");
             return;
         }
 
@@ -2270,7 +2270,7 @@ async function handlePasteError() {
             showPasteResult('Service "' + parsed.service + '" not found in your pipeline. Check the stacks directory.', "error");
         }
     } catch (e) {
-        showPasteResult("Parse failed: " + e.message, "error");
+        showPasteResult("Parse failed: " + friendlyError(e), "error");
     }
 }
 
@@ -6315,7 +6315,7 @@ function showCrossStackConflict(data) {
                     });
                 } else {
                     resultDiv.className = "apply-result apply-result-error";
-                    resultDiv.textContent = result.error || "Failed to apply fix.";
+                    resultDiv.textContent = result.error || "Failed to apply fix. Check the log panel for details.";
                     resultDiv.classList.remove("hidden");
                     confirmWrap.classList.add("hidden");
                 }
@@ -6751,7 +6751,7 @@ function applyPathFix() {
     if (!_lastAnalysisForApply) return;
     const catAPlans = (_lastAnalysisForApply.fix_plans || []).filter(p => p.category === "A");
     if (catAPlans.length === 0) {
-        showSimpleToast("No path fix available to apply.", "error");
+        showSimpleToast("No path fix available. Check the Fix Permissions tab for environment variable fixes.", "error");
         return;
     }
     const btn = document.getElementById("btn-apply-path-fix");
@@ -7517,9 +7517,9 @@ async function changeStacksPath() {
             if (inBrowseMode) {
                 empty.classList.remove("hidden");
                 const emptyP = empty.querySelector("p");
-                if (emptyP) emptyP.textContent = data.error || "Failed to scan path.";
+                if (emptyP) emptyP.textContent = data.error || "Failed to scan path. Check that the directory exists and is accessible.";
             } else {
-                showSimpleToast(data.error || "Failed to scan path.", "error");
+                showSimpleToast(data.error || "Failed to scan path. Check that the directory exists and is accessible.", "error");
             }
             return;
         }

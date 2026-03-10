@@ -4,6 +4,7 @@ Multi-file apply fix — batch apply corrected YAML to multiple compose files.
 Validates all files before writing any. Creates backups for all files first.
 If any validation fails, no files are written.
 """
+import errno
 import logging
 import os
 import shutil
@@ -13,6 +14,20 @@ from typing import List
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_os_error(e: OSError, action: str) -> str:
+    """User-friendly OS error without leaking internals."""
+    if e.errno == errno.EACCES:
+        return f"{action}: permission denied"
+    if e.errno == errno.ENOSPC:
+        return f"{action}: disk full"
+    if e.errno == errno.EROFS:
+        return f"{action}: read-only filesystem"
+    if e.errno == errno.ENOENT:
+        return f"{action}: file not found"
+    return f"{action}: system error (check logs for details)"
+
 
 COMPOSE_FILENAMES = {
     "docker-compose.yml", "docker-compose.yaml",
@@ -49,12 +64,12 @@ def validate_fixes_batch(fixes: List[dict], stacks_root: str) -> List[dict]:
         try:
             path.resolve().relative_to(root)
         except ValueError:
-            errors.append({"compose_file_path": path_str, "error": "Path outside stacks directory"})
+            errors.append({"compose_file_path": path_str, "error": "Path outside stacks directory. Check MAPARR_STACKS_PATH or use Change Path to update."})
             continue
 
         # Valid compose filename?
         if path.name not in COMPOSE_FILENAMES:
-            errors.append({"compose_file_path": path_str, "error": f"Not a recognised compose file: {path.name}"})
+            errors.append({"compose_file_path": path_str, "error": f"Not a recognised compose file: {path.name}. Valid names: {', '.join(sorted(COMPOSE_FILENAMES))}"})
             continue
 
         # Valid YAML with services key?
@@ -68,7 +83,11 @@ def validate_fixes_batch(fixes: List[dict], stacks_root: str) -> List[dict]:
                 errors.append({"compose_file_path": path_str, "error": "Corrected YAML missing services key"})
                 continue
         except yaml.YAMLError as e:
-            errors.append({"compose_file_path": path_str, "error": f"Invalid YAML: {e}"})
+            mark = getattr(e, 'problem_mark', None)
+            if mark:
+                errors.append({"compose_file_path": path_str, "error": f"Invalid YAML (line {mark.line + 1}, column {mark.column + 1}): check indentation and syntax"})
+            else:
+                errors.append({"compose_file_path": path_str, "error": "Invalid YAML: check indentation and syntax"})
             continue
 
     return errors
@@ -114,7 +133,7 @@ def apply_fixes_batch(fixes: List[dict], stacks_root: str) -> dict:
                 "status": "partial",
                 "applied_count": 0,
                 "failed_count": len(fixes),
-                "results": [{"compose_file_path": path_str, "status": "backup_failed", "error": str(e)}],
+                "results": [{"compose_file_path": path_str, "status": "backup_failed", "error": _safe_os_error(e, "Backup failed")}],
                 "errors": [],
             }
 
@@ -141,7 +160,7 @@ def apply_fixes_batch(fixes: List[dict], stacks_root: str) -> dict:
             results.append({
                 "compose_file_path": path_str,
                 "status": "failed",
-                "error": str(e),
+                "error": _safe_os_error(e, "Write failed"),
             })
             failed += 1
             logger.error("Failed to write %s: %s", path_str, e)

@@ -24,6 +24,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import yaml
+
 from backend.parser import parse_error, parse_errors
 from backend.discovery import discover_stacks
 from backend.resolver import resolve_compose, ResolveError
@@ -31,6 +33,15 @@ from backend.analyzer import analyze_stack
 from backend.smart_match import smart_match
 from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
 from backend.log_handler import install_log_handler, get_log_handler
+
+
+# ─── Security: System Directory Blocklist ───
+# Unified blocklist for all directory-browsing endpoints. Prevents users from
+# scanning system directories that could leak sensitive information.
+_BLOCKED_PREFIXES = (
+    "/etc", "/proc", "/sys", "/dev", "/boot", "/sbin", "/root", "/home",
+    "C:\\Windows", "C:\\Program Files",
+)
 
 
 # ─── Rate Limiting ───
@@ -260,6 +271,45 @@ _session = {
 }
 
 
+# ─── Helpers: Error Formatting ───
+
+import json
+
+def _json_error_detail(exc: Exception) -> str:
+    """Format a JSON parse error with position context when available."""
+    if isinstance(exc, json.JSONDecodeError):
+        return f"Invalid JSON in request body (line {exc.lineno}, column {exc.colno}): {exc.msg}"
+    return "Invalid JSON in request body"
+
+
+def _categorize_os_error(e: OSError, action: str) -> str:
+    """Return a user-friendly message for common OS errors without leaking internals."""
+    import errno
+    if e.errno == errno.EACCES:
+        return f"{action}: permission denied"
+    if e.errno == errno.ENOSPC:
+        return f"{action}: disk full"
+    if e.errno == errno.EROFS:
+        return f"{action}: read-only filesystem"
+    if e.errno == errno.ENOENT:
+        return f"{action}: file not found"
+    return f"{action}: system error (check logs for details)"
+
+
+def _relative_path_display(full_path: str) -> str:
+    """Show path relative to stacks root for user context, falling back to basename."""
+    try:
+        root = _get_stacks_root()
+    except NameError:
+        root = None
+    if not root:
+        return os.path.basename(full_path)
+    try:
+        return str(Path(full_path).resolve().relative_to(Path(root).resolve()))
+    except (ValueError, OSError):
+        return os.path.basename(full_path)
+
+
 # ─── Frontend ───
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
@@ -295,9 +345,9 @@ async def api_parse_error(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -305,6 +355,13 @@ async def api_parse_error(request: Request):
     if not error_text:
         return JSONResponse(
             {"error": "No error text provided"},
+            status_code=400,
+        )
+
+    # Input size limit: 100KB max error text to prevent memory exhaustion
+    if len(error_text) > 100_000:
+        return JSONResponse(
+            {"error": "Error text too large (max 100KB)"},
             status_code=400,
         )
 
@@ -416,7 +473,7 @@ async def api_pipeline_scan(request: Request):
 
     if not scan_dir or not os.path.isdir(scan_dir):
         return JSONResponse(
-            {"error": "No valid scan directory available"},
+            {"error": "No valid scan directory available. Set MAPARR_STACKS_PATH or use the Change Path button to select your stacks directory."},
             status_code=400,
         )
 
@@ -430,7 +487,7 @@ async def api_pipeline_scan(request: Request):
         except (ValueError, OSError):
             logger.warning("Pipeline scan blocked: %s outside MAPARR_STACKS_PATH %s", scan_dir, env_stacks_root)
             return JSONResponse(
-                {"error": "Scan directory is outside the stacks root (set by MAPARR_STACKS_PATH)"},
+                {"error": "Scan directory is outside the configured stacks root. Check MAPARR_STACKS_PATH or use Change Path to update."},
                 status_code=403,
             )
 
@@ -462,9 +519,9 @@ async def api_change_stacks_path(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -495,11 +552,8 @@ async def api_change_stacks_path(request: Request):
             )
 
     # Defense-in-depth: block obvious system directories
-    _blocked_prefixes = ("/etc", "/proc", "/sys", "/dev", "/boot", "/sbin",
-                         "/root", "/home",
-                         "C:\\Windows", "C:\\Program Files")
     resolved_new = str(Path(new_path).resolve())
-    if any(resolved_new.startswith(p) for p in _blocked_prefixes):
+    if any(resolved_new.startswith(p) for p in _BLOCKED_PREFIXES):
         logger.warning("Change path blocked: system directory: %s", new_path)
         return JSONResponse(
             {"error": "Cannot scan system directories"},
@@ -573,9 +627,8 @@ async def api_list_directories(request: Request):
             status_code=400,
         )
 
-    # Block system directories
-    _blocked_prefixes = ("/proc", "/sys", "/dev")
-    if any(resolved.startswith(p) for p in _blocked_prefixes):
+    # Block system directories (uses unified blocklist)
+    if any(resolved.startswith(p) for p in _BLOCKED_PREFIXES):
         return JSONResponse(
             {"error": "Cannot browse system directories"},
             status_code=403,
@@ -627,9 +680,9 @@ async def api_select_stack(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -643,7 +696,7 @@ async def api_select_stack(request: Request):
     # Validate the path exists
     if not os.path.isdir(stack_path):
         return JSONResponse(
-            {"error": f"Directory not found: {os.path.basename(stack_path)}"},
+            {"error": f"Directory not found: {_relative_path_display(stack_path)}"},
             status_code=400,
         )
 
@@ -651,7 +704,7 @@ async def api_select_stack(request: Request):
     if not _is_path_within_stacks(stack_path):
         logger.warning("Select stack blocked: path outside stacks root: %s", stack_path)
         return JSONResponse(
-            {"error": "Path is outside the stacks directory"},
+            {"error": "Path is outside the stacks directory. Set MAPARR_STACKS_PATH or use Change Path to configure the correct root."},
             status_code=403,
         )
 
@@ -692,9 +745,9 @@ async def api_analyze(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -707,7 +760,7 @@ async def api_analyze(request: Request):
 
     if not os.path.isdir(stack_path):
         return JSONResponse(
-            {"error": f"Directory not found: {os.path.basename(stack_path)}"},
+            {"error": f"Directory not found: {_relative_path_display(stack_path)}"},
             status_code=400,
         )
 
@@ -715,7 +768,7 @@ async def api_analyze(request: Request):
     if not _is_path_within_stacks(stack_path):
         logger.warning("Analyze blocked: path outside stacks root: %s", stack_path)
         return JSONResponse(
-            {"error": "Path is outside the stacks directory"},
+            {"error": "Path is outside the stacks directory. Set MAPARR_STACKS_PATH or use Change Path to configure the correct root."},
             status_code=403,
         )
 
@@ -815,12 +868,23 @@ async def api_analyze(request: Request):
             scan_dir=scan_dir,
             pipeline_context=pipeline_context,
         ))
-    except Exception as e:
+    except (OSError, ValueError, TypeError, KeyError) as e:
         logger.exception("Analysis failed for %s", os.path.basename(stack_path))
-        steps.append({"icon": "fail", "text": f"Analysis failed: {e}"})
+        safe_msg = _categorize_os_error(e, "Analysis") if isinstance(e, OSError) else "Analysis failed — check the log panel for details"
+        steps.append({"icon": "fail", "text": safe_msg})
         return JSONResponse({
             "status": "error",
-            "error": f"Analysis failed: {e}",
+            "error": safe_msg,
+            "stage": "analysis",
+            "stack_path": os.path.basename(stack_path),
+            "steps": steps,
+        }, status_code=200)
+    except Exception as e:
+        logger.exception("Analysis failed for %s (unexpected)", os.path.basename(stack_path))
+        steps.append({"icon": "fail", "text": "Analysis failed — check the log panel for details"})
+        return JSONResponse({
+            "status": "error",
+            "error": "Analysis failed — check the log panel for details",
             "stage": "analysis",
             "stack_path": os.path.basename(stack_path),
             "steps": steps,
@@ -866,9 +930,9 @@ async def api_smart_match(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -936,9 +1000,9 @@ async def api_apply_fix(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -955,9 +1019,16 @@ async def api_apply_fix(request: Request):
             {"error": "No corrected_yaml provided"},
             status_code=400,
         )
+
+    # Input size limit: 1MB max corrected YAML per file
+    if len(corrected_yaml) > 1_000_000:
+        return JSONResponse(
+            {"error": "Corrected YAML too large (max 1MB per file)"},
+            status_code=400,
+        )
     if not os.path.isfile(compose_file_path):
         return JSONResponse(
-            {"error": f"File not found: {os.path.basename(compose_file_path)}"},
+            {"error": f"File not found: {_relative_path_display(compose_file_path)}"},
             status_code=400,
         )
 
@@ -984,22 +1055,33 @@ async def api_apply_fix(request: Request):
     if os.path.basename(compose_file_path) not in COMPOSE_FILENAMES:
         logger.warning("Apply fix blocked: not a compose file: %s", compose_file_path)
         return JSONResponse(
-            {"error": "Target is not a recognised compose file"},
+            {"error": f"Target is not a recognised compose file. Valid names: {', '.join(sorted(COMPOSE_FILENAMES))}"},
             status_code=400,
         )
 
     # Validate the corrected YAML is parseable before writing
     try:
-        import yaml
         parsed = yaml.safe_load(corrected_yaml)
         if not isinstance(parsed, dict) or "services" not in parsed:
             return JSONResponse(
                 {"error": "Corrected YAML doesn't contain a valid services section"},
                 status_code=400,
             )
-    except Exception as e:
+    except yaml.YAMLError as e:
+        # Extract line/column if available, don't leak full exception
+        mark = getattr(e, 'problem_mark', None)
+        if mark:
+            return JSONResponse(
+                {"error": f"Corrected YAML is not valid (line {mark.line + 1}, column {mark.column + 1}): check indentation and syntax"},
+                status_code=400,
+            )
         return JSONResponse(
-            {"error": f"Corrected YAML is not valid: {e}"},
+            {"error": "Corrected YAML is not valid: check indentation and syntax"},
+            status_code=400,
+        )
+    except Exception:
+        return JSONResponse(
+            {"error": "Corrected YAML could not be parsed"},
             status_code=400,
         )
 
@@ -1009,10 +1091,10 @@ async def api_apply_fix(request: Request):
         import shutil
         shutil.copy2(compose_file_path, backup_path)
         logger.info("Apply fix: backup created at %s", backup_path)
-    except Exception as e:
+    except OSError as e:
         logger.error("Apply fix: backup failed: %s", e)
         return JSONResponse(
-            {"error": f"Failed to create backup: {e}"},
+            {"error": _categorize_os_error(e, "Failed to create backup")},
             status_code=500,
         )
 
@@ -1023,7 +1105,7 @@ async def api_apply_fix(request: Request):
         with open(compose_file_path, "w", encoding="utf-8", newline="") as f:
             f.write(corrected_yaml.replace("\r\n", "\n"))
         logger.info("Apply fix: wrote corrected YAML to %s", compose_file_path)
-    except Exception as e:
+    except OSError as e:
         logger.error("Apply fix: write failed: %s", e)
         # Try to restore from backup
         try:
@@ -1033,7 +1115,7 @@ async def api_apply_fix(request: Request):
         except Exception:
             pass
         return JSONResponse(
-            {"error": f"Failed to write file: {e}. Backup preserved at {os.path.basename(backup_path)}"},
+            {"error": f"{_categorize_os_error(e, 'Failed to write file')}. Backup preserved at {os.path.basename(backup_path)}"},
             status_code=500,
         )
 
@@ -1050,8 +1132,8 @@ async def api_apply_fixes(request: Request):
     """Apply corrected YAML to multiple compose files in one batch."""
     try:
         body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"error": _json_error_detail(exc)}, status_code=400)
 
     fixes = body.get("fixes", [])
     if not isinstance(fixes, list):
@@ -1082,8 +1164,8 @@ async def api_redeploy(request: Request):
     """Redeploy Docker stacks after applying fixes."""
     try:
         body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"error": _json_error_detail(exc)}, status_code=400)
 
     stacks = body.get("stacks", [])
     if not isinstance(stacks, list):

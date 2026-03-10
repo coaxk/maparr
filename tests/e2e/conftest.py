@@ -5,6 +5,7 @@ Starts a real MapArr server against synthetic test stacks,
 provides Playwright browser pages pointed at it.
 """
 
+import atexit
 import os
 import shutil
 import subprocess
@@ -84,6 +85,17 @@ def maparr_server():
         proc.kill()
         pytest.fail(f"MapArr server didn't start within {SERVER_STARTUP_TIMEOUT}s")
 
+    # Register atexit handler so the server gets killed even if pytest
+    # terminates ungracefully (e.g. KeyboardInterrupt, unhandled exception).
+    # This prevents stale processes holding port 19494 between test runs.
+    def _cleanup_server():
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    atexit.register(_cleanup_server)
+
     yield {"url": E2E_BASE_URL, "port": E2E_PORT, "process": proc}
 
     proc.terminate()
@@ -91,6 +103,9 @@ def maparr_server():
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+
+    # Unregister atexit handler after clean shutdown
+    atexit.unregister(_cleanup_server)
 
 
 @pytest.fixture(scope="session")

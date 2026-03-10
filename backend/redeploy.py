@@ -106,7 +106,7 @@ def run_compose_action(stack_path: str, compose_file: str, action: str) -> dict:
     except Exception as e:
         duration_ms = int((time.time() - t0) * 1000)
         logger.error("Redeploy %s (%s): unexpected error — %s", os.path.basename(stack_path), action, e)
-        return {"status": "error", "duration_ms": duration_ms, "error": str(e)}
+        return {"status": "error", "duration_ms": duration_ms, "error": "Unexpected error during redeploy — check the log panel for details"}
 
 
 def redeploy_stacks(stacks: List[dict], stacks_root: str) -> dict:
