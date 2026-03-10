@@ -3572,3 +3572,83 @@ def _patch_original_env(
         return None, []
 
     return patched, changed_lines
+
+
+# ─── Step 8: Build Fix Plans ───
+
+def _build_fix_plans(
+    raw_compose_content: str,
+    compose_file: str,
+    conflicts: List[Conflict],
+    services: List[ServiceInfo],
+    pipeline_host_root: Optional[str] = None,
+) -> List[dict]:
+    """Build per-file fix plans from analysis results.
+
+    For single-file stacks, returns a list with 0 or 1 entries.
+    Each entry contains the corrected YAML for one compose file.
+
+    Returns empty list if no actionable fixes (Cat C/D only, no conflicts,
+    no raw content, or patching produces no changes).
+    """
+    if not conflicts or not raw_compose_content:
+        return []
+
+    cat_a = any(c.category == "A" for c in conflicts)
+    cat_b = any(c.category == "B" for c in conflicts)
+
+    if not cat_a and not cat_b:
+        return []
+
+    corrected = None
+    changed_lines: List[int] = []
+
+    if cat_a:
+        corrected, changed_lines = _patch_original_yaml(
+            raw_compose_content, conflicts, services,
+            host_root_override=pipeline_host_root,
+        )
+    if cat_b:
+        env_patched, env_changed = _patch_original_env(
+            corrected or raw_compose_content,
+            conflicts, services,
+        )
+        if env_patched:
+            corrected = env_patched
+            changed_lines.extend(env_changed)
+
+    if not corrected or not changed_lines:
+        return []
+
+    # Category label
+    category = "A+B" if (cat_a and cat_b) else ("A" if cat_a else "B")
+
+    # Which services in this file were affected
+    conflict_services = set()
+    for c in conflicts:
+        if c.category in ("A", "B"):
+            conflict_services.update(c.services)
+    file_services = [s.name for s in services if s.role in ("arr", "download_client", "media_server")]
+    changed_services = [s for s in file_services if s in conflict_services]
+    if not changed_services:
+        changed_services = list(conflict_services)[:5]
+
+    # Summary text
+    parts = []
+    if cat_a:
+        parts.append("volume mounts")
+    if cat_b:
+        parts.append("permissions")
+    svc_names = ", ".join(changed_services[:3])
+    if len(changed_services) > 3:
+        svc_names += f" (+{len(changed_services) - 3} more)"
+    change_summary = f"Fix {' and '.join(parts)} for {svc_names}" if svc_names else f"Fix {' and '.join(parts)}"
+
+    return [{
+        "compose_file_path": compose_file,
+        "corrected_yaml": corrected,
+        "changed_services": changed_services,
+        "change_summary": change_summary,
+        "category": category,
+        "changed_lines": changed_lines,
+    }]
