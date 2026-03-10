@@ -162,6 +162,44 @@ class RateLimiter:
 _rate_limiter = RateLimiter()
 
 
+# ─── SSE Connection Limiter ───
+# Caps per-IP concurrent SSE connections to prevent file descriptor exhaustion.
+# Unlike the rate limiter (requests-per-minute), this tracks *active* long-lived
+# connections. Thread-safe via a lock since connect/disconnect can race.
+
+class SSEConnectionLimiter:
+    """Per-IP concurrent SSE connection limiter."""
+
+    MAX_PER_IP = 5  # max concurrent SSE streams per client IP
+
+    def __init__(self):
+        self._connections: dict[str, int] = defaultdict(int)
+        self._lock = threading.Lock()
+
+    def try_connect(self, ip: str) -> bool:
+        """Attempt to register a new SSE connection. Returns False if at limit."""
+        with self._lock:
+            if self._connections[ip] >= self.MAX_PER_IP:
+                return False
+            self._connections[ip] += 1
+            return True
+
+    def disconnect(self, ip: str) -> None:
+        """Release an SSE connection slot."""
+        with self._lock:
+            self._connections[ip] = max(0, self._connections[ip] - 1)
+            if self._connections[ip] == 0:
+                del self._connections[ip]
+
+    def reset(self):
+        """Clear all state. Used by test fixtures."""
+        with self._lock:
+            self._connections.clear()
+
+
+_sse_limiter = SSEConnectionLimiter()
+
+
 # ─── Security: Path Validation ───
 # All endpoints that accept filesystem paths from the client MUST validate
 # that the resolved path is within the allowed stacks directory. This prevents
@@ -1220,14 +1258,28 @@ async def api_get_logs(limit: int = 100, level: str = "", since: float = 0):
 
 
 @app.get("/api/logs/stream")
-async def api_log_stream():
+async def api_log_stream(request: Request):
     """
     Server-Sent Events stream for live log entries.
 
     The frontend connects once and receives log entries as they happen.
     Used by the log panel for real-time updates and by the toast system
     for WARN/ERROR notifications.
+
+    Per-IP concurrent connection cap prevents file descriptor exhaustion
+    from runaway clients or browser tab accumulation.
     """
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Enforce per-IP SSE connection limit
+    if not _sse_limiter.try_connect(client_ip):
+        logger.warning("SSE connection rejected: %s at limit (%d)",
+                       client_ip, SSEConnectionLimiter.MAX_PER_IP)
+        return JSONResponse(
+            {"error": "Too many concurrent log streams"},
+            status_code=429,
+        )
+
     async def event_generator():
         queue: asyncio.Queue = asyncio.Queue(maxsize=100)
 
@@ -1239,7 +1291,7 @@ async def api_log_stream():
 
         handler = get_log_handler()
         handler.add_listener(on_log)
-        logger.info("Log stream: client connected (SSE)")
+        logger.info("Log stream: client connected (SSE) [%s]", client_ip)
         try:
             # Send initial keepalive
             yield "event: connected\ndata: {}\n\n"
@@ -1256,7 +1308,8 @@ async def api_log_stream():
             pass
         finally:
             handler.remove_listener(on_log)
-            logger.debug("Log stream: client disconnected")
+            _sse_limiter.disconnect(client_ip)
+            logger.debug("Log stream: client disconnected [%s]", client_ip)
 
     return StreamingResponse(
         event_generator(),
