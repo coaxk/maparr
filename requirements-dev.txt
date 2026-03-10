@@ -1,4 +1,6 @@
 # MapArr — Development / Testing dependencies
 -r requirements.txt
-pytest==7.4.3
-httpx==0.25.2
+pytest>=9.0.0
+pytest-cov>=7.0.0
+pytest-playwright>=0.6.2
+httpx>=0.28.0
