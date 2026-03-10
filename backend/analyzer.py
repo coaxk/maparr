@@ -618,6 +618,15 @@ def analyze_stack(
         if original_corrected_yaml:
             steps.append({"icon": "ok", "text": "Generated corrected version of your compose file"})
 
+    # Build fix_plans — per-file fix entries for multi-file apply
+    fix_plans = _build_fix_plans(
+        raw_compose_content=raw_compose_content or "",
+        compose_file=compose_file,
+        conflicts=conflicts,
+        services=services,
+        pipeline_host_root=pipeline_host_root,
+    )
+
     # Check for incomplete stack (has some media services but missing key roles)
     incomplete_stack = False
     has_arr = any(s.role == "arr" for s in services)
@@ -799,6 +808,7 @@ def analyze_stack(
         observations=observations,
         env_solution_yaml=env_solution_yaml,
         env_solution_changed_lines=env_solution_changed_lines,
+        fix_plans=fix_plans,
     )
 
 

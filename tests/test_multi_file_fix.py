@@ -132,3 +132,112 @@ class TestBuildFixPlans:
             pipeline_host_root=None,
         )
         assert plans == []
+
+
+class TestAnalyzeStackFixPlans:
+    def test_analyze_returns_fix_plans_for_broken_stack(self, tmp_path):
+        """analyze_stack() populates fix_plans for a stack with conflicts."""
+        compose_content = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: lscr.io/linuxserver/sonarr\n"
+            "    volumes:\n"
+            "      - /host/tv:/data/tv\n"
+            "  qbittorrent:\n"
+            "    image: lscr.io/linuxserver/qbittorrent\n"
+            "    volumes:\n"
+            "      - /host/downloads:/downloads\n"
+        )
+        compose_file = tmp_path / "docker-compose.yml"
+        compose_file.write_text(compose_content)
+
+        import yaml
+        resolved = yaml.safe_load(compose_content)
+        resolved["_compose_file"] = str(compose_file)
+        resolved["_resolution"] = "manual"
+
+        from backend.analyzer import analyze_stack
+        result = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path),
+            compose_file=str(compose_file),
+            resolution_method="manual",
+            raw_compose_content=compose_content,
+        )
+        d = result.to_dict()
+        assert d["conflict_count"] > 0, "Should detect mount conflicts"
+        assert "fix_plans" in d
+        assert len(d["fix_plans"]) >= 1, "Should have at least one fix plan"
+        plan = d["fix_plans"][0]
+        assert plan["compose_file_path"] == str(compose_file)
+        assert plan["corrected_yaml"], "Should have corrected YAML"
+        assert plan["category"] in ("A", "B", "A+B")
+        assert isinstance(plan["changed_services"], list)
+        assert isinstance(plan["changed_lines"], list)
+        assert plan["change_summary"]  # Not empty string
+
+    def test_analyze_healthy_empty_fix_plans(self, tmp_path):
+        """Healthy stack has empty fix_plans."""
+        compose_content = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: lscr.io/linuxserver/sonarr\n"
+            "    volumes:\n"
+            "      - /host/data:/data\n"
+            "  qbittorrent:\n"
+            "    image: lscr.io/linuxserver/qbittorrent\n"
+            "    volumes:\n"
+            "      - /host/data:/data\n"
+        )
+        compose_file = tmp_path / "docker-compose.yml"
+        compose_file.write_text(compose_content)
+
+        import yaml
+        resolved = yaml.safe_load(compose_content)
+        resolved["_compose_file"] = str(compose_file)
+        resolved["_resolution"] = "manual"
+
+        from backend.analyzer import analyze_stack
+        result = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path),
+            compose_file=str(compose_file),
+            resolution_method="manual",
+            raw_compose_content=compose_content,
+        )
+        d = result.to_dict()
+        assert d["fix_plans"] == [], "Healthy stack should have no fix plans"
+
+    def test_fix_plans_match_original_corrected_yaml(self, tmp_path):
+        """fix_plans[0].corrected_yaml should match original_corrected_yaml for single-file stacks."""
+        compose_content = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: lscr.io/linuxserver/sonarr\n"
+            "    volumes:\n"
+            "      - /host/tv:/data/tv\n"
+            "  qbittorrent:\n"
+            "    image: lscr.io/linuxserver/qbittorrent\n"
+            "    volumes:\n"
+            "      - /host/downloads:/downloads\n"
+        )
+        compose_file = tmp_path / "docker-compose.yml"
+        compose_file.write_text(compose_content)
+
+        import yaml
+        resolved = yaml.safe_load(compose_content)
+        resolved["_compose_file"] = str(compose_file)
+        resolved["_resolution"] = "manual"
+
+        from backend.analyzer import analyze_stack
+        result = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path),
+            compose_file=str(compose_file),
+            resolution_method="manual",
+            raw_compose_content=compose_content,
+        )
+        d = result.to_dict()
+        if d["fix_plans"] and d["original_corrected_yaml"]:
+            assert d["fix_plans"][0]["corrected_yaml"] == d["original_corrected_yaml"], \
+                "Single-file fix plan YAML should match original_corrected_yaml"
