@@ -619,13 +619,27 @@ def analyze_stack(
             steps.append({"icon": "ok", "text": "Generated corrected version of your compose file"})
 
     # Build fix_plans — per-file fix entries for multi-file apply
-    fix_plans = _build_fix_plans(
-        raw_compose_content=raw_compose_content or "",
-        compose_file=compose_file,
-        conflicts=conflicts,
-        services=services,
-        pipeline_host_root=pipeline_host_root,
-    )
+    if pipeline_context and raw_compose_content:
+        fix_plans = _build_fix_plans_multi(
+            stack_path=stack_path,
+            compose_file=compose_file,
+            raw_compose_content=raw_compose_content,
+            conflicts=conflicts,
+            services=services,
+            pipeline_context=pipeline_context,
+            pipeline_host_root=pipeline_host_root,
+            stacks_root=scan_dir,
+        )
+    elif raw_compose_content:
+        fix_plans = _build_fix_plans(
+            raw_compose_content=raw_compose_content,
+            compose_file=compose_file,
+            conflicts=conflicts,
+            services=services,
+            pipeline_host_root=pipeline_host_root,
+        )
+    else:
+        fix_plans = []
 
     # Check for incomplete stack (has some media services but missing key roles)
     incomplete_stack = False

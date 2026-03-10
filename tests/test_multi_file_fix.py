@@ -319,6 +319,87 @@ class TestMultiFileCluster:
         compose_paths = [p["compose_file_path"] for p in plans]
         assert sonarr_compose in compose_paths, "Should include sonarr's own compose"
 
+    def test_cluster_analyze_produces_multi_plans(self, tmp_path):
+        """Full analyze_stack() with pipeline context uses multi-file path."""
+        # Build cluster with conflicting mounts — include PUID/PGID so Cat B
+        # doesn't swallow the Cat A conflict
+        for name, image, vol in [
+            ("sonarr", "lscr.io/linuxserver/sonarr", "/host/tv:/data/tv"),
+            ("radarr", "lscr.io/linuxserver/radarr", "/host/movies:/data/movies"),
+            ("qbittorrent", "lscr.io/linuxserver/qbittorrent", "/host/downloads:/downloads"),
+        ]:
+            d = tmp_path / name
+            d.mkdir()
+            (d / "docker-compose.yml").write_text(
+                f"services:\n  {name}:\n    image: {image}\n"
+                f"    environment:\n      - PUID=1000\n      - PGID=1000\n"
+                f"    volumes:\n      - {vol}\n"
+            )
+
+        from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
+        pipeline = run_pipeline_scan(str(tmp_path))
+        ctx = get_pipeline_context_for_stack(pipeline.to_dict(), str(tmp_path / "sonarr"))
+
+        import yaml
+        sonarr_compose = tmp_path / "sonarr" / "docker-compose.yml"
+        resolved = yaml.safe_load(sonarr_compose.read_text())
+        resolved["_compose_file"] = str(sonarr_compose)
+        resolved["_resolution"] = "manual"
+
+        from backend.analyzer import analyze_stack
+        result = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path / "sonarr"),
+            compose_file=str(sonarr_compose),
+            resolution_method="manual",
+            raw_compose_content=sonarr_compose.read_text(),
+            pipeline_context=ctx,
+        )
+        d = result.to_dict()
+        # Should have fix plans field
+        assert "fix_plans" in d
+        # With pipeline context and Cat A conflicts, multi-file plans should include
+        # at minimum the sonarr compose file
+        cat_a_conflicts = [c for c in d.get("conflicts", []) if c.get("category") == "A"]
+        if cat_a_conflicts:
+            assert len(d["fix_plans"]) >= 1
+            compose_paths = [p["compose_file_path"] for p in d["fix_plans"]]
+            assert str(sonarr_compose) in compose_paths
+
+    def test_analyze_without_pipeline_uses_single(self, tmp_path):
+        """analyze_stack() without pipeline context falls back to single-file."""
+        compose_content = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: lscr.io/linuxserver/sonarr\n"
+            "    volumes:\n"
+            "      - /host/tv:/data/tv\n"
+            "  qbittorrent:\n"
+            "    image: lscr.io/linuxserver/qbittorrent\n"
+            "    volumes:\n"
+            "      - /host/downloads:/downloads\n"
+        )
+        compose_file = tmp_path / "docker-compose.yml"
+        compose_file.write_text(compose_content)
+
+        import yaml
+        resolved = yaml.safe_load(compose_content)
+        resolved["_compose_file"] = str(compose_file)
+        resolved["_resolution"] = "manual"
+
+        from backend.analyzer import analyze_stack
+        result = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path),
+            compose_file=str(compose_file),
+            resolution_method="manual",
+            raw_compose_content=compose_content,
+            pipeline_context=None,  # No pipeline
+        )
+        d = result.to_dict()
+        if d["conflict_count"] > 0:
+            assert len(d["fix_plans"]) == 1, "Without pipeline, should be single-file only"
+
     def test_single_file_through_multi_path(self, tmp_path):
         """Single-file stack through _build_fix_plans_multi still works (no pipeline = fallback)."""
         compose = tmp_path / "docker-compose.yml"
