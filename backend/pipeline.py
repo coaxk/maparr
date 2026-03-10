@@ -188,44 +188,65 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
             continue
 
         compose_file = _find_compose_file(str(entry))
-        if not compose_file:
-            dirs_checked += 1
-            continue
 
-        stacks_scanned += 1
+        if compose_file:
+            # Normal stack: compose file at this level
+            compose_files_to_scan = [(entry, compose_file)]
+        else:
+            # No compose at this level — check for cluster layout
+            # (one service per subfolder, e.g. Dockhand/Portainer/DockSTARTer)
+            compose_files_to_scan = []
+            try:
+                for sub_entry in sorted(entry.iterdir()):
+                    if not sub_entry.is_dir() or sub_entry.name.startswith("."):
+                        continue
+                    sub_compose = _find_compose_file(str(sub_entry))
+                    if sub_compose:
+                        compose_files_to_scan.append((sub_entry, sub_compose))
+            except PermissionError:
+                logger.debug("Pipeline: permission denied scanning cluster %s", entry.name)
+
+            if not compose_files_to_scan:
+                dirs_checked += 1
+                continue
+            logger.info("Pipeline: cluster layout detected in %s (%d compose files)",
+                       entry.name, len(compose_files_to_scan))
+
+        stacks_scanned += len(compose_files_to_scan)
         dirs_checked += 1
 
-        # Parse this stack's media services (lightweight YAML only)
-        parsed = _parse_sibling_services(compose_file)
-        for svc_name, svc_info in parsed.items():
-            svc_image = svc_info.get("image", "")
-            classification = registry.classify(svc_name, svc_image)
-            all_services.append(PipelineService(
-                stack_path=str(entry),
-                stack_name=entry.name,
-                service_name=svc_name,
-                role=svc_info["role"],
-                host_sources=svc_info["host_sources"],
-                compose_file=compose_file,
-                volume_mounts=svc_info.get("volume_mounts", []),
-                image=svc_image,
-                family_name=classification.get("family_name") or "",
-                environment=svc_info.get("environment", {}),
-                compose_user=svc_info.get("compose_user"),
-            ))
-            logger.debug("Pipeline: %s/%s → role=%s, mounts=%s",
-                        entry.name, svc_name, svc_info["role"],
-                        sorted(svc_info["host_sources"]) if svc_info["host_sources"] else "none")
+        for svc_entry, svc_compose in compose_files_to_scan:
+            # Parse this stack's media services (lightweight YAML only)
+            parsed = _parse_sibling_services(svc_compose)
+            for svc_name, svc_info in parsed.items():
+                svc_image = svc_info.get("image", "")
+                classification = registry.classify(svc_name, svc_image)
+                all_services.append(PipelineService(
+                    stack_path=str(svc_entry),
+                    stack_name=svc_entry.name,
+                    service_name=svc_name,
+                    role=svc_info["role"],
+                    host_sources=svc_info["host_sources"],
+                    compose_file=svc_compose,
+                    volume_mounts=svc_info.get("volume_mounts", []),
+                    image=svc_image,
+                    family_name=classification.get("family_name") or "",
+                    environment=svc_info.get("environment", {}),
+                    compose_user=svc_info.get("compose_user"),
+                ))
+                logger.debug("Pipeline: %s/%s → role=%s, mounts=%s",
+                            svc_entry.name, svc_name, svc_info["role"],
+                            sorted(svc_info["host_sources"]) if svc_info["host_sources"] else "none")
 
-        # Track stacks with no media services for dashboard visibility
-        if not parsed:
-            svc_names = _list_service_names(compose_file)
-            if svc_names:
-                non_media_stacks.append({
-                    "name": entry.name,
-                    "path": str(entry),
-                    "services": svc_names,
-                })
+            # Track stacks with no media services for dashboard visibility
+            if not parsed:
+                svc_names = _list_service_names(svc_compose)
+                if svc_names:
+                    non_media_stacks.append({
+                        "name": svc_entry.name,
+                        "path": str(svc_entry),
+                        "services": svc_names,
+                    })
 
     result.stacks_scanned = stacks_scanned
     result.media_services = all_services
