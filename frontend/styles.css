@@ -3746,6 +3746,53 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     white-space: nowrap;
 }
 
+/* ─── Non-media stacks (pipeline dashboard bottom) ─── */
+
+.non-media-stacks-section {
+    margin-top: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    background: var(--bg-secondary);
+}
+
+.non-media-header {
+    color: var(--text-muted) !important;
+    border-left-color: var(--text-muted) !important;
+}
+
+.non-media-stacks-note {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0.25rem 0 0.75rem 0;
+    line-height: 1.5;
+}
+
+.non-media-stacks-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.non-media-stack-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.6rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.non-media-stack-count {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-left: 0.15rem;
+}
+
 /* ─── Service Detail Panel (accordion) ─── */
 
 .service-detail-panel {
@@ -4568,4 +4615,11 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 .observations-footer a:hover {
     text-decoration: underline;
+}
+
+.fix-plan-summary {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-left: 0.5rem;
+    font-style: italic;
 }

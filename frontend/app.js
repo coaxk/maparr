@@ -490,6 +490,7 @@ function renderDashboard() {
     renderConflictSummary(conflicts);
     renderConflictCards(conflicts);
     renderServiceGroups(state.servicesByRole);
+    renderNonMediaStacks(state.pipeline.non_media_stacks || []);
     enablePasteBar();
     show("pipeline-dashboard");
     hideAnalysisCards();
@@ -701,6 +702,64 @@ function renderServiceGroups(servicesByRole) {
     }
 }
 
+function renderNonMediaStacks(stacks) {
+    const container = document.getElementById("service-groups");
+    if (!container || stacks.length === 0) return;
+
+    const section = document.createElement("div");
+    section.className = "non-media-stacks-section";
+
+    const header = document.createElement("div");
+    header.className = "service-group-header non-media-header";
+    header.textContent = "Other Stacks (" + stacks.length + ")";
+    header.setAttribute("data-tooltip",
+        "Stacks without media services — not analyzed for path conflicts but shown for awareness");
+    section.appendChild(header);
+
+    const note = document.createElement("p");
+    note.className = "non-media-stacks-note";
+    note.textContent =
+        "These stacks don\u2019t contain arr apps, download clients, or media servers, " +
+        "so they\u2019re not part of the media pipeline analysis.";
+    section.appendChild(note);
+
+    const list = document.createElement("div");
+    list.className = "non-media-stacks-list";
+
+    for (const stack of stacks) {
+        const chip = document.createElement("div");
+        chip.className = "non-media-stack-chip";
+
+        // Use first service name for icon, fall back to stack name
+        const iconName = (stack.services && stack.services[0]) || stack.name;
+        const icon = document.createElement("img");
+        icon.className = "service-icon";
+        icon.src = getServiceIconUrl(iconName);
+        icon.alt = "";
+        icon.width = 16;
+        icon.height = 16;
+        icon.loading = "lazy";
+        chip.appendChild(icon);
+
+        const name = document.createElement("span");
+        name.textContent = stack.name;
+        chip.appendChild(name);
+
+        if (stack.services && stack.services.length > 1) {
+            const count = document.createElement("span");
+            count.className = "non-media-stack-count";
+            count.textContent = stack.services.length + " svc";
+            chip.appendChild(count);
+        }
+
+        chip.title = (stack.services || []).join(", ");
+        list.appendChild(chip);
+    }
+
+    section.appendChild(list);
+    container.appendChild(section);
+}
+
 // Map service names to bundled icon filenames.
 // Icons sourced from dashboard-icons (CC-BY-4.0). Services without a
 // dedicated icon get the generic fallback.
@@ -710,23 +769,43 @@ const SERVICE_ICONS = {
     readarr: "readarr", prowlarr: "prowlarr", bazarr: "bazarr",
     whisparr: "whisparr", recyclarr: "recyclarr", notifiarr: "notifiarr",
     requestrr: "requestrr", doplarr: "doplarr", autobrr: "autobrr",
+    kapowarr: "kapowarr", lazylibrarian: "lazylibrarian.png",
+    mylar3: "mylar3.png", mylar: "mylar3.png",
     // Download clients
     qbittorrent: "qbittorrent", deluge: "deluge", transmission: "transmission",
     sabnzbd: "sabnzbd", nzbget: "nzbget", flood: "flood",
+    jdownloader: "jdownloader", jdownloader2: "jdownloader", jd2: "jdownloader",
+    aria2: "aria2", ariang: "aria2",
+    pyload: "pyload", "pyload-ng": "pyload",
+    rdtclient: "rdtclient", "rdt-client": "rdtclient",
+    decypharr: "decypharr.png", blackhole: "decypharr.png",
+    vuze: "vuze.png", biglybt: "vuze.png",
+    zurg: "zurg",
     rutorrent: "rutorrent", nzbhydra2: "nzbhydra2", jackett: "jackett",
     // Media servers & players
     plex: "plex", jellyfin: "jellyfin", emby: "emby",
-    overseerr: "overseerr", jellyseerr: "jellyseerr", ombi: "ombi",
+    overseerr: "overseerr", jellyseerr: "jellyseerr", seerr: "seerr", ombi: "ombi",
+    recommendarr: "recommendarr",
     tautulli: "tautulli", navidrome: "navidrome", funkwhale: "funkwhale",
     audiobookshelf: "audiobookshelf", stash: "stash", kavita: "kavita",
-    // Media tools
+    // Media tools & subtitle services
     filebot: "filebot", handbrake: "handbrake", metube: "metube",
+    tdarr: "tdarr.png", unmanic: "unmanic.png",
+    "cross-seed": "cross-seed", crossseed: "cross-seed",
+    subgen: "subgen.png", subgentest: "subgentest.png",
+    subsyncarrplus: "subsyncarrplus", "subsyncarr-plus": "subsyncarrplus",
+    suggestarr: "suggestarr.ico", huntarr: "huntarr.png",
+    agregarr: "agregarr", imageprotector: "imageprotector",
+    kometa: "kometa", "plex-meta-manager": "kometa",
+    organizr: "organizr", makemkv: "makemkv",
+    tubearchivist: "tubearchivist", "tube-archivist": "tubearchivist",
+    termix: "termix",
     // Photo & documents
     immich: "immich", photoprism: "photoprism",
     "paperless-ngx": "paperless-ngx", "stirling-pdf": "stirling-pdf",
     "calibre-web": "calibre-web",
     // Networking & reverse proxy
-    nginx: "nginx", traefik: "traefik", caddy: "caddy",
+    nginx: "nginx", traefik: "traefik", caddy: "caddy", swag: "swag",
     "nginx-proxy-manager": "nginx-proxy-manager",
     wireguard: "wireguard", tailscale: "tailscale", gluetun: "gluetun",
     flaresolverr: "flaresolverr", cloudflare: "cloudflare",
@@ -740,7 +819,8 @@ const SERVICE_ICONS = {
     // Monitoring & logging
     grafana: "grafana", prometheus: "prometheus", "uptime-kuma": "uptime-kuma",
     loki: "loki", netdata: "netdata", vector: "vector",
-    glances: "glances", dozzle: "dozzle", scrutiny: "scrutiny",
+    glances: "glances", dozzle: "dozzle", scrutiny: "scrutiny", seq: "seq",
+    meshmonitor: "meshmonitor",
     healthchecks: "healthchecks", librespeed: "librespeed",
     plausible: "plausible", umami: "umami", matomo: "matomo",
     gatus: "gatus", openspeedtest: "openspeedtest", netbox: "netbox",
@@ -750,6 +830,7 @@ const SERVICE_ICONS = {
     bitwarden: "bitwarden", vault: "vault", consul: "consul",
     // Docker management
     portainer: "portainer", watchtower: "watchtower", dockge: "dockge",
+    dockhand: "dockhand", socketproxy: "socketproxy", "docker-socket-proxy": "socketproxy",
     // Backup & sync
     backrest: "backrest", duplicati: "duplicati", syncthing: "syncthing",
     "resilio-sync": "resilio-sync",
@@ -763,7 +844,7 @@ const SERVICE_ICONS = {
     privatebin: "privatebin", drawio: "drawio", etherpad: "etherpad",
     // Notifications & messaging
     gotify: "gotify", ntfy: "ntfy", mosquitto: "mosquitto",
-    signal: "signal", mattermost: "mattermost",
+    signal: "signal", signalapi: "signalapi", mattermost: "mattermost",
     discord: "discord", slack: "slack",
     rocketchat: "rocketchat", element: "element", matrix: "matrix",
     // Automation & CI/CD
@@ -791,10 +872,11 @@ const SERVICE_ICONS = {
 function getServiceIconUrl(serviceName) {
     const lower = (serviceName || "").toLowerCase();
     const match = SERVICE_ICONS[lower];
-    if (match) return "/static/img/services/" + match + ".svg";
+    if (match) return "/static/img/services/" + match + (match.includes(".") ? "" : ".svg");
     // Check partial matches (e.g. "nzbhydra" matches "nzbhydra2")
     for (const [key, file] of Object.entries(SERVICE_ICONS)) {
-        if (lower.includes(key) || key.includes(lower)) return "/static/img/services/" + file + ".svg";
+        if (lower.includes(key) || key.includes(lower))
+            return "/static/img/services/" + file + (file.includes(".") ? "" : ".svg");
     }
     return "/static/img/services/generic.svg";
 }
@@ -1213,7 +1295,28 @@ function scrollToConflict(index) {
 // ─── Fix Plans ───
 
 async function generateFixPlans(conflicts) {
-    // Collect unique stack paths from conflicts
+    // Prefer fix_plans from analysis response (multi-file aware)
+    if (state.analysis && state.analysis.fix_plans && state.analysis.fix_plans.length > 0) {
+        const plans = {};
+        for (const plan of state.analysis.fix_plans) {
+            plans[plan.compose_file_path] = {
+                compose_file_path: plan.compose_file_path,
+                original_corrected_yaml: plan.corrected_yaml,
+                original_changed_lines: plan.changed_lines || [],
+                stack_name: plan.compose_file_path.replace(/\\/g, "/").split("/").slice(-2, -1)[0] || "",
+                changed_services: plan.changed_services || [],
+                change_summary: plan.change_summary || "",
+                category: plan.category || "A",
+            };
+        }
+        state.fixPlans = plans;
+        for (let i = 0; i < conflicts.length; i++) {
+            renderFixPlan(i, plans);
+        }
+        return;
+    }
+
+    // Fallback: per-stack analysis approach
     const stackPaths = new Set();
     for (const conflict of conflicts) {
         for (const svc of state.services) {
@@ -1283,8 +1386,15 @@ function renderFixPlan(conflictIndex, plans) {
 
         const label = document.createElement("span");
         label.className = "fix-plan-label";
-        label.textContent = plan.stack_name + "/docker-compose.yml";
+        label.textContent = plan.stack_name + "/" + (plan.compose_file_path.replace(/\\/g, "/").split("/").pop() || "docker-compose.yml");
         row.appendChild(label);
+
+        if (plan.change_summary) {
+            const summary = document.createElement("span");
+            summary.className = "fix-plan-summary";
+            summary.textContent = plan.change_summary;
+            row.appendChild(summary);
+        }
 
         if (plan.original_changed_lines.length > 0) {
             const changes = document.createElement("span");
@@ -1318,7 +1428,7 @@ function renderFixPlan(conflictIndex, plans) {
     if (fixableCount > 1) {
         const applyAll = document.createElement("button");
         applyAll.className = "btn btn-primary fix-plan-apply-all";
-        applyAll.textContent = "Apply All Changes (" + fixableCount + " files)";
+        applyAll.textContent = fixableCount === 1 ? "Apply Fix" : "Apply All Fixes (" + fixableCount + " files)";
         applyAll.addEventListener("click", () => applyAllFixes(plans));
         container.appendChild(applyAll);
     }
@@ -1355,20 +1465,24 @@ function toggleFixPreview(row, plan) {
 
 async function applySingleFix(plan) {
     try {
-        const resp = await fetch("/api/apply-fix", {
+        const resp = await fetch("/api/apply-fixes", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                compose_file_path: plan.compose_file_path,
-                corrected_yaml: plan.original_corrected_yaml,
+                fixes: [{
+                    compose_file_path: plan.compose_file_path,
+                    corrected_yaml: plan.original_corrected_yaml,
+                }],
             }),
         });
         const data = await resp.json();
         if (data.status === "applied") {
             markFixApplied(plan.compose_file_path);
-            showSimpleToast("Fixed " + plan.stack_name + "/docker-compose.yml", "success");
+            const fileName = plan.compose_file_path.replace(/\\/g, "/").split("/").pop() || "compose file";
+            showSimpleToast("Fixed " + plan.stack_name + "/" + fileName, "success");
         } else {
-            showSimpleToast("Failed: " + (data.error || "unknown error"), "error");
+            const errMsg = (data.errors && data.errors[0]) ? data.errors[0].error : "unknown error";
+            showSimpleToast("Failed: " + errMsg, "error");
         }
     } catch (e) {
         showSimpleToast("Apply failed: " + e.message, "error");
@@ -1397,7 +1511,18 @@ async function applyAllFixes(plans) {
             for (const r of data.results) {
                 markFixApplied(r.compose_file_path);
             }
-            showSimpleToast("All " + data.applied_count + " files fixed", "success");
+            showSimpleToast("All " + data.applied_count + " files fixed — rescanning...", "success");
+            // Trigger pipeline rescan
+            try {
+                await fetch("/api/pipeline-scan", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({}),
+                    signal: AbortSignal.timeout(30000),
+                });
+            } catch (e) {
+                // Rescan failed silently — user can refresh
+            }
             showRedeployPrompt(fixes);
         } else if (data.status === "partial") {
             for (const r of (data.results || [])) {
