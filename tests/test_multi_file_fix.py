@@ -430,3 +430,119 @@ class TestMultiFileCluster:
         )
         assert len(plans) == 1
         assert plans[0]["compose_file_path"] == str(compose)
+
+
+class TestPastePathwayParity:
+    def test_both_pathways_same_fix_plans(self, tmp_path):
+        """Browse and Paste pathways produce identical fix_plans for same stack."""
+        compose_content = (
+            "services:\n"
+            "  sonarr:\n"
+            "    image: lscr.io/linuxserver/sonarr\n"
+            "    volumes:\n"
+            "      - /host/tv:/data/tv\n"
+            "  qbittorrent:\n"
+            "    image: lscr.io/linuxserver/qbittorrent\n"
+            "    volumes:\n"
+            "      - /host/downloads:/downloads\n"
+        )
+        compose_file = tmp_path / "docker-compose.yml"
+        compose_file.write_text(compose_content)
+
+        import yaml
+        resolved = yaml.safe_load(compose_content)
+        resolved["_compose_file"] = str(compose_file)
+        resolved["_resolution"] = "manual"
+
+        from backend.analyzer import analyze_stack
+
+        # Browse pathway: no error context
+        browse_result = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path),
+            compose_file=str(compose_file),
+            resolution_method="manual",
+            raw_compose_content=compose_content,
+        )
+
+        # Paste pathway: with error context (service + path from parsed error)
+        paste_result = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path),
+            compose_file=str(compose_file),
+            resolution_method="manual",
+            error_service="sonarr",
+            error_path="/data/tv/some/file.mkv",
+            raw_compose_content=compose_content,
+        )
+
+        browse_plans = browse_result.to_dict()["fix_plans"]
+        paste_plans = paste_result.to_dict()["fix_plans"]
+
+        # Both should have the same number of plans
+        assert len(browse_plans) == len(paste_plans), \
+            f"Browse produced {len(browse_plans)} plans, Paste produced {len(paste_plans)}"
+
+        # Each plan should have identical content
+        for bp, pp in zip(browse_plans, paste_plans):
+            assert bp["compose_file_path"] == pp["compose_file_path"], \
+                "File paths differ between pathways"
+            assert bp["corrected_yaml"] == pp["corrected_yaml"], \
+                "Corrected YAML differs between pathways"
+            assert bp["category"] == pp["category"], \
+                "Categories differ between pathways"
+            assert bp["changed_services"] == pp["changed_services"], \
+                "Changed services differ between pathways"
+
+    def test_paste_with_pipeline_same_as_browse(self, tmp_path):
+        """With pipeline context, both pathways still produce identical plans."""
+        for name, image, vol in [
+            ("sonarr", "lscr.io/linuxserver/sonarr", "/host/tv:/data/tv"),
+            ("qbittorrent", "lscr.io/linuxserver/qbittorrent", "/host/downloads:/downloads"),
+        ]:
+            d = tmp_path / name
+            d.mkdir()
+            (d / "docker-compose.yml").write_text(
+                f"services:\n  {name}:\n    image: {image}\n    volumes:\n      - {vol}\n"
+            )
+
+        from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
+        pipeline = run_pipeline_scan(str(tmp_path))
+        ctx = get_pipeline_context_for_stack(pipeline.to_dict(), str(tmp_path / "sonarr"))
+
+        import yaml
+        sonarr_compose = tmp_path / "sonarr" / "docker-compose.yml"
+        resolved = yaml.safe_load(sonarr_compose.read_text())
+        resolved["_compose_file"] = str(sonarr_compose)
+        resolved["_resolution"] = "manual"
+
+        from backend.analyzer import analyze_stack
+
+        browse = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path / "sonarr"),
+            compose_file=str(sonarr_compose),
+            resolution_method="manual",
+            raw_compose_content=sonarr_compose.read_text(),
+            pipeline_context=ctx,
+        )
+
+        paste = analyze_stack(
+            resolved_compose=resolved,
+            stack_path=str(tmp_path / "sonarr"),
+            compose_file=str(sonarr_compose),
+            resolution_method="manual",
+            error_service="sonarr",
+            error_path="/data/tv/some/file.mkv",
+            raw_compose_content=sonarr_compose.read_text(),
+            pipeline_context=ctx,
+        )
+
+        b_plans = browse.to_dict()["fix_plans"]
+        p_plans = paste.to_dict()["fix_plans"]
+
+        assert len(b_plans) == len(p_plans), \
+            f"Pipeline: Browse={len(b_plans)} plans, Paste={len(p_plans)} plans"
+        for bp, pp in zip(b_plans, p_plans):
+            assert bp["compose_file_path"] == pp["compose_file_path"]
+            assert bp["corrected_yaml"] == pp["corrected_yaml"]
