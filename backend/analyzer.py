@@ -3662,3 +3662,79 @@ def _build_fix_plans(
         "category": category,
         "changed_lines": changed_lines,
     }]
+
+
+def _build_fix_plans_multi(
+    stack_path: str,
+    compose_file: str,
+    raw_compose_content: str,
+    conflicts: List[Conflict],
+    services: List[ServiceInfo],
+    pipeline_context: Optional[Dict] = None,
+    pipeline_host_root: Optional[str] = None,
+    stacks_root: Optional[str] = None,
+) -> List[dict]:
+    """Build fix plans across multiple compose files for cluster layouts.
+
+    For cluster layouts (one service per folder), reads each sibling's compose
+    file from the pipeline context and generates per-file patches.
+    Falls back to single-file _build_fix_plans() when no pipeline context.
+    """
+    # Start with the current stack's own fix plans
+    own_plans = _build_fix_plans(
+        raw_compose_content=raw_compose_content,
+        compose_file=compose_file,
+        conflicts=conflicts,
+        services=services,
+        pipeline_host_root=pipeline_host_root,
+    )
+
+    if not pipeline_context:
+        return own_plans
+
+    # Get siblings from pipeline context
+    sibling_services = pipeline_context.get("sibling_services", [])
+    if not sibling_services:
+        return own_plans
+
+    all_plans = list(own_plans)
+    seen_files = {compose_file}
+
+    for sib in sibling_services:
+        sib_compose = sib.get("compose_file_full", "")
+        if not sib_compose or sib_compose in seen_files:
+            continue
+        seen_files.add(sib_compose)
+
+        # Read sibling's raw compose content
+        try:
+            with open(sib_compose, "r", encoding="utf-8") as f:
+                sib_content = f.read()
+        except Exception:
+            continue
+
+        # Parse to get services
+        try:
+            sib_resolved = yaml.safe_load(sib_content)
+            if not isinstance(sib_resolved, dict) or "services" not in sib_resolved:
+                continue
+        except Exception:
+            continue
+
+        # Extract and classify sibling services
+        sib_services = _extract_services(sib_resolved)
+        media_sibs = [s for s in sib_services if s.role in ("arr", "download_client", "media_server")]
+        if not media_sibs:
+            continue
+
+        # Generate fix plans for this sibling file
+        sib_plans = _build_fix_plans(
+            raw_compose_content=sib_content,
+            compose_file=sib_compose,
+            conflicts=conflicts,
+            services=sib_services,
+            pipeline_host_root=pipeline_host_root,
+        )
+        all_plans.extend(sib_plans)
+
+    return all_plans

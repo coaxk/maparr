@@ -241,3 +241,111 @@ class TestAnalyzeStackFixPlans:
         if d["fix_plans"] and d["original_corrected_yaml"]:
             assert d["fix_plans"][0]["corrected_yaml"] == d["original_corrected_yaml"], \
                 "Single-file fix plan YAML should match original_corrected_yaml"
+
+
+class TestMultiFileCluster:
+    def test_cluster_layout_produces_multi_plans(self, tmp_path):
+        """Cluster layout with 3 services in 3 folders produces plans for files that need fixing."""
+        for name, image, vol in [
+            ("sonarr", "lscr.io/linuxserver/sonarr", "/host/tv:/data/tv"),
+            ("radarr", "lscr.io/linuxserver/radarr", "/host/movies:/data/movies"),
+            ("qbittorrent", "lscr.io/linuxserver/qbittorrent", "/host/downloads:/downloads"),
+        ]:
+            d = tmp_path / name
+            d.mkdir()
+            (d / "docker-compose.yml").write_text(
+                f"services:\n  {name}:\n    image: {image}\n    volumes:\n      - {vol}\n"
+            )
+
+        from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
+        pipeline_result = run_pipeline_scan(str(tmp_path))
+        pipeline_dict = pipeline_result.to_dict()
+
+        # Should have 3 media services
+        assert len(pipeline_result.media_services) == 3
+
+        # Get context for sonarr stack
+        sonarr_ctx = get_pipeline_context_for_stack(pipeline_dict, str(tmp_path / "sonarr"))
+        assert sonarr_ctx is not None
+        # Should have siblings
+        siblings = sonarr_ctx.get("sibling_services", [])
+        assert len(siblings) >= 1
+
+        # Verify full compose path is available in sibling data
+        for sib in siblings:
+            assert "compose_file_full" in sib, f"Sibling {sib.get('service_name')} missing compose_file_full"
+            assert sib["compose_file_full"].endswith("docker-compose.yml")
+
+    def test_build_multi_reads_siblings(self, tmp_path):
+        """_build_fix_plans_multi generates plans for sibling compose files."""
+        # Create cluster with conflicting mounts
+        for name, image, vol in [
+            ("sonarr", "lscr.io/linuxserver/sonarr", "/host/tv:/data/tv"),
+            ("qbittorrent", "lscr.io/linuxserver/qbittorrent", "/host/downloads:/downloads"),
+        ]:
+            d = tmp_path / name
+            d.mkdir()
+            (d / "docker-compose.yml").write_text(
+                f"services:\n  {name}:\n    image: {image}\n    volumes:\n      - {vol}\n"
+            )
+
+        from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
+        from backend.analyzer import _build_fix_plans_multi
+
+        pipeline = run_pipeline_scan(str(tmp_path))
+        ctx = get_pipeline_context_for_stack(pipeline.to_dict(), str(tmp_path / "sonarr"))
+
+        sonarr_compose = str(tmp_path / "sonarr" / "docker-compose.yml")
+        sonarr_content = open(sonarr_compose).read()
+
+        plans = _build_fix_plans_multi(
+            stack_path=str(tmp_path / "sonarr"),
+            compose_file=sonarr_compose,
+            raw_compose_content=sonarr_content,
+            conflicts=[Conflict(
+                conflict_type="no_shared_mount", severity="high",
+                services=["sonarr", "qbittorrent"], description="No shared mount",
+            )],
+            services=[ServiceInfo(
+                name="sonarr", image="lscr.io/linuxserver/sonarr", role="arr", volumes=[],
+            )],
+            pipeline_context=ctx,
+            pipeline_host_root="/data",
+            stacks_root=str(tmp_path),
+        )
+
+        # Should have plans for multiple files
+        assert len(plans) >= 1
+        compose_paths = [p["compose_file_path"] for p in plans]
+        assert sonarr_compose in compose_paths, "Should include sonarr's own compose"
+
+    def test_single_file_through_multi_path(self, tmp_path):
+        """Single-file stack through _build_fix_plans_multi still works (no pipeline = fallback)."""
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text(
+            "services:\n"
+            "  sonarr:\n"
+            "    image: lscr.io/linuxserver/sonarr\n"
+            "    volumes:\n      - /host/tv:/data/tv\n"
+            "  qbittorrent:\n"
+            "    image: lscr.io/linuxserver/qbittorrent\n"
+            "    volumes:\n      - /host/downloads:/downloads\n"
+        )
+        from backend.analyzer import _build_fix_plans_multi
+        plans = _build_fix_plans_multi(
+            stack_path=str(tmp_path),
+            compose_file=str(compose),
+            raw_compose_content=compose.read_text(),
+            conflicts=[Conflict(
+                conflict_type="no_shared_mount", severity="high",
+                services=["sonarr", "qbittorrent"], description="No shared mount",
+            )],
+            services=[
+                ServiceInfo(name="sonarr", image="lscr.io/linuxserver/sonarr", role="arr", volumes=[]),
+                ServiceInfo(name="qbittorrent", image="lscr.io/linuxserver/qbittorrent", role="download_client", volumes=[]),
+            ],
+            pipeline_context=None,  # No pipeline = single file fallback
+            pipeline_host_root="/data",
+        )
+        assert len(plans) == 1
+        assert plans[0]["compose_file_path"] == str(compose)

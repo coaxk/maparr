@@ -60,6 +60,7 @@ class PipelineService:
             "role": self.role,
             "host_sources": sorted(self.host_sources),
             "compose_file": os.path.basename(self.compose_file),
+            "compose_file_full": self.compose_file,  # Full path for multi-file fix plans
             "volume_mounts": self.volume_mounts,
             "image": self.image,
             "family_name": self.family_name,
@@ -75,6 +76,7 @@ class PipelineResult:
     scanned_at: float                                    # Unix timestamp
     stacks_scanned: int
     media_services: List[PipelineService] = field(default_factory=list)
+    non_media_stacks: List[dict] = field(default_factory=list)  # [{name, path, services}]
 
     # Aggregated analysis
     roles_present: Set[str] = field(default_factory=set)
@@ -108,10 +110,26 @@ class PipelineResult:
                 role: [s.to_dict() for s in svcs]
                 for role, svcs in self.services_by_role.items()
             },
+            "non_media_stacks": self.non_media_stacks,
             "health": self.health,
             "summary": self.summary,
             "steps": self.steps,
         }
+
+
+# ─── Helpers ───
+
+def _list_service_names(compose_file: str) -> List[str]:
+    """Return service names from a compose file without full parsing."""
+    try:
+        import yaml
+        with open(compose_file, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if isinstance(data, dict) and isinstance(data.get("services"), dict):
+            return sorted(data["services"].keys())
+    except Exception:
+        pass
+    return []
 
 
 # ─── Core Function ───
@@ -151,6 +169,7 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
     # Iterate all subdirectories
     registry = get_registry()
     all_services: List[PipelineService] = []
+    non_media_stacks: List[dict] = []
     stacks_scanned = 0
 
     try:
@@ -198,8 +217,19 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
                         entry.name, svc_name, svc_info["role"],
                         sorted(svc_info["host_sources"]) if svc_info["host_sources"] else "none")
 
+        # Track stacks with no media services for dashboard visibility
+        if not parsed:
+            svc_names = _list_service_names(compose_file)
+            if svc_names:
+                non_media_stacks.append({
+                    "name": entry.name,
+                    "path": str(entry),
+                    "services": svc_names,
+                })
+
     result.stacks_scanned = stacks_scanned
     result.media_services = all_services
+    result.non_media_stacks = sorted(non_media_stacks, key=lambda s: s["name"])
 
     scan_elapsed = time.time() - result.scanned_at
     logger.info("Pipeline scan: %d dirs checked, %d stacks with compose, %d media services (%.2fs)",
