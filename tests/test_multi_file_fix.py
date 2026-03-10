@@ -182,10 +182,16 @@ class TestAnalyzeStackFixPlans:
             "services:\n"
             "  sonarr:\n"
             "    image: lscr.io/linuxserver/sonarr\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
             "    volumes:\n"
             "      - /host/data:/data\n"
             "  qbittorrent:\n"
             "    image: lscr.io/linuxserver/qbittorrent\n"
+            "    environment:\n"
+            "      - PUID=1000\n"
+            "      - PGID=1000\n"
             "    volumes:\n"
             "      - /host/data:/data\n"
         )
@@ -239,8 +245,15 @@ class TestAnalyzeStackFixPlans:
         )
         d = result.to_dict()
         if d["fix_plans"] and d["original_corrected_yaml"]:
-            assert d["fix_plans"][0]["corrected_yaml"] == d["original_corrected_yaml"], \
-                "Single-file fix plan YAML should match original_corrected_yaml"
+            # The A+B combined plan should match original_corrected_yaml
+            combined = [p for p in d["fix_plans"] if p["category"] == "A+B"]
+            if combined:
+                assert combined[0]["corrected_yaml"] == d["original_corrected_yaml"], \
+                    "Combined A+B fix plan YAML should match original_corrected_yaml"
+            else:
+                # Single-category only — first plan should match
+                assert d["fix_plans"][0]["corrected_yaml"] == d["original_corrected_yaml"], \
+                    "Single-category fix plan YAML should match original_corrected_yaml"
 
 
 class TestMultiFileCluster:
@@ -398,7 +411,11 @@ class TestMultiFileCluster:
         )
         d = result.to_dict()
         if d["conflict_count"] > 0:
-            assert len(d["fix_plans"]) == 1, "Without pipeline, should be single-file only"
+            # Without pipeline, all plans should reference the same single file.
+            # May have up to 3 plans (A, B, A+B) but all for one compose file.
+            files = set(p["compose_file_path"] for p in d["fix_plans"])
+            assert len(files) == 1, \
+                f"Without pipeline, should reference single file only, got: {files}"
 
     def test_single_file_through_multi_path(self, tmp_path):
         """Single-file stack through _build_fix_plans_multi still works (no pipeline = fallback)."""

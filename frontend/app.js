@@ -51,6 +51,12 @@ const state = {
     lastAnalyzed: {},
 };
 
+// [2026-03-10 13:00] HI-1: Reduced motion support — gates smooth scroll and animations
+const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function smoothScrollOpts(block = "nearest") {
+    return { behavior: prefersReducedMotion ? "auto" : "smooth", block };
+}
+
 // ─── Conflict Handrails — plain-English explanations for each conflict type ───
 // Voice: knowledgeable friend explaining the root cause simply.
 const CONFLICT_HANDRAILS = {
@@ -477,6 +483,7 @@ async function runPipelineScan() {
         }
 
         state.scanning = false;
+        state._lastPipelineScan = Date.now(); // [2026-03-10] Rank 21: track scan timestamp
         renderDashboard();
 
     } catch (err) {
@@ -519,6 +526,15 @@ function renderWelcomeText(pipeline) {
             " path issue" + (conflicts.length !== 1 ? "s" : "") +
             " detected that may break hardlinks or cause import failures.";
     }
+    // [2026-03-10] Rank 21: Show stale data indicator if scan > 30 min old
+    if (state._lastPipelineScan) {
+        const ageMs = Date.now() - state._lastPipelineScan;
+        if (ageMs > 30 * 60 * 1000) {
+            const mins = Math.round(ageMs / 60000);
+            const ageText = mins >= 60 ? Math.round(mins / 60) + "h ago" : mins + "m ago";
+            el.textContent += " (scanned " + ageText + ")";
+        }
+    }
 }
 
 function wireActionFork() {
@@ -544,7 +560,7 @@ function wireActionFork() {
         forkExplore.parentNode.replaceChild(newExplore, forkExplore);
         newExplore.addEventListener("click", () => {
             const groups = document.getElementById("service-groups");
-            if (groups) groups.scrollIntoView({ behavior: "smooth", block: "start" });
+            if (groups) groups.scrollIntoView(smoothScrollOpts("start"));
         });
     }
 
@@ -555,6 +571,13 @@ function wireActionFork() {
             if (pasteArea) pasteArea.classList.add("hidden");
         });
     }
+
+    // [2026-03-10 12:42] QW-5: Escape key closes paste bar (consistent with modal behaviour)
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && pasteArea && !pasteArea.classList.contains("hidden")) {
+            pasteArea.classList.add("hidden");
+        }
+    });
 }
 
 function renderConflictSummary(conflicts) {
@@ -636,26 +659,28 @@ function renderHealthBanner(pipeline) {
     if (!icon || !text || !actions) return;
     actions.replaceChildren();
 
-    const conflicts = pipeline.conflicts || [];
-    const svcCount = pipeline.media_service_count || state.services.length;
+    const tier = pipeline.health_tier || "unknown";
+    const message = pipeline.health_message || "";
 
-    if (conflicts.length === 0) {
-        icon.className = "health-banner-icon health-ok";
-        text.textContent = "All " + svcCount + " services healthy";
-    } else {
-        // Category-aware severity: Cat A = red, Cat B = yellow, Cat C/D = yellow
-        const hasCatA = conflicts.some(c => (c.category || "").toUpperCase() === "A");
-        // Fallback for conflicts without category field
-        const hasSevere = hasCatA || conflicts.some(c =>
-            !c.category && ["critical", "high"].includes((c.severity || "high").toLowerCase())
-        );
-        icon.className = "health-banner-icon " + (hasSevere ? "health-problem" : "health-caution-banner");
-        text.textContent = conflicts.length + " issue" + (conflicts.length !== 1 ? "s" : "") +
-            " found across " + svcCount + " services";
+    // Map health tiers to visual classes and banner text
+    const tierStyles = {
+        excellent: { css: "health-ok", fallback: "All services properly configured" },
+        good: { css: "health-ok", fallback: "Paths and permissions look good" },
+        fair: { css: "health-caution-banner", fallback: "Paths OK but permissions need attention" },
+        poor: { css: "health-problem", fallback: "Path issues detected" },
+        unknown: { css: "health-unknown", fallback: "Scan in progress..." },
+    };
+
+    const style = tierStyles[tier] || tierStyles.unknown;
+    icon.className = "health-banner-icon " + style.css;
+    text.textContent = message || style.fallback;
+
+    // Show "View Issues" button when there are actionable conflicts
+    if (tier === "fair" || tier === "poor") {
         const fixAll = document.createElement("button");
         fixAll.className = "btn btn-primary btn-sm";
         fixAll.textContent = "View Issues";
-        fixAll.setAttribute("data-tooltip", "Scroll to the conflict details below");
+        fixAll.setAttribute("data-tooltip", "Click a service below to see details and fixes");
         fixAll.addEventListener("click", () => scrollToConflicts());
         actions.appendChild(fixAll);
     }
@@ -747,6 +772,7 @@ function renderNonMediaStacks(stacks) {
         icon.width = 16;
         icon.height = 16;
         icon.loading = "lazy";
+        attachIconFallback(icon);
         chip.appendChild(icon);
 
         const name = document.createElement("span");
@@ -782,7 +808,7 @@ const SERVICE_ICONS = {
     // Download clients
     qbittorrent: "qbittorrent", deluge: "deluge", transmission: "transmission",
     sabnzbd: "sabnzbd", nzbget: "nzbget", flood: "flood",
-    jdownloader: "jdownloader", jdownloader2: "jdownloader", jd2: "jdownloader",
+    jdownloader: "jdownloader.png", jdownloader2: "jdownloader.png", jd2: "jdownloader.png", /* [2026-03-10] HI-2: fixed .svg→.png */
     aria2: "aria2", ariang: "aria2",
     pyload: "pyload", "pyload-ng": "pyload",
     rdtclient: "rdtclient", "rdt-client": "rdtclient",
@@ -802,7 +828,7 @@ const SERVICE_ICONS = {
     "cross-seed": "cross-seed", crossseed: "cross-seed",
     subgen: "subgen.png", subgentest: "subgentest.png",
     subsyncarrplus: "subsyncarrplus", "subsyncarr-plus": "subsyncarrplus",
-    suggestarr: "suggestarr.ico", huntarr: "huntarr.png",
+    suggestarr: "suggestarr.svg", huntarr: "huntarr.png", /* [2026-03-10] HI-2: fixed .ico→.svg */
     agregarr: "agregarr", imageprotector: "imageprotector",
     kometa: "kometa", "plex-meta-manager": "kometa",
     organizr: "organizr", makemkv: "makemkv",
@@ -877,16 +903,24 @@ const SERVICE_ICONS = {
     rtorrent: "rtorrent",
 };
 
+// [2026-03-10 12:38] QW-3: Added ICON_BASE constant (Rank 26) and onerror fallback helper
+const ICON_BASE = "/static/img/services/";
+
 function getServiceIconUrl(serviceName) {
     const lower = (serviceName || "").toLowerCase();
     const match = SERVICE_ICONS[lower];
-    if (match) return "/static/img/services/" + match + (match.includes(".") ? "" : ".svg");
+    if (match) return ICON_BASE + match + (match.includes(".") ? "" : ".svg");
     // Check partial matches (e.g. "nzbhydra" matches "nzbhydra2")
     for (const [key, file] of Object.entries(SERVICE_ICONS)) {
         if (lower.includes(key) || key.includes(lower))
-            return "/static/img/services/" + file + (file.includes(".") ? "" : ".svg");
+            return ICON_BASE + file + (file.includes(".") ? "" : ".svg");
     }
-    return "/static/img/services/generic.svg";
+    return ICON_BASE + "generic.svg";
+}
+
+/** Attach 404 fallback to a service icon img element. */
+function attachIconFallback(img) {
+    img.onerror = () => { img.src = ICON_BASE + "generic.svg"; img.onerror = null; };
 }
 
 function renderServiceRow(svc) {
@@ -896,18 +930,20 @@ function renderServiceRow(svc) {
 
     // Health dot
     const dot = document.createElement("span");
-    dot.className = "health-dot " + getServiceHealth(svc);
-    dot.setAttribute("data-tooltip", _healthDotTooltip(getServiceHealth(svc)));
+    const svcHealth = getServiceHealth(svc);
+    dot.className = "health-dot " + svcHealth;
+    dot.setAttribute("data-tooltip", _serviceHealthTooltip(svc, svcHealth));
     row.appendChild(dot);
 
     // Service icon
     const icon = document.createElement("img");
     icon.className = "service-icon";
     icon.src = getServiceIconUrl(svc.service_name);
-    icon.alt = "";
+    icon.alt = svc.service_name + " icon"; // [2026-03-10] A11Y-5: descriptive alt text
     icon.width = 20;
     icon.height = 20;
     icon.loading = "lazy";
+    attachIconFallback(icon);
     row.appendChild(icon);
 
     // Service info
@@ -936,8 +972,14 @@ function renderServiceRow(svc) {
     file.textContent = (svc.stack_name || "") + "/";
     row.appendChild(file);
 
-    // Click to expand
+    // [2026-03-10 12:50] A11Y-3 + HI-3: keyboard-accessible expandable service row
+    row.setAttribute("role", "button");
+    row.setAttribute("tabindex", "0");
+    row.setAttribute("aria-expanded", "false");
     row.addEventListener("click", () => toggleServiceDetail(svc));
+    row.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); }
+    });
 
     return row;
 }
@@ -947,28 +989,24 @@ function getServiceHealth(svc) {
     const composePath = svc.compose_file || "";
     if (state.fixProgress[composePath] === "applied") return "awaiting";
 
-    // Check if service is involved in any conflict — match via services array or service_name.
-    // Category-aware: Cat A = problem (red), Cat B = issue (yellow), Cat C/D = healthy (no dot change).
+    // Use per-service health from the pipeline's full analysis (replaces lightweight guessing).
+    // The backend now runs the real 4-pass analyzer during pipeline scan, so health
+    // reflects actual conflicts: Cat A → problem, Cat B/C → issue, none → healthy.
+    if (svc.health === "problem") return "problem";
+    if (svc.health === "warning") return "issue";
+    if (svc.health === "ok") return "healthy";
+
+    // Fallback: check pipeline-level conflicts (cross-stack mount/perm mismatches)
     const conflicts = (state.pipeline && state.pipeline.conflicts) || [];
-    const matchedCategories = new Set();
     for (const c of conflicts) {
         const services = c.services || [];
         const matchesByName = c.service_name === svc.service_name;
         if (services.includes(svc.service_name) || matchesByName) {
             const cat = (c.category || "").toUpperCase();
-            if (cat) matchedCategories.add(cat);
-            // Fallback for conflicts without category: use severity
-            if (!cat) {
-                const sev = (c.severity || "high").toLowerCase();
-                if (sev === "critical" || sev === "high") matchedCategories.add("A");
-                else matchedCategories.add("B");
-            }
+            if (cat === "A") return "problem";
+            if (cat === "B") return "issue";
         }
     }
-    if (matchedCategories.has("A")) return "problem";     // Red — path conflicts
-    if (matchedCategories.has("B")) return "issue";        // Yellow — permission issues
-    // Cat C/D don't affect health dot
-    if (matchedCategories.size > 0) return "healthy";
 
     return "healthy";
 }
@@ -980,14 +1018,17 @@ function toggleServiceDetail(svc) {
     // Collapse if already expanded
     if (state.expandedService === svc.service_name) {
         if (existing) existing.remove();
-        if (row) row.classList.remove("expanded");
+        if (row) { row.classList.remove("expanded"); row.setAttribute("aria-expanded", "false"); }
         state.expandedService = null;
         return;
     }
 
     // Collapse previous
     if (existing) existing.remove();
-    document.querySelectorAll(".service-row.expanded").forEach(r => r.classList.remove("expanded"));
+    document.querySelectorAll(".service-row.expanded").forEach(r => {
+        r.classList.remove("expanded");
+        r.setAttribute("aria-expanded", "false");
+    });
 
     // Build detail panel
     const panel = document.createElement("div");
@@ -1084,8 +1125,8 @@ function toggleServiceDetail(svc) {
         viewIssue.textContent = "View Issues";
         viewIssue.addEventListener("click", (e) => {
             e.stopPropagation();
-            const idx = findConflictForService(svc.service_name);
-            if (idx !== null) scrollToConflict(idx);
+            const result = findConflictForService(svc.service_name);
+            if (result && result.source === "pipeline") scrollToConflict(result.index);
         });
         actionRow.appendChild(viewIssue);
     }
@@ -1096,6 +1137,7 @@ function toggleServiceDetail(svc) {
     if (row) {
         row.after(panel);
         row.classList.add("expanded");
+        row.setAttribute("aria-expanded", "true");
     }
     state.expandedService = svc.service_name;
 }
@@ -1190,7 +1232,17 @@ function renderConflictCard(conflict, index) {
     chevron.textContent = "\u25BC";
     header.appendChild(chevron);
 
-    header.addEventListener("click", () => { card.classList.toggle("collapsed"); });
+    // [2026-03-10 12:50] A11Y-3: aria-expanded on conflict card collapsible
+    header.setAttribute("role", "button");
+    header.setAttribute("tabindex", "0");
+    header.setAttribute("aria-expanded", "true");
+    header.addEventListener("click", () => {
+        card.classList.toggle("collapsed");
+        header.setAttribute("aria-expanded", card.classList.contains("collapsed") ? "false" : "true");
+    });
+    header.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); header.click(); }
+    });
     card.appendChild(header);
 
     // Body (hidden when collapsed via CSS)
@@ -1291,13 +1343,13 @@ function drillIntoConflict(conflict) {
 function scrollToConflicts() {
     const container = document.getElementById("conflict-cards");
     if (container && container.firstChild) {
-        container.firstChild.scrollIntoView({ behavior: "smooth", block: "start" });
+        container.firstChild.scrollIntoView(smoothScrollOpts("start"));
     }
 }
 
 function scrollToConflict(index) {
     const card = document.querySelector("#conflict-cards .conflict-card:nth-child(" + (index + 1) + ")");
-    if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (card) card.scrollIntoView(smoothScrollOpts("center"));
 }
 
 // ─── Fix Plans ───
@@ -1306,16 +1358,23 @@ async function generateFixPlans(conflicts) {
     // Prefer fix_plans from analysis response (multi-file aware)
     if (state.analysis && state.analysis.fix_plans && state.analysis.fix_plans.length > 0) {
         const plans = {};
+        // For each file, prefer the combined "A+B" plan for display on conflict cards.
+        // Separate "A" and "B" plans are used by tab-specific Apply buttons, not here.
         for (const plan of state.analysis.fix_plans) {
-            plans[plan.compose_file_path] = {
-                compose_file_path: plan.compose_file_path,
-                original_corrected_yaml: plan.corrected_yaml,
-                original_changed_lines: plan.changed_lines || [],
-                stack_name: plan.compose_file_path.replace(/\\/g, "/").split("/").slice(-2, -1)[0] || "",
-                changed_services: plan.changed_services || [],
-                change_summary: plan.change_summary || "",
-                category: plan.category || "A",
-            };
+            const key = plan.compose_file_path;
+            const existing = plans[key];
+            // A+B beats A or B alone; otherwise first-in wins
+            if (!existing || plan.category === "A+B") {
+                plans[key] = {
+                    compose_file_path: plan.compose_file_path,
+                    original_corrected_yaml: plan.corrected_yaml,
+                    original_changed_lines: plan.changed_lines || [],
+                    stack_name: plan.compose_file_path.replace(/\\/g, "/").split("/").slice(-2, -1)[0] || "",
+                    changed_services: plan.changed_services || [],
+                    change_summary: plan.change_summary || "",
+                    category: plan.category || "A",
+                };
+            }
         }
         state.fixPlans = plans;
         for (let i = 0; i < conflicts.length; i++) {
@@ -1415,7 +1474,7 @@ function renderFixPlan(conflictIndex, plans) {
             applyBtn.textContent = "Apply";
             applyBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
-                applySingleFix(plan);
+                showDiffPreview([plan], applyBtn);
             });
             row.appendChild(applyBtn);
         } else {
@@ -1437,7 +1496,7 @@ function renderFixPlan(conflictIndex, plans) {
         const applyAll = document.createElement("button");
         applyAll.className = "btn btn-primary fix-plan-apply-all";
         applyAll.textContent = fixableCount === 1 ? "Apply Fix" : "Apply All Fixes (" + fixableCount + " files)";
-        applyAll.addEventListener("click", () => applyAllFixes(plans));
+        applyAll.addEventListener("click", () => showDiffPreview(plans, applyAll));
         container.appendChild(applyAll);
     }
 }
@@ -1471,7 +1530,9 @@ function toggleFixPreview(row, plan) {
 
 // ─── Apply Fixes ───
 
-async function applySingleFix(plan) {
+// [2026-03-10 12:30] QW-1: Added loading state to applySingleFix — disables button during fetch
+async function applySingleFix(plan, triggerBtn) {
+    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = "Applying\u2026"; }
     try {
         const resp = await fetch("/api/apply-fixes", {
             method: "POST",
@@ -1493,19 +1554,164 @@ async function applySingleFix(plan) {
             showSimpleToast("Failed: " + errMsg, "error");
         }
     } catch (e) {
-        showSimpleToast("Apply failed: " + e.message, "error");
+        showSimpleToast("Apply failed: " + friendlyError(e), "error");
+    } finally {
+        if (triggerBtn && !triggerBtn.classList.contains("applied")) {
+            triggerBtn.disabled = false;
+            triggerBtn.textContent = "Apply";
+        }
     }
 }
 
-async function applyAllFixes(plans) {
-    const fixes = Object.entries(plans)
-        .filter(([_, p]) => p.original_changed_lines.length > 0)
-        .map(([_, p]) => ({
+/**
+ * Show a diff preview modal before applying fixes. Displays per-file diffs
+ * with changed lines highlighted so users can review before committing.
+ */
+function showDiffPreview(plans, triggerBtn) {
+    const entries = Array.isArray(plans) ? plans : Object.values(plans);
+    const actionable = entries.filter((p) => (p.changed_lines || p.original_changed_lines || []).length > 0);
+    if (actionable.length === 0) return;
+
+    const overlay = document.createElement("div");
+    overlay.className = "diff-preview-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "diff-preview-modal";
+
+    const header = document.createElement("div");
+    header.className = "diff-preview-header";
+    const title = document.createElement("h2");
+    title.textContent = "Review Changes (" + actionable.length + " file" + (actionable.length > 1 ? "s" : "") + ")";
+    header.appendChild(title);
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "diff-preview-close";
+    closeBtn.textContent = "\u00d7";
+    closeBtn.addEventListener("click", () => overlay.remove());
+    header.appendChild(closeBtn);
+    modal.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "diff-preview-body";
+
+    for (const plan of actionable) {
+        const fileSection = document.createElement("div");
+        fileSection.className = "diff-file-section";
+
+        const fileHeader = document.createElement("div");
+        fileHeader.className = "diff-file-header";
+        // Show just the stack folder + filename
+        const pathParts = plan.compose_file_path.replace(/\\/g, "/").split("/");
+        const shortPath = pathParts.slice(-2).join("/");
+        fileHeader.textContent = shortPath;
+        if (plan.change_summary) {
+            const badge = document.createElement("span");
+            badge.className = "diff-change-badge";
+            badge.textContent = plan.change_summary;
+            fileHeader.appendChild(badge);
+        }
+        fileSection.appendChild(fileHeader);
+
+        const diffContainer = document.createElement("div");
+        diffContainer.className = "diff-container";
+
+        const origLines = (plan.original_yaml || plan.original_raw_yaml || "").split("\n");
+        const corrLines = (plan.corrected_yaml || plan.original_corrected_yaml || "").split("\n");
+        const changedSet = new Set(plan.changed_lines || plan.original_changed_lines || []);
+
+        // Show unified diff — only changed lines and their context (3 lines)
+        const contextSize = 3;
+        const showLines = new Set();
+        for (const ln of changedSet) {
+            for (let c = Math.max(1, ln - contextSize); c <= Math.min(corrLines.length, ln + contextSize); c++) {
+                showLines.add(c);
+            }
+        }
+
+        // Also include lines that were in original but not in corrected (deletions)
+        // For simplicity: show original lines that differ + corrected lines that differ
+        const pre = document.createElement("pre");
+        pre.className = "diff-content";
+        let lastShown = 0;
+        const sortedLines = Array.from(showLines).sort((a, b) => a - b);
+
+        for (const ln of sortedLines) {
+            if (ln > lastShown + 1) {
+                // Gap indicator
+                const sep = document.createElement("div");
+                sep.className = "diff-separator";
+                sep.textContent = "\u00b7\u00b7\u00b7";
+                pre.appendChild(sep);
+            }
+            lastShown = ln;
+
+            const idx = ln - 1; // 0-indexed
+            const isChanged = changedSet.has(ln);
+
+            // Show the original line as removed if it differs
+            if (isChanged && idx < origLines.length && origLines[idx] !== corrLines[idx]) {
+                const origDiv = document.createElement("div");
+                origDiv.className = "diff-line diff-removed";
+                origDiv.textContent = (String(ln).padStart(4)) + " - " + origLines[idx];
+                pre.appendChild(origDiv);
+            }
+
+            // Show the corrected line
+            if (idx < corrLines.length) {
+                const corrDiv = document.createElement("div");
+                corrDiv.className = isChanged ? "diff-line diff-added" : "diff-line";
+                corrDiv.textContent = (String(ln).padStart(4)) + (isChanged ? " + " : "   ") + corrLines[idx];
+                pre.appendChild(corrDiv);
+            }
+        }
+
+        diffContainer.appendChild(pre);
+        fileSection.appendChild(diffContainer);
+        body.appendChild(fileSection);
+    }
+
+    modal.appendChild(body);
+
+    const footer = document.createElement("div");
+    footer.className = "diff-preview-footer";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-ghost";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => overlay.remove());
+    footer.appendChild(cancelBtn);
+    const confirmBtn = document.createElement("button");
+    confirmBtn.className = "apply-btn";
+    confirmBtn.textContent = "Confirm & Apply " + actionable.length + " File" + (actionable.length > 1 ? "s" : "");
+    confirmBtn.addEventListener("click", () => {
+        overlay.remove();
+        applyAllFixes(plans, triggerBtn);
+    });
+    footer.appendChild(confirmBtn);
+    modal.appendChild(footer);
+
+    overlay.appendChild(modal);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+
+    // Focus trap
+    const trap = trapFocus(modal);
+    const origRemove = overlay.remove.bind(overlay);
+    overlay.remove = () => { releaseFocusTrap(trap); origRemove(); };
+}
+
+// [2026-03-10 12:30] QW-1: Added loading state to applyAllFixes — disables button during fetch
+async function applyAllFixes(plans, triggerBtn) {
+    // plans may be an array (backend fix_plans) or object (legacy generateFixPlans).
+    // Normalize to array of entries.
+    const entries = Array.isArray(plans) ? plans : Object.values(plans);
+    const fixes = entries
+        .filter((p) => (p.changed_lines || p.original_changed_lines || []).length > 0)
+        .map((p) => ({
             compose_file_path: p.compose_file_path,
-            corrected_yaml: p.original_corrected_yaml,
+            corrected_yaml: p.corrected_yaml || p.original_corrected_yaml,
         }));
 
     if (fixes.length === 0) return;
+    if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = "Applying\u2026"; }
 
     try {
         const resp = await fetch("/api/apply-fixes", {
@@ -1519,19 +1725,25 @@ async function applyAllFixes(plans) {
             for (const r of data.results) {
                 markFixApplied(r.compose_file_path);
             }
-            showSimpleToast("All " + data.applied_count + " files fixed — rescanning...", "success");
-            // Trigger pipeline rescan
-            try {
-                await fetch("/api/pipeline-scan", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({}),
-                    signal: AbortSignal.timeout(30000),
-                });
-            } catch (e) {
-                // Rescan failed silently — user can refresh
+            // Mark the correct tab buttons as "Applied" based on what we just fixed
+            const appliedCats = new Set(entries.map(p => (p.category || "").toUpperCase()));
+            const touchedA = appliedCats.has("A") || appliedCats.has("A+B");
+            const touchedB = appliedCats.has("B") || appliedCats.has("A+B");
+            if (touchedA) {
+                const pb = document.getElementById("btn-apply-path-fix");
+                if (pb) { pb.textContent = "Applied"; pb.disabled = true; pb.classList.add("applied"); }
             }
-            showRedeployPrompt(fixes);
+            if (touchedB) {
+                const eb = document.getElementById("btn-apply-env-fix");
+                if (eb) { eb.textContent = "Applied"; eb.disabled = true; eb.classList.add("applied"); }
+            }
+            if (touchedA && touchedB) {
+                const ab = document.getElementById("btn-apply-fix");
+                if (ab) { ab.textContent = "Applied"; ab.disabled = true; ab.classList.add("applied"); }
+            }
+            // Show restart modal — user must acknowledge before we rescan and
+            // navigate back to the dashboard with fresh results.
+            showPostFixRestartModal(fixes, data.applied_count);
         } else if (data.status === "partial") {
             for (const r of (data.results || [])) {
                 if (r.status === "applied") markFixApplied(r.compose_file_path);
@@ -1542,8 +1754,166 @@ async function applyAllFixes(plans) {
             showSimpleToast("Fix failed: " + errMsg, "error");
         }
     } catch (e) {
-        showSimpleToast("Apply failed: " + e.message, "error");
+        showSimpleToast("Apply failed: " + friendlyError(e), "error");
+    } finally {
+        if (triggerBtn && !triggerBtn.classList.contains("applied")) {
+            triggerBtn.disabled = false;
+            triggerBtn.textContent = "Apply All Fixes";
+        }
     }
+}
+
+function showPostFixRestartModal(appliedFixes, appliedCount) {
+    // Build list of affected stacks/services for the restart prompt
+    const roleWarnings = {
+        arr: "will stop monitoring and importing",
+        download_client: "active downloads will be interrupted",
+        media_server: "active streams will disconnect",
+        other: "service will restart",
+    };
+    const affected = [];
+    for (const fix of appliedFixes) {
+        const svc = state.services.find(s =>
+            fix.compose_file_path && fix.compose_file_path.includes(s.stack_name)
+        );
+        if (svc) {
+            affected.push({
+                stack_path: svc.stack_path || "",
+                stack_name: svc.stack_name || "",
+                service_name: svc.service_name,
+                role: svc.role || "other",
+                warning: roleWarnings[svc.role] || roleWarnings.other,
+            });
+        }
+    }
+
+    const overlay = document.createElement("div");
+    overlay.className = "diff-preview-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "diff-preview-modal";
+    modal.style.maxWidth = "520px";
+
+    // Header
+    const header = document.createElement("div");
+    header.className = "diff-preview-header";
+    const title = document.createElement("h2");
+    title.textContent = appliedCount + " File" + (appliedCount !== 1 ? "s" : "") + " Fixed";
+    header.appendChild(title);
+    modal.appendChild(header);
+
+    // Body
+    const body = document.createElement("div");
+    body.style.padding = "1.25rem";
+
+    // Success message
+    const successMsg = document.createElement("p");
+    successMsg.style.cssText = "margin: 0 0 1rem; color: var(--color-green, #4ade80);";
+    successMsg.textContent = "Compose files have been patched. Backups saved as .bak files.";
+    body.appendChild(successMsg);
+
+    // Restart notice
+    const restartNotice = document.createElement("div");
+    restartNotice.style.cssText = "background: var(--bg-tertiary, #1e1e2e); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;";
+    const restartTitle = document.createElement("p");
+    restartTitle.style.cssText = "font-weight: 600; margin: 0 0 0.5rem; color: var(--color-amber, #fbbf24);";
+    restartTitle.textContent = "Restart your containers to apply the changes";
+    restartNotice.appendChild(restartTitle);
+
+    if (affected.length > 0) {
+        for (const s of affected) {
+            const line = document.createElement("div");
+            line.style.cssText = "font-size: 0.85rem; color: var(--text-secondary); padding: 0.15rem 0;";
+            line.textContent = "\u2022 " + s.service_name + " \u2014 " + s.warning;
+            restartNotice.appendChild(line);
+        }
+    }
+
+    const reassure = document.createElement("p");
+    reassure.style.cssText = "font-size: 0.85rem; color: var(--text-tertiary); margin: 0.75rem 0 0;";
+    reassure.textContent = "Services restart in seconds. No data is lost.";
+    restartNotice.appendChild(reassure);
+    body.appendChild(restartNotice);
+
+    modal.appendChild(body);
+
+    // Footer — Redeploy + Manual + Back to Dashboard
+    const footer = document.createElement("div");
+    footer.className = "diff-preview-footer";
+
+    if (affected.length > 0) {
+        const deployBtn = document.createElement("button");
+        deployBtn.className = "apply-btn";
+        deployBtn.textContent = "Redeploy " + affected.length + " Service" + (affected.length !== 1 ? "s" : "");
+        deployBtn.addEventListener("click", async () => {
+            deployBtn.disabled = true;
+            deployBtn.textContent = "Redeploying...";
+            try {
+                await fetch("/api/redeploy", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        stacks: affected.map(s => ({ stack_path: s.stack_path, action: "up" })),
+                    }),
+                    signal: AbortSignal.timeout(60000),
+                });
+                showSimpleToast("Containers redeployed", "success");
+            } catch (e) {
+                showSimpleToast("Redeploy failed: " + friendlyError(e), "error");
+            }
+            overlay.remove();
+            rescanAndReturnToDashboard();
+        });
+        footer.appendChild(deployBtn);
+    }
+
+    const manualBtn = document.createElement("button");
+    manualBtn.className = "btn-ghost";
+    manualBtn.textContent = "I'll restart manually";
+    manualBtn.addEventListener("click", () => {
+        overlay.remove();
+        rescanAndReturnToDashboard();
+    });
+    footer.appendChild(manualBtn);
+
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Focus trap
+    const trap = trapFocus(modal);
+    const origRemove = overlay.remove.bind(overlay);
+    overlay.remove = () => { releaseFocusTrap(trap); origRemove(); };
+}
+
+async function rescanAndReturnToDashboard() {
+    showSimpleToast("Rescanning pipeline...", "info");
+    try {
+        const resp = await fetch("/api/pipeline-scan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scan_dir: state.stacksPath || "" }),
+            signal: AbortSignal.timeout(30000),
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            state.pipeline = data;
+            state.services = data.media_services || [];
+            state.servicesByRole = {};
+            for (const svc of state.services) {
+                const role = svc.role || "other";
+                if (!state.servicesByRole[role]) state.servicesByRole[role] = [];
+                state.servicesByRole[role].push(svc);
+            }
+            state.verifiedStacks.clear();
+            state._lastPipelineScan = Date.now();
+        }
+    } catch (e) {
+        // Rescan failed — dashboard will show stale data
+    }
+    // Navigate back to dashboard
+    renderDashboard();
+    window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function markFixApplied(composePath) {
@@ -1684,7 +2054,7 @@ function showRedeployPrompt(appliedFixes) {
 
     prompt.appendChild(actions);
     container.appendChild(prompt);
-    prompt.scrollIntoView({ behavior: "smooth" });
+    prompt.scrollIntoView(smoothScrollOpts());
 }
 
 async function doRedeploy(stacks, promptEl) {
@@ -1857,11 +2227,42 @@ async function handlePasteError() {
             // Highlight matched services
             highlightServices(matched.map(s => s.service_name));
 
-            // Find relevant conflict
-            const relevantIdx = findConflictForService(parsed.service);
-            if (relevantIdx !== null) {
-                scrollToConflict(relevantIdx);
-                showPasteResult(parsed.service + " \u2014 " + (parsed.error_type || "mount conflict") + " detected");
+            // Find relevant conflict — searches both pipeline-level and per-stack
+            const found = findConflictForService(parsed.service);
+            if (found !== null) {
+                // Determine what categories of issues exist for preferred tab selection
+                const allConflicts = (state.pipeline && state.pipeline.conflicts) || [];
+                const perStack = (state.pipeline && state.pipeline.per_stack_conflicts) || {};
+                const svc = matched[0];
+                const stackName = found.stackName || (svc ? svc.stack_name : "");
+                const stackConflicts = perStack[stackName] || [];
+                const hasCatA = allConflicts.some(c => c.category === "A") ||
+                    stackConflicts.some(c => c.category === "A");
+                const hasCatB = allConflicts.some(c => c.category === "B") ||
+                    stackConflicts.some(c => c.category === "B");
+
+                // Auto-drill: paste users want the answer fast.
+                // Cat A → RPM Wizard (quick fix, no restarts).
+                // Cat B only → Fix Permissions.
+                if (hasCatA) {
+                    state._preferredSolutionTab = "rpm";
+                } else if (hasCatB) {
+                    state._preferredSolutionTab = "env";
+                }
+
+                const conflict = found.conflict;
+                if (conflict) {
+                    showPasteResult(
+                        "Found the issue \u2014 loading " + parsed.service + "'s fix now\u2026"
+                    );
+                    // Small delay so user sees the message before view changes
+                    setTimeout(() => drillIntoConflict(conflict), 400);
+                } else if (found.source === "pipeline") {
+                    scrollToConflict(found.index);
+                    showPasteResult(
+                        parsed.service + " \u2014 issue detected. Click a conflict card below for the fix."
+                    );
+                }
             } else {
                 showPasteResult(parsed.service + " \u2014 no conflicts found. Your setup looks correct.", "healthy");
             }
@@ -1873,20 +2274,50 @@ async function handlePasteError() {
     }
 }
 
+/**
+ * Search for a conflict involving the named service.
+ * Searches both pipeline-level conflicts (cross-stack mount mismatches)
+ * and per-stack conflicts (within-stack permission/path issues).
+ *
+ * @returns {{ source: string, index: number, conflict: object, stackName: string }} or null
+ *   source: "pipeline" or "per_stack"
+ *   index: position in the source array (for scrollToConflict)
+ *   conflict: the conflict object itself
+ *   stackName: relevant stack name (for per_stack matches)
+ */
 function findConflictForService(serviceName) {
     const conflicts = (state.pipeline && state.pipeline.conflicts) || [];
+    const perStack = (state.pipeline && state.pipeline.per_stack_conflicts) || {};
+    const svcLower = serviceName.toLowerCase();
+
+    function nameMatches(name) {
+        const lower = name.toLowerCase();
+        return lower.includes(svcLower) || svcLower.includes(lower);
+    }
+
+    // 1. Search pipeline-level conflicts first (cross-stack mount issues)
     for (let i = 0; i < conflicts.length; i++) {
         const c = conflicts[i];
-        const services = c.services || [];
-        const matchArray = services.some(s =>
-            s.toLowerCase().includes(serviceName.toLowerCase()) ||
-            serviceName.toLowerCase().includes(s.toLowerCase())
-        );
-        const matchName = c.service_name &&
-            (c.service_name.toLowerCase().includes(serviceName.toLowerCase()) ||
-             serviceName.toLowerCase().includes(c.service_name.toLowerCase()));
-        if (matchArray || matchName) return i;
+        const matchArray = (c.services || []).some(nameMatches);
+        const matchName = c.service_name && nameMatches(c.service_name);
+        const matchMajority = (c.majority_services || []).some(nameMatches);
+        if (matchArray || matchName || matchMajority) {
+            return { source: "pipeline", index: i, conflict: c, stackName: "" };
+        }
     }
+
+    // 2. Search per-stack conflicts (permission mismatches, within-stack path issues)
+    for (const [stackName, stackConflicts] of Object.entries(perStack)) {
+        for (let i = 0; i < stackConflicts.length; i++) {
+            const c = stackConflicts[i];
+            const matchArray = (c.services || []).some(nameMatches);
+            const matchName = c.service_name && nameMatches(c.service_name);
+            if (matchArray || matchName) {
+                return { source: "per_stack", index: i, conflict: c, stackName: stackName };
+            }
+        }
+    }
+
     return null;
 }
 
@@ -1901,7 +2332,7 @@ function highlightServices(serviceNames) {
         const row = document.querySelector('[data-service="' + name + '"]');
         if (row) {
             row.classList.add("highlighted");
-            row.scrollIntoView({ behavior: "smooth", block: "center" });
+            row.scrollIntoView(smoothScrollOpts("center"));
         }
     }
 
@@ -1915,6 +2346,7 @@ function showPasteResult(message, type) {
     el.className = "paste-bar-result" + (type ? " paste-" + type : "");
     el.classList.remove("hidden");
 }
+
 
 // ─── Directory Selection ───
 
@@ -2013,7 +2445,7 @@ function openDirectoryBrowser(startPath) {
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "btn btn-ghost btn-sm";
     cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", () => overlay.remove());
+    cancelBtn.addEventListener("click", () => closeOverlay());
 
     const selectBtn = document.createElement("button");
     selectBtn.className = "btn btn-primary btn-sm";
@@ -2024,15 +2456,21 @@ function openDirectoryBrowser(startPath) {
 
     overlay.appendChild(browser);
 
-    // Close on overlay click (not browser click)
+    // [2026-03-10 13:15] HI-5: Focus trap for directory browser modal
+    let _focusTrap = null;
+
+    function closeOverlay() {
+        if (_focusTrap) releaseFocusTrap(browser, _focusTrap);
+        overlay.remove();
+    }
+
     overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) overlay.remove();
+        if (e.target === overlay) closeOverlay();
     });
 
-    // Close on Escape
     const onKeydown = (e) => {
         if (e.key === "Escape") {
-            overlay.remove();
+            closeOverlay();
             document.removeEventListener("keydown", onKeydown);
         }
     };
@@ -2131,6 +2569,7 @@ function openDirectoryBrowser(startPath) {
     }
 
     document.body.appendChild(overlay);
+    _focusTrap = trapFocus(browser);
     loadDirectory(startPath);
 }
 
@@ -2302,6 +2741,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnCopyOrig) btnCopyOrig.addEventListener("click", () => copySolutionYaml());
     const btnApply = document.getElementById("btn-apply-fix");
     if (btnApply) btnApply.addEventListener("click", () => applyFix());
+    const btnApplyPath = document.getElementById("btn-apply-path-fix");
+    if (btnApplyPath) btnApplyPath.addEventListener("click", () => applyPathFix());
     const btnCancel = document.getElementById("btn-cancel-apply");
     if (btnCancel) btnCancel.addEventListener("click", () => cancelApplyFix());
 
@@ -2310,7 +2751,153 @@ document.addEventListener("DOMContentLoaded", () => {
     if (btnBack) btnBack.addEventListener("click", () => backToDashboard());
     const btnDiag = document.getElementById("btn-copy-diagnostic");
     if (btnDiag) btnDiag.addEventListener("click", () => copyDiagnosticSummary());
+
+    // [2026-03-10 13:10] HI-3: Global keyboard shortcuts for power users
+    document.addEventListener("keydown", handleGlobalKeydown);
 });
+
+// [2026-03-10 13:30] Rank 23: Human-readable network error messages
+function friendlyError(err) {
+    if (!err) return "Unknown error";
+    if (err.name === "AbortError") return "Request timed out \u2014 the stack may be too large or the backend is slow";
+    if (err.name === "TypeError" && err.message.includes("fetch"))
+        return "Cannot reach MapArr backend \u2014 is the container running?";
+    if (err.message && err.message.includes("404")) return "Endpoint not found \u2014 you may be running an older version";
+    if (err.message && err.message.includes("500")) return "Backend error \u2014 check the log panel for details";
+    return err.message || "Unknown error";
+}
+
+// [2026-03-10 13:10] HI-3: Global keyboard shortcuts
+function handleGlobalKeydown(e) {
+    const active = document.activeElement;
+    const isInput = active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT");
+
+    // Escape — close overlays in priority order
+    if (e.key === "Escape") {
+        const dirBrowser = document.querySelector(".dir-browser-overlay");
+        if (dirBrowser && !dirBrowser.classList.contains("hidden")) {
+            const cancelBtn = dirBrowser.querySelector(".btn");
+            if (cancelBtn) cancelBtn.click();
+            return;
+        }
+        const applyConfirm = document.getElementById("apply-confirm");
+        if (applyConfirm && !applyConfirm.classList.contains("hidden")) {
+            cancelApplyFix();
+            return;
+        }
+        const logPanel = document.getElementById("log-panel");
+        if (logPanel && !logPanel.classList.contains("hidden")) {
+            logPanel.classList.add("hidden");
+            return;
+        }
+        const shortcutsHelp = document.getElementById("keyboard-shortcuts-help");
+        if (shortcutsHelp) { shortcutsHelp.remove(); return; }
+    }
+
+    // Cmd/Ctrl+K — focus path input
+    if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        const pathBtn = document.getElementById("header-path");
+        if (pathBtn) pathBtn.click();
+        setTimeout(() => {
+            const input = document.getElementById("header-path-input");
+            if (input) { input.focus(); input.select(); }
+        }, 50);
+        return;
+    }
+
+    // Cmd/Ctrl+Enter in paste textarea — submit
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && active && active.id === "paste-error-input") {
+        e.preventDefault();
+        const goBtn = document.getElementById("paste-error-go");
+        if (goBtn && !goBtn.disabled) goBtn.click();
+        return;
+    }
+
+    // ? key (when no input focused) — show shortcuts help
+    if (e.key === "?" && !isInput) {
+        e.preventDefault();
+        showKeyboardShortcutsHelp();
+        return;
+    }
+}
+
+// [2026-03-10 13:15] HI-5: Reusable focus trap for modals
+function trapFocus(modalElement) {
+    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const _previousFocus = document.activeElement;
+    function handler(e) {
+        if (e.key !== "Tab") return;
+        const focusable = Array.from(modalElement.querySelectorAll(focusableSelector));
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+            if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+        } else {
+            if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+    }
+    modalElement.addEventListener("keydown", handler);
+    // Focus first focusable element
+    const firstEl = modalElement.querySelector(focusableSelector);
+    if (firstEl) firstEl.focus();
+    return { handler, previousFocus: _previousFocus };
+}
+
+function releaseFocusTrap(modalElement, trap) {
+    if (trap && trap.handler) modalElement.removeEventListener("keydown", trap.handler);
+    if (trap && trap.previousFocus) trap.previousFocus.focus();
+}
+
+function showKeyboardShortcutsHelp() {
+    const existing = document.getElementById("keyboard-shortcuts-help");
+    if (existing) { existing.remove(); return; }
+
+    const overlay = document.createElement("div");
+    overlay.id = "keyboard-shortcuts-help";
+    overlay.className = "keyboard-shortcuts-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "keyboard-shortcuts-modal";
+
+    const title = document.createElement("h2");
+    title.textContent = "Keyboard Shortcuts";
+    modal.appendChild(title);
+
+    const shortcuts = [
+        ["Esc", "Close overlays / modals"],
+        ["Ctrl+K / \u2318K", "Focus path input"],
+        ["Ctrl+Enter / \u2318Enter", "Submit pasted error"],
+        ["Enter / Space", "Toggle expanded row or card"],
+        ["?", "Show this help"],
+    ];
+
+    const list = document.createElement("dl");
+    list.className = "shortcuts-list";
+    for (const [key, desc] of shortcuts) {
+        const dt = document.createElement("dt");
+        const kbd = document.createElement("kbd");
+        kbd.textContent = key;
+        dt.appendChild(kbd);
+        list.appendChild(dt);
+        const dd = document.createElement("dd");
+        dd.textContent = desc;
+        list.appendChild(dd);
+    }
+    modal.appendChild(list);
+
+    const close = document.createElement("button");
+    close.className = "btn btn-ghost btn-sm";
+    close.textContent = "Close (Esc)";
+    close.addEventListener("click", () => overlay.remove());
+    modal.appendChild(close);
+
+    overlay.appendChild(modal);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+    close.focus();
+}
 
 // ─── Mode Management (legacy — removed in pipeline dashboard pivot) ───
 // Old mode-based functions (enterFixMode, enterBrowseMode, switchToFixMode,
@@ -2660,7 +3247,7 @@ function showPreflightWarning(stack, errorPath, containerTargets, override) {
 
         warn.appendChild(btnRow);
         section.appendChild(warn);
-        warn.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        warn.scrollIntoView(smoothScrollOpts("nearest"));
     });
 }
 
@@ -2719,7 +3306,7 @@ function showBrowsePreflightWarning(stack, serviceList) {
 
         warn.appendChild(btnRow);
         section.appendChild(warn);
-        warn.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        warn.scrollIntoView(smoothScrollOpts("nearest"));
     });
 }
 
@@ -2766,7 +3353,7 @@ async function runAnalysis(stack) {
 
     addTerminalLine("run", "Resolving " + stackDirName + "/" + composeFileName + "...");
     termSection.classList.remove("hidden");
-    termSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    termSection.scrollIntoView(smoothScrollOpts("nearest"));
 
     // Abort controller: cancel a stale request if the user navigates away
     // or if a new analysis starts. 60s timeout covers slow compose resolution
@@ -3041,7 +3628,7 @@ function showPreflightOverrideResult(data) {
         clearAnalysisResults();
         const fixMatch = document.getElementById("step-fix-match");
         if (fixMatch && !fixMatch.classList.contains("hidden")) {
-            fixMatch.scrollIntoView({ behavior: "smooth", block: "start" });
+            fixMatch.scrollIntoView(smoothScrollOpts("start"));
         }
     });
     actions.appendChild(backBtn);
@@ -3049,7 +3636,7 @@ function showPreflightOverrideResult(data) {
     details.appendChild(actions);
 
     section.classList.remove("hidden");
-    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    section.scrollIntoView(smoothScrollOpts("nearest"));
 
     // Reset the flag
     state.preflightOverridden = false;
@@ -3090,10 +3677,11 @@ function showCurrentSetup(data) {
         const svcIcon = document.createElement("img");
         svcIcon.className = "service-icon";
         svcIcon.src = getServiceIconUrl(svc.name || svc.service_name);
-        svcIcon.alt = "";
+        svcIcon.alt = (svc.name || svc.service_name) + " icon"; // [2026-03-10] A11Y-5
         svcIcon.width = 16;
         svcIcon.height = 16;
         svcIcon.loading = "lazy";
+        attachIconFallback(svcIcon);
         nameCell.appendChild(svcIcon);
         nameCell.appendChild(document.createTextNode(" " + svc.name));
         row.appendChild(nameCell);
@@ -3152,10 +3740,11 @@ function showCurrentSetup(data) {
             const icon = document.createElement("img");
             icon.className = "service-icon";
             icon.src = getServiceIconUrl(svc.name || svc.service_name);
-            icon.alt = "";
+            icon.alt = (svc.name || svc.service_name) + " icon"; // [2026-03-10] A11Y-5
             icon.width = 20;
             icon.height = 20;
             icon.loading = "lazy";
+            attachIconFallback(icon);
             item.appendChild(icon);
             const name = document.createElement("span");
             name.className = "other-service-name";
@@ -3168,7 +3757,7 @@ function showCurrentSetup(data) {
     }
 
     section.classList.remove("hidden");
-    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    section.scrollIntoView(smoothScrollOpts("nearest"));
 }
 
 // ─── Problem ───
@@ -3338,9 +3927,14 @@ function showSolution(data) {
     const originalTab = document.querySelector('.solution-tab[data-tab="original"]');
     const originalBlock = document.getElementById("solution-block-original");
     const recommendedBlock = document.getElementById("solution-block-recommended");
+    const applyConfirmEl = document.getElementById("apply-confirm");
+    const applyResultEl = document.getElementById("apply-result");
 
-    // Clean up any previously injected elements from a prior render
-    section.querySelectorAll(".solution-tracks, .track-content-quick, .track-content-proper, .infra-warning, .cat-c-guidance, .env-solution-block, .solution-tab-env").forEach((el) => el.remove());
+    // Clean up any previously injected elements from a prior render.
+    // Static elements (originalBlock, recommendedBlock, solutionTabs, applyConfirm,
+    // applyResult) may have been moved INTO .track-content-proper during a previous
+    // render — save references above BEFORE this cleanup destroys the container.
+    section.querySelectorAll(".solution-tracks, .track-content-quick, .track-content-proper, .infra-warning, .cat-c-guidance, .env-solution-block, .solution-tab-env, .rpm-solution-block, .solution-tab-rpm").forEach((el) => el.remove());
 
     // Determine which categories are present
     const conflicts = data.conflicts || [];
@@ -3472,8 +4066,13 @@ function showSolution(data) {
             list.appendChild(li);
         }
         if (postFixConflicts.some((c) => c.type === "cross_stack_puid_mismatch")) {
+            const envFixCount = (data.fix_plans || []).filter((p) => p.category === "B").length;
             const li = document.createElement("li");
-            li.textContent = "This fix only applies to the current stack. Other stacks sharing these paths also need their PUID/PGID updated to match.";
+            if (envFixCount > 1) {
+                li.textContent = "Apply All Fixes will patch " + envFixCount + " sibling compose files to match this stack\u2019s PUID/PGID. After applying, restart the affected containers.";
+            } else {
+                li.textContent = "Other stacks sharing these paths also need their PUID/PGID updated to match. Check the Fix Permissions tab for details.";
+            }
             list.appendChild(li);
         }
 
@@ -3491,6 +4090,14 @@ function showSolution(data) {
     }
     if (originalBlock && originalBlock.parentElement !== section) {
         recommendedBlock.after(originalBlock);
+    }
+    // Re-insert apply-confirm and apply-result after originalBlock — they may
+    // have been destroyed when the old .track-content-proper was removed above.
+    if (applyConfirmEl && !applyConfirmEl.parentElement) {
+        originalBlock.after(applyConfirmEl);
+    }
+    if (applyResultEl && !applyResultEl.parentElement) {
+        (applyConfirmEl || originalBlock).after(applyResultEl);
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -3532,8 +4139,13 @@ function showSolution(data) {
             (c) => c.type === "cross_stack_puid_mismatch"
         );
         const hasLocalChanges = data.original_corrected_yaml && data.env_solution_changed_lines && data.env_solution_changed_lines.length > 0;
-        if (isCrossStack && !hasLocalChanges) {
-            envIntro.textContent = "This stack's permissions are already correct. Other services in your pipeline use different PUID/PGID values \u2014 update them to match. Copy the target values below.";
+        if (isCrossStack) {
+            const envFixCount = (data.fix_plans || []).filter((p) => p.category === "B").length;
+            if (envFixCount > 0) {
+                envIntro.textContent = "This stack\u2019s permissions are correct. " + envFixCount + " sibling compose file" + (envFixCount > 1 ? "s need" : " needs") + " updating to match. Click Apply All Fixes to patch them automatically.";
+            } else {
+                envIntro.textContent = "This stack\u2019s permissions are correct. Other services in your pipeline use different UID/GID values \u2014 update them to match using the target values below.";
+            }
         } else {
             envIntro.textContent = "These environment variable changes align your services to the same user identity.";
         }
@@ -3558,21 +4170,15 @@ function showSolution(data) {
         });
         envActions.appendChild(envCopyBtn);
 
-        // Apply Fix button — multi-file (fix_plans) or single-file (original_corrected_yaml)
-        const envFixPlans = (data.fix_plans || []).filter((p) => p.category === "B" || p.category === "A+B");
+        // Apply Fix button — only Cat B fix_plans (permissions scope only).
+        // Filter strictly for "B" — not "A+B" which contains path changes too.
+        const envFixPlans = (data.fix_plans || []).filter((p) => p.category === "B");
         if (envFixPlans.length > 0) {
             const envApplyBtn = document.createElement("button");
             envApplyBtn.className = "apply-btn";
             envApplyBtn.id = "btn-apply-env-fix";
-            envApplyBtn.textContent = envFixPlans.length === 1 ? "Apply Fix" : "Apply All Fixes (" + envFixPlans.length + " files)";
-            envApplyBtn.addEventListener("click", () => applyAllFixes(envFixPlans));
-            envActions.appendChild(envApplyBtn);
-        } else if (data.original_corrected_yaml && data.compose_file_path) {
-            const envApplyBtn = document.createElement("button");
-            envApplyBtn.className = "apply-btn";
-            envApplyBtn.id = "btn-apply-env-fix";
-            envApplyBtn.textContent = "Apply Fix";
-            envApplyBtn.addEventListener("click", () => applyFix());
+            envApplyBtn.textContent = envFixPlans.length === 1 ? "Apply Permission Fix" : "Apply Permission Fixes (" + envFixPlans.length + " files)";
+            envApplyBtn.addEventListener("click", () => showDiffPreview(envFixPlans, envApplyBtn));
             envActions.appendChild(envApplyBtn);
         }
 
@@ -3592,25 +4198,121 @@ function showSolution(data) {
     // ────────────────────────────────────────────────────────────────────────
     const recTab = document.getElementById("tab-recommended");
 
-    // "Recommended Fix" tab: only show when Cat A AND solution_yaml exists
+    // "Fix Paths" tab: only show when Cat A AND solution_yaml exists
     if (!hasCatA || !data.solution_yaml) {
         if (recTab) recTab.classList.add("hidden");
         if (recommendedBlock) recommendedBlock.classList.add("hidden");
     } else {
-        if (recTab) recTab.classList.remove("hidden");
+        if (recTab) {
+            recTab.classList.remove("hidden");
+            recTab.textContent = "Fix Paths";
+        }
         if (recommendedBlock) recommendedBlock.classList.remove("hidden");
     }
 
-    // "Your Config (Corrected)" tab: show when original_corrected_yaml exists
-    if (data.original_corrected_yaml && originalTab && originalYamlEl) {
+    // Last tab: the user's full compose with all corrections applied.
+    // Only shown when BOTH categories exist — it combines path + permission fixes.
+    // When only one category, the category-specific tab already covers everything.
+    if (data.original_corrected_yaml && originalTab && originalYamlEl && hasCatA && hasCatB) {
         originalTab.classList.remove("hidden");
+        originalTab.textContent = "Fix All Issues";
     } else if (originalTab) {
         originalTab.classList.add("hidden");
     }
 
-    // Determine default active tab
+    // NOTE: Default tab selection is deferred until AFTER RPM tab creation below,
+    // so that preferred tab checks (e.g. "rpm" from paste auto-drill) can find it.
+
+    // ────────────────────────────────────────────────────────────────────────
+    // RPM Wizard tab — shown when Cat A AND RPM mappings exist with possible: true
+    // Added as a peer tab (like Fix Permissions) for consistent layout across stacks.
+    // ────────────────────────────────────────────────────────────────────────
+    const rpmMappings = data.rpm_mappings || [];
+    const hasPossibleRpm = rpmMappings.some((m) => m.possible);
+    // Only show RPM tab when at least one mapping is actually possible.
+    // rpm_hint on conflicts indicates RPM-like scenarios, but without a feasible
+    // mapping the wizard just says "can't help" — showing it would be confusing.
+    const hasRpm = hasCatA && hasPossibleRpm;
+
+    if (hasRpm) {
+        const tabBar = document.getElementById("solution-tabs");
+        const recTab = document.getElementById("tab-recommended");
+
+        // Add RPM Wizard tab button after Fix Paths
+        const rpmTabBtn = document.createElement("button");
+        rpmTabBtn.className = "solution-tab solution-tab-rpm";
+        rpmTabBtn.dataset.tab = "rpm";
+        rpmTabBtn.id = "tab-rpm";
+        rpmTabBtn.textContent = "RPM Wizard";
+        if (tabBar && recTab) {
+            recTab.after(rpmTabBtn);
+        } else if (tabBar) {
+            tabBar.appendChild(rpmTabBtn);
+        }
+        rpmTabBtn.addEventListener("click", () => switchSolutionTab("rpm"));
+
+        // Build RPM content block (same structure as env-solution-block)
+        const rpmBlock = document.createElement("div");
+        rpmBlock.className = "code-block hidden rpm-solution-block";
+        rpmBlock.id = "solution-block-rpm";
+
+        const rpmIntro = document.createElement("div");
+        rpmIntro.className = "env-solution-intro";
+
+        const rpmWhat = document.createElement("p");
+        rpmWhat.innerHTML =
+            "<strong>What are Remote Path Mappings (RPM)?</strong> " +
+            "When your download client (qBittorrent, SABnzbd, etc.) saves files to one path " +
+            "but your *arr app (Sonarr, Radarr, etc.) sees those files at a different path, " +
+            "RPM tells the *arr app how to translate between the two. It's a setting inside " +
+            "each *arr app under Settings \u2192 Download Clients.";
+        rpmIntro.appendChild(rpmWhat);
+
+        const rpmWhen = document.createElement("p");
+        rpmWhen.style.marginTop = "0.5rem";
+        rpmWhen.innerHTML =
+            "<strong>When should I use this?</strong> " +
+            "RPM is a <em>quick fix</em> \u2014 it works without changing any Docker volumes or restarting containers. " +
+            "Use it if you can't restructure your mounts right now, or if your download client runs on a " +
+            "separate machine/NAS. The <strong>Fix Paths</strong> tab is the permanent solution that " +
+            "eliminates the need for RPM entirely by giving all services the same view of your files.";
+        rpmIntro.appendChild(rpmWhen);
+
+        const rpmHow = document.createElement("p");
+        rpmHow.style.marginTop = "0.5rem";
+        rpmHow.textContent =
+            "This wizard walks you through it step by step: what MapArr detected, verifying " +
+            "your download client settings, generating the exact RPM values, and where to enter them.";
+        rpmIntro.appendChild(rpmHow);
+
+        rpmBlock.appendChild(rpmIntro);
+
+        // Render RPM wizard content into the block
+        renderRpmWizard(data, rpmBlock);
+
+        // Insert after recommendedBlock
+        if (recommendedBlock) {
+            recommendedBlock.after(rpmBlock);
+        } else {
+            section.appendChild(rpmBlock);
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Determine default active tab — AFTER all tabs (incl. RPM) are created
+    // so preferred tab DOM check can find dynamically-created tabs
+    // ────────────────────────────────────────────────────────────────────────
     let defaultTab = "recommended";
-    if (!hasCatA || !data.solution_yaml) {
+    const preferred = state._preferredSolutionTab;
+    state._preferredSolutionTab = null; // consume it
+    if (preferred) {
+        const prefTab = document.querySelector('.solution-tab[data-tab="' + preferred + '"]');
+        if (prefTab && !prefTab.classList.contains("hidden")) {
+            defaultTab = preferred;
+        }
+        // If preferred tab doesn't exist (e.g. "rpm" on a non-RPM stack), fall through
+    }
+    if (defaultTab === "recommended" && (!hasCatA || !data.solution_yaml)) {
         if (hasCatB && data.env_solution_yaml) {
             defaultTab = "env";
         } else if (data.original_corrected_yaml) {
@@ -3619,138 +4321,52 @@ function showSolution(data) {
     }
 
     // ────────────────────────────────────────────────────────────────────────
-    // RPM Wizard — only show when Cat A AND RPM mappings exist with possible: true
+    // Summary text + YAML population — unified for all stacks
     // ────────────────────────────────────────────────────────────────────────
-    const rpmMappings = data.rpm_mappings || [];
-    const hasPossibleRpm = rpmMappings.some((m) => m.possible);
-    const hasRpmHint = (data.conflicts || []).some((c) => c.rpm_hint);
-
-    if (hasCatA && (hasPossibleRpm || hasRpmHint)) {
-        // Show track selector: Quick Fix (RPM) vs Proper Fix (YAML restructure)
-        summaryEl.textContent = "Two fix approaches available \u2014 Quick Fix keeps your current mounts and bridges the gaps with Remote Path Mappings. Proper Fix restructures your volumes to eliminate the problem permanently.";
-
-        const trackWrap = document.createElement("div");
-        trackWrap.className = "solution-tracks";
-
-        const trackHeader = document.createElement("div");
-        trackHeader.className = "track-header";
-        trackHeader.textContent = "Choose your fix approach:";
-        trackWrap.appendChild(trackHeader);
-
-        const trackOpts = document.createElement("div");
-        trackOpts.className = "track-options";
-
-        const quickBtn = document.createElement("button");
-        quickBtn.className = "track-btn track-active";
-        const quickTitle = document.createElement("span");
-        quickTitle.textContent = "Quick Fix (RPM Wizard)";
-        quickBtn.appendChild(quickTitle);
-        const quickDesc = document.createElement("span");
-        quickDesc.className = "track-desc";
-        quickDesc.textContent = "Keep your mounts, bridge the paths step by step";
-        quickBtn.appendChild(quickDesc);
-        trackOpts.appendChild(quickBtn);
-
-        const properBtn = document.createElement("button");
-        properBtn.className = "track-btn";
-        const properTitle = document.createElement("span");
-        properTitle.textContent = "Proper Fix (Restructure)";
-        properBtn.appendChild(properTitle);
-        const properDesc = document.createElement("span");
-        properDesc.className = "track-desc";
-        properDesc.textContent = "TRaSH Guides compliance \u2014 no RPM needed after";
-        properBtn.appendChild(properDesc);
-        trackOpts.appendChild(properBtn);
-
-        trackWrap.appendChild(trackOpts);
-
-        // Quick Fix content (RPM wizard)
-        const quickContent = document.createElement("div");
-        quickContent.className = "track-content-quick";
-
-        // Proper Fix content (existing YAML solution — relocated)
-        const properContent = document.createElement("div");
-        properContent.className = "track-content-proper hidden";
-
-        // Insert track selector after the summary text
-        summaryEl.after(trackWrap, quickContent, properContent);
-
-        // Track toggle
-        quickBtn.addEventListener("click", () => {
-            quickBtn.classList.add("track-active");
-            properBtn.classList.remove("track-active");
-            quickContent.classList.remove("hidden");
-            properContent.classList.add("hidden");
-        });
-        properBtn.addEventListener("click", () => {
-            properBtn.classList.add("track-active");
-            quickBtn.classList.remove("track-active");
-            properContent.classList.remove("hidden");
-            quickContent.classList.add("hidden");
-        });
-
-        // Render RPM wizard into Quick Fix track
-        renderRpmWizard(data, quickContent);
-
-        // Move existing YAML solution elements into Proper Fix track
-        const solutionTabs2 = document.getElementById("solution-tabs");
-        if (solutionTabs2) properContent.appendChild(solutionTabs2);
-        if (recommendedBlock) properContent.appendChild(recommendedBlock);
-        if (originalBlock) properContent.appendChild(originalBlock);
-        // Move env solution block into Proper Fix track too
-        const envSolBlock = document.querySelector(".env-solution-block");
-        if (envSolBlock) properContent.appendChild(envSolBlock);
-        // Move apply-confirm modal too
-        const applyConfirm = document.getElementById("apply-confirm");
-        if (applyConfirm) properContent.appendChild(applyConfirm);
-        const applyResult = document.getElementById("apply-result");
-        if (applyResult) properContent.appendChild(applyResult);
-
-        // Populate YAML content as before
-        if (data.solution_yaml) {
-            renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
+    if (hasCatB && !hasCatA && data.env_solution_yaml) {
+        const envFixCount = (data.fix_plans || []).filter((p) => p.category === "B").length;
+        if (envFixCount > 1) {
+            summaryEl.textContent =
+                "The Fix Permissions tab shows the PUID/PGID changes needed to align your services. " +
+                "Use Apply All Fixes to patch " + envFixCount + " compose files across your pipeline in one click.";
+        } else if (envFixCount === 1) {
+            summaryEl.textContent =
+                "The Fix Permissions tab shows the PUID/PGID changes needed to align your services. " +
+                "Use Apply Fix to update your compose file directly.";
         } else {
-            const firstFix = data.conflicts?.find((c) => c.fix);
-            yamlEl.textContent = firstFix?.fix || "No specific YAML changes generated.";
+            summaryEl.textContent =
+                "The Fix Permissions tab shows the PUID/PGID changes needed to align your services. " +
+                "Copy the values and update your compose files manually.";
         }
-        if (data.original_corrected_yaml && originalTab && originalYamlEl) {
-            renderYamlWithHighlights(originalYamlEl, data.original_corrected_yaml, data.original_changed_lines || []);
-            originalTab.classList.remove("hidden");
-        } else if (originalTab) {
-            originalTab.classList.add("hidden");
-        }
-        switchSolutionTab(defaultTab);
+    } else if (hasCatA && hasCatB) {
+        summaryEl.textContent =
+            "Multiple fix types available. Use the tabs to review path fixes, permission fixes, or apply everything at once." +
+            (hasRpm ? " The RPM Wizard tab offers a quick alternative to restructuring volumes." : "");
+    } else if (hasCatA) {
+        summaryEl.textContent =
+            "The Fix Paths tab shows the ideal volume mount snippet for your services." +
+            (hasRpm ? " The RPM Wizard tab offers a quicker alternative using Remote Path Mappings." : " Use Apply Path Fix to update your compose file directly.");
     } else {
-        // No RPM available — show standard solution tabs
-        if (hasCatB && !hasCatA && data.env_solution_yaml) {
-            summaryEl.textContent =
-                "The Fix Permissions tab shows the environment variable changes needed to align your services. " +
-                "Switch to Your Config (Corrected) to see your full docker-compose.yml with the fixes applied.";
-        } else if (hasCatA) {
-            summaryEl.textContent =
-                "The Recommended Fix tab shows the ideal volume mount snippet for your services. " +
-                "Switch to Your Config (Corrected) to see your full docker-compose.yml with the fixes applied \u2014 that's the version you can apply directly to your stack.";
-        } else {
-            summaryEl.textContent =
-                "Review the suggested changes below and apply them to your compose configuration.";
-        }
-
-        if (data.solution_yaml) {
-            renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
-        } else {
-            const firstFix = data.conflicts?.find((c) => c.fix);
-            yamlEl.textContent = firstFix?.fix || "No specific YAML changes generated.";
-        }
-
-        if (data.original_corrected_yaml && originalTab && originalYamlEl) {
-            renderYamlWithHighlights(originalYamlEl, data.original_corrected_yaml, data.original_changed_lines || []);
-            originalTab.classList.remove("hidden");
-        } else if (originalTab) {
-            originalTab.classList.add("hidden");
-        }
-
-        switchSolutionTab(defaultTab);
+        summaryEl.textContent =
+            "Review the suggested changes below and apply them to your compose configuration.";
     }
+
+    // Populate YAML content
+    if (data.solution_yaml) {
+        renderYamlWithHighlights(yamlEl, data.solution_yaml, data.solution_changed_lines || []);
+    } else {
+        const firstFix = data.conflicts?.find((c) => c.fix);
+        yamlEl.textContent = firstFix?.fix || "No specific YAML changes generated.";
+    }
+
+    if (data.original_corrected_yaml && originalTab && originalYamlEl && hasCatA && hasCatB) {
+        renderYamlWithHighlights(originalYamlEl, data.original_corrected_yaml, data.original_changed_lines || []);
+        originalTab.classList.remove("hidden");
+    } else if (originalTab) {
+        originalTab.classList.add("hidden");
+    }
+
+    switchSolutionTab(defaultTab);
 
     section.classList.remove("hidden");
 }
@@ -4364,7 +4980,7 @@ function showHealthyResult(data) {
     section.classList.remove("hidden");
     renderObservations(data);
     showAgainButton();
-    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    section.scrollIntoView(smoothScrollOpts("nearest"));
 }
 
 // ─── Incomplete Stack Result (yellow — missing arr or download client) ───
@@ -4439,7 +5055,7 @@ function showIncompleteResult(data) {
     section.classList.remove("hidden");
     renderObservations(data);
     showAgainButton();
-    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    section.scrollIntoView(smoothScrollOpts("nearest"));
 }
 
 // ─── Cross-Stack Healthy (green — siblings found, mounts aligned) ───
@@ -4642,7 +5258,7 @@ function showCrossStackHealthy(data) {
 
     section.classList.remove("hidden");
     renderObservations(data);
-    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    section.scrollIntoView(smoothScrollOpts("nearest"));
 }
 
 // ─── RPM Wizard ───
@@ -4721,6 +5337,9 @@ function renderRpmTable(entries, container) {
         (byArr[key] = byArr[key] || []).push(m);
     });
 
+    // Collect unique hosts for the advisory note
+    const uniqueHosts = new Set();
+
     for (const [arrLabel, rows] of Object.entries(byArr)) {
         const header = document.createElement("div");
         header.className = "rpm-arr-header";
@@ -4741,6 +5360,7 @@ function renderRpmTable(entries, container) {
 
         const tbody = document.createElement("tbody");
         rows.forEach((m) => {
+            uniqueHosts.add(m.host);
             const tr = document.createElement("tr");
             [m.host, m.remote_path, m.local_path].forEach((val) => {
                 const td = document.createElement("td");
@@ -4751,6 +5371,20 @@ function renderRpmTable(entries, container) {
         });
         table.appendChild(tbody);
         container.appendChild(table);
+    }
+
+    // Host field advisory — users may have configured hostname/IP instead of container name
+    if (uniqueHosts.size > 0) {
+        const hostNote = document.createElement("p");
+        hostNote.className = "rpm-host-note";
+        const hostList = [...uniqueHosts].join(", ");
+        hostNote.innerHTML =
+            "<strong>About the Host field:</strong> We've used the Docker container name (<code>" +
+            hostList + "</code>) because that's how services on the same Docker network find each other. " +
+            "If your download client is on a different machine, or you've configured it in your *arr app " +
+            "using a hostname or IP address (e.g. <code>192.168.1.x</code> or <code>my-server</code>), " +
+            "use that same hostname/IP as the Host value instead.";
+        container.appendChild(hostNote);
     }
 }
 
@@ -4770,7 +5404,7 @@ function renderRpmWizard(data, container) {
         noRpm.textContent =
             "RPM can't help here \u2014 the host mount paths don't overlap between your " +
             "download clients and *arr apps. The data files aren't accessible across services. " +
-            "Switch to the Proper Fix tab to restructure your mounts.";
+            "Switch to the Fix Paths tab to restructure your mounts.";
         container.appendChild(noRpm);
         return;
     }
@@ -4869,9 +5503,9 @@ function renderRpmWizard(data, container) {
 
             const pairs = [
                 ["Download Client:", m.dc_service + " (" + m.dc_stack + ")"],
-                ["DC mount:", m.dc_host_path + " \u2192 " + m.remote_path.replace(/\/$/, "")],
+                ["Client mount:", m.dc_host_path + " \u2192 " + m.remote_path.replace(/\/$/, "")],
                 ["*Arr App:", m.arr_service + " (" + m.arr_stack + ")"],
-                ["Arr mount:", m.arr_host_path + " \u2192 " + m.local_path.replace(/\/$/, "")],
+                ["*Arr mount:", m.arr_host_path + " \u2192 " + m.local_path.replace(/\/$/, "")],
                 ["Base RPM:", "Remote=" + m.remote_path + " \u2192 Local=" + m.local_path],
             ];
             pairs.forEach(([label, value]) => {
@@ -4898,7 +5532,7 @@ function renderRpmWizard(data, container) {
         // "Missing a DC?" link
         const addDcLink = document.createElement("span");
         addDcLink.className = "add-dc-link";
-        addDcLink.textContent = "+ Missing a download client? Add manually";
+        addDcLink.textContent = "+ Don't see your download client? Add manually";
         const manualForm = document.createElement("div");
         manualForm.className = "manual-dc-form hidden";
 
@@ -4924,11 +5558,11 @@ function renderRpmWizard(data, container) {
         actions.className = "gate-actions";
         const nextBtn = document.createElement("button");
         nextBtn.className = "gate-next";
-        nextBtn.textContent = "Next: Verify DC \u2192";
+        nextBtn.textContent = "Next: Verify Download Client \u2192";
         nextBtn.addEventListener("click", () => {
             currentGate = 2;
             updateGates();
-            gateEls[2].scrollIntoView({ behavior: "smooth", block: "nearest" });
+            gateEls[2].scrollIntoView(smoothScrollOpts("nearest"));
         });
         actions.appendChild(nextBtn);
         gate.appendChild(actions);
@@ -4989,7 +5623,7 @@ function renderRpmWizard(data, container) {
         defaultLabel.style.color = "var(--text-secondary)";
         defaultLabel.style.display = "block";
         defaultLabel.style.marginTop = "0.5rem";
-        defaultLabel.textContent = "Default Save Path (from your DC):";
+        defaultLabel.textContent = "Default Save Path (from your download client):";
         content.appendChild(defaultLabel);
 
         const defaultInput = document.createElement("input");
@@ -5038,7 +5672,7 @@ function renderRpmWizard(data, container) {
         });
         checkRow.appendChild(checkbox);
         const checkText = document.createTextNode(
-            " My DC uses the default save path for all categories (no per-category paths)"
+            " My download client uses the default save path for everything (no per-category subfolders)"
         );
         checkRow.appendChild(checkText);
         content.appendChild(checkRow);
@@ -5058,13 +5692,13 @@ function renderRpmWizard(data, container) {
 
         const nextBtn2 = document.createElement("button");
         nextBtn2.className = "gate-next";
-        nextBtn2.textContent = "Next: Calculate RPM \u2192";
+        nextBtn2.textContent = "Next: See RPM Values \u2192";
         nextBtn2.disabled = true;
         nextBtn2.addEventListener("click", () => {
             currentGate = 3;
             updateGates();
             buildGate3Content();
-            gateEls[3].scrollIntoView({ behavior: "smooth", block: "nearest" });
+            gateEls[3].scrollIntoView(smoothScrollOpts("nearest"));
         });
         actions.appendChild(nextBtn2);
         gate.appendChild(actions);
@@ -5108,11 +5742,11 @@ function renderRpmWizard(data, container) {
 
         const nextBtn3 = document.createElement("button");
         nextBtn3.className = "gate-next";
-        nextBtn3.textContent = "Next: Apply in *arr \u2192";
+        nextBtn3.textContent = "Next: Where to Enter These \u2192";
         nextBtn3.addEventListener("click", () => {
             currentGate = 4;
             updateGates();
-            gateEls[4].scrollIntoView({ behavior: "smooth", block: "nearest" });
+            gateEls[4].scrollIntoView(smoothScrollOpts("nearest"));
         });
         actions.appendChild(nextBtn3);
         gate.appendChild(actions);
@@ -5179,7 +5813,7 @@ function renderRpmWizard(data, container) {
             warn.textContent =
                 "RPM can't bridge these pairs (host paths don't overlap): " +
                 names.join(", ") +
-                ". These require mount restructuring (see Proper Fix tab).";
+                ". These require mount restructuring (see Fix Paths tab).";
             gate3Content.appendChild(warn);
         }
     }
@@ -5274,7 +5908,7 @@ function renderRpmWizard(data, container) {
         nextBtn4.addEventListener("click", () => {
             currentGate = 5;
             updateGates();
-            gateEls[5].scrollIntoView({ behavior: "smooth", block: "nearest" });
+            gateEls[5].scrollIntoView(smoothScrollOpts("nearest"));
         });
         actions.appendChild(nextBtn4);
         gate.appendChild(actions);
@@ -5346,7 +5980,7 @@ function renderRpmWizard(data, container) {
                 "\u2022 Ensure Remote and Local paths end with a trailing slash /\n" +
                 "\u2022 Restart the *arr app after adding RPM entries\n" +
                 "\u2022 Check the *arr app's logs for import errors\n\n" +
-                "If RPM still doesn't work, consider the Proper Fix tab \u2014 " +
+                "If RPM still doesn't work, consider the Fix Paths tab \u2014 " +
                 "restructuring mounts is the permanent solution.";
             content.appendChild(tips);
         });
@@ -5609,7 +6243,7 @@ function showCrossStackConflict(data) {
 
         const applyBtn = document.createElement("button");
         applyBtn.className = "apply-btn";
-        applyBtn.textContent = "Apply Fix";
+        applyBtn.textContent = "Apply All Fixes";
         applyBtn.addEventListener("click", () => {
             confirmWrap.classList.remove("hidden");
         });
@@ -5624,7 +6258,7 @@ function showCrossStackConflict(data) {
 
         const confirmTitle = document.createElement("p");
         confirmTitle.className = "apply-confirm-title";
-        confirmTitle.textContent = "Apply fix to your compose file?";
+        confirmTitle.textContent = "Apply all fixes to your compose file?";
         confirmContent.appendChild(confirmTitle);
 
         const confirmFile = document.createElement("p");
@@ -5634,7 +6268,7 @@ function showCrossStackConflict(data) {
 
         const confirmNote = document.createElement("p");
         confirmNote.className = "apply-confirm-note";
-        confirmNote.textContent = "A backup (.bak) will be created before any changes are made.";
+        confirmNote.textContent = "This patches volume paths and permissions in one go. A backup (.bak) will be created first.";
         confirmContent.appendChild(confirmNote);
 
         const btnRow = document.createElement("div");
@@ -5642,7 +6276,7 @@ function showCrossStackConflict(data) {
 
         const yesBtn = document.createElement("button");
         yesBtn.className = "apply-confirm-yes";
-        yesBtn.textContent = "Apply Fix";
+        yesBtn.textContent = "Apply All Fixes";
         yesBtn.addEventListener("click", async () => {
             yesBtn.disabled = true;
             yesBtn.textContent = "Applying...";
@@ -5695,7 +6329,7 @@ function showCrossStackConflict(data) {
                 confirmWrap.classList.add("hidden");
             } finally {
                 yesBtn.disabled = false;
-                yesBtn.textContent = "Apply Fix";
+                yesBtn.textContent = "Apply All Fixes";
             }
         });
         btnRow.appendChild(yesBtn);
@@ -5722,7 +6356,7 @@ function showCrossStackConflict(data) {
     // Actions
     section.classList.remove("hidden");
     showAgainButton();
-    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    section.scrollIntoView(smoothScrollOpts("nearest"));
 }
 
 // ─── Analysis Error ───
@@ -5747,7 +6381,7 @@ function showAnalysisError(error, stage) {
 
     section.classList.remove("hidden");
     showAgainButton();
-    section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    section.scrollIntoView(smoothScrollOpts("nearest"));
 }
 
 // ─── Show "Analyze Another" Button ───
@@ -5799,7 +6433,7 @@ function showAgainButton() {
                 (s.services || []).some((svc) => svc.toLowerCase().includes(state.fixDetectedService || ""))
             ), state.fixDetectedService || "");
             fixSection.classList.remove("hidden");
-            fixSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            fixSection.scrollIntoView(smoothScrollOpts("nearest"));
         });
         wrongLink.appendChild(btn);
     }
@@ -5846,8 +6480,15 @@ function clearAnalysisResults() {
     if (applyBtn) {
         applyBtn.classList.add("hidden");
         applyBtn.disabled = false;
-        applyBtn.textContent = "Apply Fix";
+        applyBtn.textContent = "Apply All Fixes";
         applyBtn.classList.remove("applied");
+    }
+    const applyPathBtn = document.getElementById("btn-apply-path-fix");
+    if (applyPathBtn) {
+        applyPathBtn.classList.add("hidden");
+        applyPathBtn.disabled = false;
+        applyPathBtn.textContent = "Apply Path Fix";
+        applyPathBtn.classList.remove("applied");
     }
     const applyResult = document.getElementById("apply-result");
     if (applyResult) {
@@ -5998,11 +6639,13 @@ function switchSolutionTab(tab) {
     const recBlock = document.getElementById("solution-block-recommended");
     const origBlock = document.getElementById("solution-block-original");
     const envBlock = document.getElementById("solution-block-env");
+    const rpmBlock = document.getElementById("solution-block-rpm");
 
     // Hide all blocks first
     if (recBlock) recBlock.classList.add("hidden");
     if (origBlock) origBlock.classList.add("hidden");
     if (envBlock) envBlock.classList.add("hidden");
+    if (rpmBlock) rpmBlock.classList.add("hidden");
 
     // Show the selected block
     if (tab === "recommended" && recBlock) {
@@ -6011,6 +6654,8 @@ function switchSolutionTab(tab) {
         origBlock.classList.remove("hidden");
     } else if (tab === "env" && envBlock) {
         envBlock.classList.remove("hidden");
+    } else if (tab === "rpm" && rpmBlock) {
+        rpmBlock.classList.remove("hidden");
     }
 }
 
@@ -6064,15 +6709,53 @@ let _lastAnalysisForApply = null;
 
 function setAnalysisForApply(data) {
     _lastAnalysisForApply = data;
-    // Show/hide the apply button based on whether we have a corrected original
+    const conflicts = data ? (data.conflicts || []) : [];
+    const cats = new Set(conflicts.map(c => (c.category || "").toUpperCase()));
+    const hasCatA = cats.has("A");
+    const hasCatB = cats.has("B");
+    const fixPlans = data ? (data.fix_plans || []) : [];
+
+    // "Fix All Issues" tab — Apply All Fixes button
     const applyBtn = document.getElementById("btn-apply-fix");
     if (applyBtn) {
         if (data && data.original_corrected_yaml && data.compose_file_path) {
             applyBtn.classList.remove("hidden");
+            if (hasCatA && hasCatB) {
+                applyBtn.textContent = "Apply All Fixes";
+            } else if (hasCatA) {
+                applyBtn.textContent = "Apply Path Fix";
+            } else if (hasCatB) {
+                applyBtn.textContent = "Apply Permission Fix";
+            } else {
+                applyBtn.textContent = "Apply Fix";
+            }
         } else {
             applyBtn.classList.add("hidden");
         }
     }
+
+    // "Recommended Fix" tab — Apply Path Fix button (Cat A only plans)
+    const pathBtn = document.getElementById("btn-apply-path-fix");
+    if (pathBtn) {
+        const catAPlans = fixPlans.filter(p => p.category === "A");
+        if (hasCatA && catAPlans.length > 0) {
+            pathBtn.classList.remove("hidden");
+            pathBtn.textContent = "Apply Path Fix";
+        } else {
+            pathBtn.classList.add("hidden");
+        }
+    }
+}
+
+function applyPathFix() {
+    if (!_lastAnalysisForApply) return;
+    const catAPlans = (_lastAnalysisForApply.fix_plans || []).filter(p => p.category === "A");
+    if (catAPlans.length === 0) {
+        showSimpleToast("No path fix available to apply.", "error");
+        return;
+    }
+    const btn = document.getElementById("btn-apply-path-fix");
+    showDiffPreview(catAPlans, btn);
 }
 
 function applyFix() {
@@ -6126,8 +6809,8 @@ async function doApplyFix() {
             resultEl.classList.remove("hidden");
             showSimpleToast("Fix applied successfully!", "success");
 
-            // Update all apply buttons (Cat A + Cat B tabs)
-            for (const id of ["btn-apply-fix", "btn-apply-env-fix"]) {
+            // Update all apply buttons — "Apply All" patches everything
+            for (const id of ["btn-apply-fix", "btn-apply-path-fix", "btn-apply-env-fix"]) {
                 const btn = document.getElementById(id);
                 if (btn) {
                     btn.textContent = "Applied";
@@ -6183,7 +6866,7 @@ async function doApplyFix() {
         }
     } finally {
         yesBtn.disabled = false;
-        yesBtn.textContent = "Apply Fix";
+        yesBtn.textContent = "Apply All Fixes";
     }
 }
 
@@ -6373,6 +7056,18 @@ function _healthDotTooltip(health) {
     return tips[health] || "Status unknown";
 }
 
+function _serviceHealthTooltip(svc, health) {
+    // Show real conflict details from the per-service analysis
+    if (health === "awaiting") return "Fix has been applied \u2014 restart the container to take effect";
+    if (svc.health_details && svc.health_details.length > 0) {
+        return svc.health_details.slice(0, 3).join("\n");
+    }
+    if (health === "healthy") return "No issues detected \u2014 properly configured";
+    if (health === "problem") return "Path issues detected \u2014 click to see details";
+    if (health === "issue") return "Configuration concern \u2014 click to see details";
+    return "Status unknown";
+}
+
 function _familyTooltip(family) {
     const tips = {
         "LinuxServer.io": "Uses PUID/PGID environment variables for permissions",
@@ -6452,40 +7147,57 @@ function _legendDot(health, label) {
 function _effectiveHealth(stack) {
     const base = stack.health || "unknown";
 
-    // Only upgrade ok → something worse. Don't touch warning/problem/unknown.
-    if (base !== "ok") return base;
-
-    // If this stack was analyzed or fixed this session, trust the deep result.
-    // Deep per-stack analysis is more authoritative than the broad pipeline scan.
+    // The pipeline now runs full analysis during scan, so stack.health
+    // from the discovery layer is no longer the primary source of truth.
+    // Instead, check per-stack conflicts from the pipeline's deep analysis.
     const stackName = extractDirName(stack.path);
+
+    // If fix was applied this session, trust the verified result
     if (state.verifiedStacks.has(stackName)) return base;
 
-    // Check if pipeline has conflicts mentioning this stack
+    // Use per-stack conflict data from pipeline's full analysis
     const p = state.pipeline;
-    if (!p || !p.conflicts || p.conflicts.length === 0) return base;
+    if (!p) return base;
 
-    // Category-aware: Cat A = problem (red), Cat B = warning (yellow)
-    let worstCategory = null;
-    for (const c of p.conflicts) {
-        if (c.stack_name === stackName) {
-            const cat = (c.category || "").toUpperCase();
+    // Check per_stack_conflicts (new: from full analyzer)
+    const stackConflicts = (p.per_stack_conflicts || {})[stackName] || [];
+    if (stackConflicts.length > 0) {
+        let worstCategory = null;
+        for (const c of stackConflicts) {
+            const cat = (c.category || "D").toUpperCase();
             if (cat === "A") { worstCategory = "A"; break; }
             if (cat === "B" && worstCategory !== "A") worstCategory = "B";
+            if (cat === "C" && !worstCategory) worstCategory = "C";
         }
+        if (worstCategory === "A") return "problem";
+        if (worstCategory === "B" || worstCategory === "C") return "warning";
+        return "ok";  // Only Cat D (observations) — no health impact
     }
 
-    if (worstCategory === "A") return "problem";
-    if (worstCategory === "B") return "warning";
+    // Also check pipeline-level conflicts (cross-stack mount/perm)
+    const pipelineConflicts = (p.conflicts || []).filter(c => c.stack_name === stackName);
+    if (pipelineConflicts.length > 0) {
+        const hasCatA = pipelineConflicts.some(c => (c.category || "").toUpperCase() === "A");
+        if (hasCatA) return "problem";
+        return "warning";
+    }
+
+    // Pipeline ran full analysis and found no conflicts for this stack
+    if (p.per_stack_conflicts && stackName in p.per_stack_conflicts === false) {
+        // Stack wasn't analyzed (non-media) — trust discovery health
+        return base;
+    }
+
     return base;
 }
 
 function _healthTooltip(health, hint) {
     const criteria = {
-        ok: "GREEN: All media services share a common host mount path. Hardlinks and atomic moves should work.",
-        caution: "BLINKING YELLOW: This stack is internally healthy, but its mount paths differ from the rest of your pipeline. Click to see details.",
-        warning: "YELLOW: Permission mismatch or incomplete setup detected. Click to run full analysis.",
-        problem: "RED: Media services mount different host directories. Hardlinks cannot work across separate bind mounts.",
-        unknown: "GREY: No media services detected in this stack. Not applicable for hardlink analysis.",
+        ok: "All checks passed — paths, permissions, and configuration look good.",
+        caution: "Internally OK but misaligned with your broader pipeline. Click to see details.",
+        warning: "Permission or infrastructure issue detected. Click to see details.",
+        problem: "Path issues detected — hardlinks cannot work. Click to see the fix.",
+        unknown: "No media services detected in this stack.",
     };
     const base = criteria[health] || "";
     return hint ? base + "\n\n" + hint : base;
@@ -6616,7 +7328,7 @@ function toggleHeaderPathDropdown() {
             if (state.mode === "browse") {
                 document.getElementById("step-stacks").classList.remove("hidden");
                 setTimeout(() => {
-                    document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+                    document.getElementById("step-stacks").scrollIntoView(smoothScrollOpts("start"));
                 }, 100);
             }
         });
@@ -6691,7 +7403,7 @@ function toggleHeaderPathDropdown() {
             if (state.mode === "browse") {
                 document.getElementById("step-stacks").classList.remove("hidden");
                 setTimeout(() => {
-                    document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+                    document.getElementById("step-stacks").scrollIntoView(smoothScrollOpts("start"));
                 }, 100);
             }
         }
@@ -6709,7 +7421,7 @@ function toggleHeaderPathDropdown() {
         if (state.mode === "browse") {
             document.getElementById("step-stacks").classList.remove("hidden");
             setTimeout(() => {
-                document.getElementById("step-stacks").scrollIntoView({ behavior: "smooth", block: "start" });
+                document.getElementById("step-stacks").scrollIntoView(smoothScrollOpts("start"));
             }, 100);
         }
     });

@@ -3009,12 +3009,62 @@ _UMASK_FIX_TYPES = {"umask_inconsistent", "umask_restrictive"}
 _TZ_FIX_TYPES = {"tz_mismatch"}
 
 
+def _get_service_env_var_names(service: ServiceInfo) -> dict:
+    """Get the correct UID/GID/UMASK env var names for a service's image family.
+
+    Different image families use different env var names:
+    - LinuxServer.io / Hotio / Binhex: PUID, PGID, UMASK
+    - jlesage: USER_ID, GROUP_ID, UMASK
+    - Official Plex: PLEX_UID, PLEX_GID
+    - Jellyfin/Seerr: PUID, PGID (or none)
+
+    Returns dict with keys: uid_env, gid_env, umask_env (values may be None).
+    Falls back to PUID/PGID/UMASK for unrecognized images.
+    """
+    family = _identify_image_family(service.image)
+    if family:
+        return {
+            "uid_env": family.uid_env or "PUID",
+            "gid_env": family.gid_env or "PGID",
+            "umask_env": family.umask_env or "UMASK",
+        }
+    return {"uid_env": "PUID", "gid_env": "PGID", "umask_env": "UMASK"}
+
+
+def _find_majority_uid_gid(
+    services: List[ServiceInfo], default_uid: str = "1000", default_gid: str = "1000",
+) -> Tuple[str, str]:
+    """Find the most common UID and GID across media services, family-aware.
+
+    Reads each service's family-specific env vars (PUID, USER_ID, PLEX_UID, etc.)
+    to build a unified picture of UID/GID values. Falls back to family defaults
+    for services without explicit env vars.
+
+    Returns (majority_uid, majority_gid).
+    """
+    from collections import Counter
+    uids: List[str] = []
+    gids: List[str] = []
+    for svc in services:
+        if svc.role not in ("arr", "download_client", "media_server"):
+            continue
+        profile = _build_permission_profile(svc)
+        if profile.uid:
+            uids.append(profile.uid)
+        if profile.gid:
+            gids.append(profile.gid)
+    uid = Counter(uids).most_common(1)[0][0] if uids else default_uid
+    gid = Counter(gids).most_common(1)[0][0] if gids else default_gid
+    return uid, gid
+
+
 def _find_majority_env(
     services: List[ServiceInfo], key: str, default: str,
 ) -> str:
     """Find the most common value for an environment variable across services.
 
     Only considers media-role services (arr, download_client, media_server).
+    For UID/GID lookups, prefer _find_majority_uid_gid() which is family-aware.
     Returns the most common non-empty value, or *default* if none found.
     """
     from collections import Counter
@@ -3064,16 +3114,15 @@ def _generate_env_solution(
     if not participants:
         return None, []
 
-    # Determine target values
-    target_puid = _find_majority_env(services, "PUID", "1000") if fix_puid else None
-    target_pgid = _find_majority_env(services, "PGID", "1000") if fix_puid else None
+    # Determine target values (family-aware UID/GID resolution)
+    target_uid, target_gid = _find_majority_uid_gid(services) if fix_puid else (None, None)
     target_umask = "002" if fix_umask else None
     target_tz = _find_majority_env(services, "TZ", "America/New_York") if fix_tz else None
 
     # Build header comments
     header_parts = []
     if fix_puid:
-        header_parts.append(f"PUID={target_puid}, PGID={target_pgid}")
+        header_parts.append(f"UID={target_uid}, GID={target_gid}")
     if fix_umask:
         header_parts.append(f"UMASK={target_umask}")
     if fix_tz:
@@ -3083,8 +3132,10 @@ def _generate_env_solution(
         "# Corrected environment configuration for permission consistency",
         f"# Fixes applied: {', '.join(header_parts)}",
         "#",
-        "# All media services should use identical PUID/PGID/TZ values",
+        "# All media services should use identical UID/GID/TZ values",
         "# so files created by one service are readable by others.",
+        "# Note: different image families use different env var names",
+        "# (PUID/PGID, USER_ID/GROUP_ID, PLEX_UID/PLEX_GID, etc.)",
         "#",
         "",
         "services:",
@@ -3099,20 +3150,27 @@ def _generate_env_solution(
         # Build the corrected env block for this service
         env = dict(svc.environment)  # copy original
 
+        # Use family-specific env var names for this service
+        var_names = _get_service_env_var_names(svc)
+
         if fix_puid:
-            old_puid = env.get("PUID", "")
-            old_pgid = env.get("PGID", "")
-            env["PUID"] = target_puid
-            env["PGID"] = target_pgid
+            uid_key = var_names["uid_env"]
+            gid_key = var_names["gid_env"]
+            env[uid_key] = target_uid
+            env[gid_key] = target_gid
 
         if fix_umask:
-            env["UMASK"] = target_umask
+            umask_key = var_names["umask_env"]
+            env[umask_key] = target_umask
 
         if fix_tz:
             env["TZ"] = target_tz
 
-        # Emit env vars in a stable order: PUID, PGID, UMASK, TZ first, then rest
-        priority_keys = ["PUID", "PGID", "UMASK", "TZ"]
+        # Emit env vars in a stable order: UID, GID, UMASK, TZ first, then rest
+        uid_key = var_names["uid_env"]
+        gid_key = var_names["gid_env"]
+        umask_key = var_names["umask_env"]
+        priority_keys = [uid_key, gid_key, umask_key, "TZ"]
         ordered_keys = [k for k in priority_keys if k in env]
         ordered_keys += sorted(k for k in env if k not in priority_keys)
 
@@ -3436,7 +3494,11 @@ def _patch_original_env(
     values for Category B conflicts. Preserves all other content.
 
     Strategy: line-based parsing. Find each affected service's environment:
-    block, replace PUID/PGID/UMASK/TZ lines with corrected values.
+    block, replace UID/GID/UMASK/TZ lines with corrected values.
+
+    Family-aware: uses the correct env var names per image family
+    (PUID/PGID for LSIO, USER_ID/GROUP_ID for jlesage, PLEX_UID/PLEX_GID
+    for Plex, etc.). Inserts missing env vars when needed.
 
     Handles both compose environment formats:
     - List format: ``- PUID=1000``
@@ -3444,7 +3506,7 @@ def _patch_original_env(
 
     Returns:
         (patched_yaml, changed_lines) — the patched YAML and 1-indexed
-        line numbers of lines that were replaced.
+        line numbers of lines that were replaced or inserted.
         Returns (None, []) if no changes needed or patching fails.
     """
     # Only process Category B (permission/env) conflicts
@@ -3461,21 +3523,31 @@ def _patch_original_env(
     if not (fix_puid or fix_umask or fix_tz):
         return None, []
 
-    # Determine target values
-    target_vals: Dict[str, str] = {}
-    if fix_puid:
-        target_vals["PUID"] = _find_majority_env(services, "PUID", "1000")
-        target_vals["PGID"] = _find_majority_env(services, "PGID", "1000")
-    if fix_umask:
-        target_vals["UMASK"] = "002"
-    if fix_tz:
-        target_vals["TZ"] = _find_majority_env(services, "TZ", "America/New_York")
+    # Determine target UID/GID values (family-aware majority calculation)
+    target_uid, target_gid = _find_majority_uid_gid(services) if fix_puid else (None, None)
+    target_umask = "002" if fix_umask else None
+    target_tz = _find_majority_env(services, "TZ", "America/New_York") if fix_tz else None
 
-    # Build set of affected service names — all media-role services
+    # Build per-service target mappings using family-specific env var names
+    # e.g., jlesage → {USER_ID: "1000", GROUP_ID: "1000"}
+    #        LSIO   → {PUID: "1000", PGID: "1000"}
+    svc_by_name: Dict[str, ServiceInfo] = {}
     affected_names: Set[str] = set()
+    svc_target_vals: Dict[str, Dict[str, str]] = {}  # service_name → {env_key: target_val}
     for svc in services:
         if svc.role in ("arr", "download_client", "media_server"):
             affected_names.add(svc.name)
+            svc_by_name[svc.name] = svc
+            var_names = _get_service_env_var_names(svc)
+            targets: Dict[str, str] = {}
+            if fix_puid:
+                targets[var_names["uid_env"]] = target_uid
+                targets[var_names["gid_env"]] = target_gid
+            if fix_umask:
+                targets[var_names["umask_env"]] = target_umask
+            if fix_tz:
+                targets["TZ"] = target_tz
+            svc_target_vals[svc.name] = targets
     if not affected_names:
         return None, []
 
@@ -3508,8 +3580,13 @@ def _patch_original_env(
             svc_name = stripped.rstrip(":").strip().strip("'\"")
 
             if svc_name in affected_names:
+                target_vals = svc_target_vals.get(svc_name, {})
                 result.append(line)
                 i += 1
+
+                found_env_block = False
+                # Track which target keys were seen (for inserting missing ones)
+                seen_target_keys: Set[str] = set()
 
                 # Scan this service's block for environment:
                 while i < len(lines):
@@ -3522,9 +3599,14 @@ def _patch_original_env(
                         break
 
                     if inner_stripped.rstrip(":").strip() == "environment":
+                        found_env_block = True
                         result.append(inner)
                         env_key_indent = inner_indent
                         i += 1
+
+                        # Detect format: list (- KEY=val) or dict (KEY: val)
+                        is_list_format = None
+                        env_item_indent = None
 
                         # Process environment entries
                         while i < len(lines):
@@ -3534,11 +3616,7 @@ def _patch_original_env(
 
                             # Left the environment block?
                             if env_stripped and not env_stripped.startswith("#"):
-                                # List format: "- KEY=val" can be at same indent
-                                # as "environment:" (yaml.dump style) or deeper.
-                                # Dict format: "KEY: val" is always deeper.
                                 if env_stripped.startswith("-"):
-                                    # List items below env_key_indent = left block
                                     if env_indent < env_key_indent:
                                         break
                                 elif env_indent <= env_key_indent:
@@ -3549,7 +3627,11 @@ def _patch_original_env(
                                 r'^(\s*-\s*)([A-Z_]+)=(.*)$', env_line
                             )
                             if list_match:
+                                if is_list_format is None:
+                                    is_list_format = True
+                                    env_item_indent = env_indent
                                 prefix, key, old_val = list_match.groups()
+                                seen_target_keys.add(key)
                                 if key in target_vals and str(old_val) != str(target_vals[key]):
                                     new_line = f"{prefix}{key}={target_vals[key]}"
                                     result.append(new_line)
@@ -3562,7 +3644,11 @@ def _patch_original_env(
                                 r'^(\s*)([A-Z_]+):\s*["\']?([^"\']*)["\']?\s*$', env_line
                             )
                             if dict_match:
+                                if is_list_format is None:
+                                    is_list_format = False
+                                    env_item_indent = env_indent
                                 prefix, key, old_val = dict_match.groups()
+                                seen_target_keys.add(key)
                                 if key in target_vals and str(old_val).strip() != str(target_vals[key]):
                                     new_line = f"{prefix}{key}: \"{target_vals[key]}\""
                                     result.append(new_line)
@@ -3574,10 +3660,41 @@ def _patch_original_env(
                             result.append(env_line)
                             i += 1
 
+                        # Insert any missing target env vars at end of environment block
+                        missing_keys = [k for k in target_vals if k not in seen_target_keys]
+                        if missing_keys:
+                            # Determine indentation for new lines
+                            if is_list_format is None or is_list_format:
+                                # List format or empty — use "    - KEY=val"
+                                item_prefix = " " * (env_item_indent if env_item_indent else env_key_indent + 2) + "- "
+                                for mk in missing_keys:
+                                    new_line = f"{item_prefix}{mk}={target_vals[mk]}"
+                                    result.append(new_line)
+                                    changed_lines.append(len(result))
+                            else:
+                                # Dict format — use "      KEY: 'val'"
+                                item_prefix = " " * (env_item_indent if env_item_indent else env_key_indent + 2)
+                                for mk in missing_keys:
+                                    new_line = f"{item_prefix}{mk}: \"{target_vals[mk]}\""
+                                    result.append(new_line)
+                                    changed_lines.append(len(result))
+
                         continue
 
                     result.append(inner)
                     i += 1
+
+                # If no environment: block found, insert one before the next key
+                if not found_env_block and target_vals:
+                    # Insert environment block at current position (just before
+                    # the line that ended the service scan). Use 4-space indent
+                    # for the environment: key, list format for entries.
+                    result.append("    environment:")
+                    for mk in target_vals:
+                        new_line = f"    - {mk}={target_vals[mk]}"
+                        result.append(new_line)
+                        changed_lines.append(len(result))
+
                 continue
 
         result.append(line)
@@ -3609,8 +3726,14 @@ def _build_fix_plans(
 ) -> List[dict]:
     """Build per-file fix plans from analysis results.
 
-    For single-file stacks, returns a list with 0 or 1 entries.
-    Each entry contains the corrected YAML for one compose file.
+    Produces separate plans for each fix scope so the frontend can offer
+    per-tab Apply buttons:
+      - category "A"   → path/volume fixes only
+      - category "B"   → permission/env fixes only
+      - category "A+B" → combined (all fixes in one patch)
+
+    When a file has both Cat A and Cat B issues, all three plans are returned.
+    When only one category is present, a single plan with that category is returned.
 
     Returns empty list if no actionable fixes (Cat C/D only, no conflicts,
     no raw content, or patching produces no changes).
@@ -3624,58 +3747,96 @@ def _build_fix_plans(
     if not cat_a and not cat_b:
         return []
 
-    corrected = None
-    changed_lines: List[int] = []
+    # Generate each patch independently so they can be applied separately
+    a_corrected = None
+    a_changed: List[int] = []
+    b_corrected = None
+    b_changed: List[int] = []
 
     if cat_a:
-        corrected, changed_lines = _patch_original_yaml(
+        a_corrected, a_changed = _patch_original_yaml(
             raw_compose_content, conflicts, services,
             host_root_override=pipeline_host_root,
         )
+
     if cat_b:
-        env_patched, env_changed = _patch_original_env(
-            corrected or raw_compose_content,
+        b_corrected, b_changed = _patch_original_env(
+            raw_compose_content,
             conflicts, services,
         )
-        if env_patched:
-            corrected = env_patched
-            changed_lines.extend(env_changed)
 
-    if not corrected or not changed_lines:
-        return []
+    # Combined patch: volumes first, then env on top
+    combined_corrected = None
+    combined_changed: List[int] = []
+    if cat_a and cat_b:
+        combined_corrected = a_corrected or raw_compose_content
+        combined_changed = list(a_changed)
+        env_on_top, env_lines = _patch_original_env(
+            combined_corrected, conflicts, services,
+        )
+        if env_on_top:
+            combined_corrected = env_on_top
+            combined_changed.extend(env_lines)
 
-    # Category label
-    category = "A+B" if (cat_a and cat_b) else ("A" if cat_a else "B")
+    # Helper: extract service names for summaries
+    try:
+        parsed_file = yaml.safe_load(raw_compose_content)
+        file_svc_names = list((parsed_file or {}).get("services", {}).keys())
+    except Exception:
+        file_svc_names = []
 
-    # Which services in this file were affected
-    conflict_services = set()
-    for c in conflicts:
-        if c.category in ("A", "B"):
-            conflict_services.update(c.services)
-    file_services = [s.name for s in services if s.role in ("arr", "download_client", "media_server")]
-    changed_services = [s for s in file_services if s in conflict_services]
-    if not changed_services:
-        changed_services = list(conflict_services)[:5]
+    file_media = [s.name for s in services if s.role in ("arr", "download_client", "media_server")
+                  and s.name in file_svc_names]
 
-    # Summary text
-    parts = []
-    if cat_a:
-        parts.append("volume mounts")
-    if cat_b:
-        parts.append("permissions")
-    svc_names = ", ".join(changed_services[:3])
-    if len(changed_services) > 3:
-        svc_names += f" (+{len(changed_services) - 3} more)"
-    change_summary = f"Fix {' and '.join(parts)} for {svc_names}" if svc_names else f"Fix {' and '.join(parts)}"
+    def _changed_svcs(cat_filter: str) -> List[str]:
+        svc_set = set()
+        for c in conflicts:
+            if c.category == cat_filter or cat_filter == "A+B":
+                svc_set.update(c.services)
+        result = [s for s in file_media if s in svc_set]
+        if not result:
+            result = file_media[:5] if file_media else list(svc_set)[:5]
+        return result
 
-    return [{
-        "compose_file_path": compose_file,
-        "corrected_yaml": corrected,
-        "changed_services": changed_services,
-        "change_summary": change_summary,
-        "category": category,
-        "changed_lines": changed_lines,
-    }]
+    def _summary(parts_text: str, svcs: List[str]) -> str:
+        svc_names = ", ".join(svcs[:3])
+        if len(svcs) > 3:
+            svc_names += f" (+{len(svcs) - 3} more)"
+        return f"Fix {parts_text} for {svc_names}" if svc_names else f"Fix {parts_text}"
+
+    def _plan(corrected, changed, category, parts_text, svcs):
+        return {
+            "compose_file_path": compose_file,
+            "corrected_yaml": corrected,
+            "original_yaml": raw_compose_content,
+            "changed_services": svcs,
+            "change_summary": _summary(parts_text, svcs),
+            "category": category,
+            "changed_lines": changed,
+        }
+
+    plans = []
+
+    # When both categories present: emit A-only, B-only, and A+B combined
+    if cat_a and cat_b:
+        if a_corrected and a_changed:
+            plans.append(_plan(a_corrected, a_changed, "A", "volume mounts",
+                               _changed_svcs("A")))
+        if b_corrected and b_changed:
+            plans.append(_plan(b_corrected, b_changed, "B", "permissions",
+                               _changed_svcs("B")))
+        if combined_corrected and combined_changed:
+            plans.append(_plan(combined_corrected, combined_changed, "A+B",
+                               "volume mounts and permissions",
+                               _changed_svcs("A+B")))
+    elif cat_a and a_corrected and a_changed:
+        plans.append(_plan(a_corrected, a_changed, "A", "volume mounts",
+                           _changed_svcs("A")))
+    elif cat_b and b_corrected and b_changed:
+        plans.append(_plan(b_corrected, b_changed, "B", "permissions",
+                           _changed_svcs("B")))
+
+    return plans
 
 
 def _build_fix_plans_multi(

@@ -29,7 +29,7 @@
 
     --text-primary: #e4e6eb;
     --text-secondary: #9ba1b0;
-    --text-muted: #5c6370;
+    --text-muted: #8b949e; /* [2026-03-10 12:35] QW-2: Raised from #5c6370 for WCAG AA contrast (5.2:1 on dark bg) */
 
     --accent: #4a90d9;
     --accent-hover: #5ca0e9;
@@ -45,6 +45,26 @@
     --radius: 8px;
     --radius-sm: 4px;
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+    /* [2026-03-10 13:20] DS-2: Icon sizing scale */
+    --icon-sm: 14px;
+    --icon-md: 18px;
+    --icon-lg: 24px;
+
+    /* Spacing scale: --space-1: 0.25rem | --space-2: 0.5rem | --space-3: 0.75rem |
+       --space-4: 1rem | --space-6: 1.5rem | --space-8: 2rem [DS-3 documentation] */
+}
+
+/* [2026-03-10 12:55] A11Y-4: Screen-reader-only utility for form labels */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 html {
@@ -740,13 +760,14 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     cursor: not-allowed;
 }
 
+/* [2026-03-10 12:35] QW-2: Darkened btn-primary bg from --accent (#4a90d9) to #3570b5 for 4.6:1 contrast with white text */
 .btn-primary {
-    background: var(--accent);
+    background: #3570b5;
     color: #fff;
 }
 
 .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
+    background: var(--accent); /* Hover lifts to original accent blue */
 }
 
 .btn-ghost {
@@ -1651,6 +1672,23 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     border-radius: var(--radius-sm);
     border-left: 2px solid var(--warning);
     margin: 0.5rem 0;
+}
+
+.rpm-host-note {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+    border-left: 2px solid var(--text-muted);
+    margin: 0.5rem 0;
+}
+
+.rpm-host-note code {
+    background: rgba(255, 255, 255, 0.06);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    font-size: 0.78rem;
 }
 
 /* Wizard inputs */
@@ -2829,6 +2867,29 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     .solution-tabs {
         overflow-x: auto;
     }
+
+    /* [2026-03-10 13:28] Rank 20: Improved mobile layout */
+    .action-fork {
+        flex-direction: column;
+    }
+
+    .service-row {
+        min-height: 44px; /* Minimum touch target */
+    }
+
+    .fork-card {
+        min-height: 44px;
+    }
+
+    .health-banner {
+        flex-direction: column;
+        gap: 0.5rem;
+        text-align: center;
+    }
+
+    .conflict-card-header {
+        flex-wrap: wrap;
+    }
 }
 
 /* ─── Cross-Stack Analysis ─── */
@@ -3493,6 +3554,7 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 
 /* ─── Health Banner ─── */
 
+/* [2026-03-10 13:25] Rank 19: Sticky health banner reduces scroll depth impact */
 .health-banner {
     display: flex;
     align-items: center;
@@ -3502,6 +3564,9 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     margin-bottom: 1rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
 .health-banner-status {
@@ -4086,6 +4151,90 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     border-color: rgba(248, 81, 73, 0.2);
 }
 
+.paste-bar-result.paste-decision {
+    padding: 0.75rem 1rem;
+    background: var(--bg-card);
+    border-color: var(--accent);
+}
+
+.paste-decision-heading {
+    font-weight: 600;
+    font-size: 0.88rem;
+    margin-bottom: 0.4rem;
+    color: var(--text);
+}
+
+.paste-decision-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0.25rem 0 0.6rem;
+}
+
+.paste-decision-actions {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.paste-action-btn {
+    flex: 1;
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.paste-action-btn:hover {
+    border-color: var(--accent);
+    background: rgba(74, 144, 217, 0.06);
+}
+
+.paste-action-title {
+    font-weight: 600;
+    font-size: 0.82rem;
+    color: var(--text);
+}
+
+.paste-action-desc {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+
+.paste-action-rpm {
+    border-color: rgba(255, 170, 0, 0.3);
+}
+
+.paste-action-rpm:hover {
+    border-color: var(--warning);
+    background: rgba(255, 170, 0, 0.06);
+}
+
+.paste-action-fix {
+    border-color: rgba(63, 185, 80, 0.3);
+}
+
+.paste-action-fix:hover {
+    border-color: var(--success);
+    background: rgba(63, 185, 80, 0.06);
+}
+
+.paste-decision-extra {
+    font-size: 0.75rem;
+    color: var(--warning);
+    margin-top: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    background: rgba(255, 170, 0, 0.06);
+    border-radius: var(--radius-sm);
+}
+
 /* ─── Redeploy Prompt ─── */
 
 .redeploy-prompt {
@@ -4554,17 +4703,159 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     margin-top: 0.75rem;
 }
 
-/* Environment solution intro text */
+/* Environment solution intro text — padded right to avoid absolute-positioned buttons */
 .env-solution-intro {
     color: var(--text-secondary);
     font-size: 0.88rem;
     margin-bottom: 0.75rem;
     line-height: 1.5;
+    padding-right: 18rem;
 }
 
 /* Ensure env tab button matches other solution tabs */
 .solution-tab.solution-tab-env {
     /* Inherits from .solution-tab — no additional styles needed */
+}
+
+/* ─── Diff Preview Modal ─── */
+
+.diff-preview-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+}
+
+.diff-preview-modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    max-width: 800px;
+    width: 100%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.diff-preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.diff-preview-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.diff-preview-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0 0.25rem;
+    line-height: 1;
+}
+
+.diff-preview-close:hover {
+    color: var(--text-primary);
+}
+
+.diff-preview-body {
+    overflow-y: auto;
+    padding: 1rem 1.25rem;
+    flex: 1;
+}
+
+.diff-file-section {
+    margin-bottom: 1.25rem;
+}
+
+.diff-file-section:last-child {
+    margin-bottom: 0;
+}
+
+.diff-file-header {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.diff-change-badge {
+    font-weight: 400;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+}
+
+.diff-container {
+    border: 1px solid var(--border);
+    border-radius: 0 0 8px 8px;
+    overflow: hidden;
+}
+
+.diff-content {
+    margin: 0;
+    padding: 0.5rem 0;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    overflow-x: auto;
+    background: var(--bg-body);
+}
+
+.diff-line {
+    padding: 0 0.75rem;
+    white-space: pre;
+    font-family: var(--font-mono);
+}
+
+.diff-removed {
+    background: rgba(248, 81, 73, 0.15);
+    color: #f85149;
+}
+
+.diff-added {
+    background: rgba(63, 185, 80, 0.15);
+    color: #3fb950;
+}
+
+.diff-separator {
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 0.75rem;
+    padding: 0.1rem 0;
+    opacity: 0.6;
+}
+
+.diff-preview-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border-top: 1px solid var(--border);
+}
+
+.diff-preview-footer .apply-btn {
+    position: static;
 }
 
 /* ─── Observations (Category D — informational, collapsed by default) ─── */
@@ -4767,4 +5058,69 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 .dir-browser-footer .btn {
     padding: 0.4rem 1rem;
     font-size: 0.85rem;
+}
+
+/* ─── [2026-03-10 13:10] HI-3: Keyboard shortcuts help overlay ─── */
+.keyboard-shortcuts-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.keyboard-shortcuts-modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    min-width: 320px;
+    max-width: 420px;
+}
+
+.keyboard-shortcuts-modal h2 {
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+    color: var(--text-primary);
+}
+
+.shortcuts-list {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.4rem 1rem;
+    margin-bottom: 1rem;
+}
+
+.shortcuts-list dt {
+    text-align: right;
+}
+
+.shortcuts-list dd {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.shortcuts-list kbd {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text-primary);
+}
+
+/* ─── [2026-03-10 13:00] HI-1: Reduced motion for vestibular accessibility ─── */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
 }

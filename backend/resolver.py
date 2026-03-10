@@ -38,12 +38,20 @@ COMPOSE_FILENAMES = [
 def resolve_compose(
     stack_path: str,
     compose_file: Optional[str] = None,
+    force_manual: bool = False,
 ) -> Dict[str, Any]:
     """
     Resolve a compose file to a fully-substituted dict.
 
     Tries `docker compose config` first for perfect resolution.
     Falls back to raw YAML + .env parsing if Docker CLI is unavailable.
+
+    Args:
+        stack_path: Path to the stack directory.
+        compose_file: Specific compose filename (optional).
+        force_manual: If True, skip Docker compose config and go straight to
+            manual YAML + .env parsing. Used by pipeline scan for speed —
+            avoids Docker CLI overhead per stack.
 
     Returns:
         Dict with at least a "services" key. Also includes:
@@ -69,10 +77,14 @@ def resolve_compose(
             )
         logger.info("Found compose file: %s in %s/", cf_path.name, stack.name)
 
-    # Strategy 1: docker compose config
-    logger.info("Attempting resolution via docker compose config...")
-    t0 = time.time()
-    result = _try_docker_compose_config(stack, cf_path)
+    # Strategy 1: docker compose config (skipped when force_manual=True)
+    if force_manual:
+        logger.info("Skipping docker compose config (force_manual=True)")
+        result = None
+    else:
+        logger.info("Attempting resolution via docker compose config...")
+        t0 = time.time()
+        result = _try_docker_compose_config(stack, cf_path)
     if result is not None:
         svc_count = len(result.get("services", {}))
         logger.info("Docker compose config succeeded: %d services resolved (%.2fs)",

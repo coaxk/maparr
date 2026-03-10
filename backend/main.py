@@ -420,15 +420,17 @@ async def api_pipeline_scan(request: Request):
             status_code=400,
         )
 
-    # Security: if a stacks root is configured, validate scan_dir is within it
-    stacks_root = _get_stacks_root()
-    if stacks_root:
+    # Security: if MAPARR_STACKS_PATH env var is set (Docker deployment),
+    # enforce that scan_dir is within it. User-chosen paths (custom_stacks_path)
+    # are updated freely — the user is explicitly navigating.
+    env_stacks_root = os.environ.get("MAPARR_STACKS_PATH", "")
+    if env_stacks_root:
         try:
-            Path(scan_dir).resolve().relative_to(Path(stacks_root).resolve())
+            Path(scan_dir).resolve().relative_to(Path(env_stacks_root).resolve())
         except (ValueError, OSError):
-            logger.warning("Pipeline scan blocked: %s outside stacks root %s", scan_dir, stacks_root)
+            logger.warning("Pipeline scan blocked: %s outside MAPARR_STACKS_PATH %s", scan_dir, env_stacks_root)
             return JSONResponse(
-                {"error": "Scan directory is outside the stacks root"},
+                {"error": "Scan directory is outside the stacks root (set by MAPARR_STACKS_PATH)"},
                 status_code=403,
             )
 
@@ -436,6 +438,12 @@ async def api_pipeline_scan(request: Request):
     result = run_pipeline_scan(scan_dir)
     elapsed = time.time() - t0
     _session["pipeline"] = result.to_dict()
+
+    # Persist the scan directory as the stacks root so write operations
+    # (apply-fixes, redeploy) can validate paths against it.
+    if _session.get("custom_stacks_path") != scan_dir:
+        _session["custom_stacks_path"] = scan_dir
+        logger.info("Pipeline scan: set custom_stacks_path=%s", scan_dir)
 
     logger.info("Pipeline scan: %s → %s (%.2fs)", scan_dir, result.summary, elapsed)
 
@@ -472,21 +480,21 @@ async def api_change_stacks_path(request: Request):
             status_code=400,
         )
 
-    # Security: if a stacks root is configured, the new path must be within
-    # it (allowlist). This is stricter than the denylist below and covers all
-    # edge cases (no need to enumerate every system directory).
-    stacks_root = _get_stacks_root()
-    if stacks_root:
+    # Security: if MAPARR_STACKS_PATH is set (Docker deployment), the admin
+    # controls the boundary — new path must be within it. But if the root was
+    # set by user choice (custom_stacks_path), switching directories is allowed.
+    env_stacks_root = os.environ.get("MAPARR_STACKS_PATH", "")
+    if env_stacks_root:
         try:
-            Path(new_path).resolve().relative_to(Path(stacks_root).resolve())
+            Path(new_path).resolve().relative_to(Path(env_stacks_root).resolve())
         except (ValueError, OSError):
-            logger.warning("Change path blocked: %s outside stacks root %s", new_path, stacks_root)
+            logger.warning("Change path blocked: %s outside MAPARR_STACKS_PATH %s", new_path, env_stacks_root)
             return JSONResponse(
-                {"error": "Path must be within the stacks directory"},
+                {"error": "Path must be within the stacks directory (set by MAPARR_STACKS_PATH)"},
                 status_code=403,
             )
 
-    # Defense-in-depth: block obvious system directories (when no stacks root)
+    # Defense-in-depth: block obvious system directories
     _blocked_prefixes = ("/etc", "/proc", "/sys", "/dev", "/boot", "/sbin",
                          "/root", "/home",
                          "C:\\Windows", "C:\\Program Files")

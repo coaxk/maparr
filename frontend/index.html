@@ -26,6 +26,7 @@
                 <span class="path-chevron">&#9662;</span>
             </button>
             <div class="path-editor hidden" id="path-editor">
+                <label for="header-path-input" class="sr-only">Enter new stacks path</label>
                 <input type="text" id="header-path-input" class="path-input"
                        placeholder="/path/to/stacks" spellcheck="false"
                        aria-label="Enter new stacks path"
@@ -69,6 +70,7 @@
                 either one big stack or separate folders per service.
             </p>
             <div class="first-launch-input">
+                <label for="first-launch-path" class="sr-only">Stacks directory path</label>
                 <input type="text" id="first-launch-path" class="path-input"
                        placeholder="/opt/docker"
                        aria-label="Stacks directory path" spellcheck="false" />
@@ -98,6 +100,7 @@
             Check the path and try again.
         </p>
         <div class="boot-path-row">
+            <label for="boot-path-input" class="sr-only">Docker stacks directory path</label>
             <input type="text" id="boot-path-input" class="path-input"
                    placeholder="/path/to/your/stacks (e.g. /opt/docker)"
                    aria-label="Docker stacks directory path"
@@ -129,14 +132,15 @@
 
         <!-- Two-Action Fork -->
         <div class="action-fork" id="action-fork">
-            <div class="fork-card fork-paste" id="fork-paste">
+            <!-- [2026-03-10 12:40] QW-4: Changed h3→h2 to fix heading order (h1→h2, no gap) -->
+        <div class="fork-card fork-paste" id="fork-paste">
                 <div class="fork-card-icon">&#128203;</div>
-                <h3 class="fork-card-title">Paste an Error</h3>
+                <h2 class="fork-card-title">Paste an Error</h2>
                 <p class="fork-card-desc">Got an error from Sonarr, Radarr, or another app? Paste it here and MapArr will trace it to the root cause.</p>
             </div>
             <div class="fork-card fork-explore" id="fork-explore">
                 <div class="fork-card-icon">&#128269;</div>
-                <h3 class="fork-card-title">Explore Pipeline</h3>
+                <h2 class="fork-card-title">Explore Pipeline</h2>
                 <p class="fork-card-desc">Browse your full media pipeline &mdash; see how services connect, where volumes map, and what needs attention.</p>
             </div>
         </div>
@@ -147,7 +151,9 @@
                 <h3>Paste Your Error</h3>
                 <button class="btn btn-ghost btn-sm" id="paste-area-close" aria-label="Close paste area">&times;</button>
             </div>
+            <!-- [2026-03-10 12:55] A11Y-4: Added sr-only label for paste textarea -->
             <div class="paste-bar-input">
+                <label for="paste-error-input" class="sr-only">Paste error text from your media app</label>
                 <textarea id="paste-error-input" rows="3"
                           placeholder="Paste an error from your *arr app &mdash; Sonarr, Radarr, Lidarr, etc."
                           aria-label="Paste error text from your media app"></textarea>
@@ -241,28 +247,31 @@
         </div>
         <p class="step-desc" id="solution-summary"></p>
         <div class="solution-tabs" id="solution-tabs">
-            <button class="solution-tab active" data-tab="recommended" id="tab-recommended">Recommended Fix</button>
-            <button class="solution-tab hidden" data-tab="original" id="tab-original">Your Config (Corrected)</button>
+            <button class="solution-tab active" data-tab="recommended" id="tab-recommended">Fix Paths</button>
+            <button class="solution-tab hidden" data-tab="original" id="tab-original">Fix All Issues</button>
         </div>
         <div class="code-block" id="solution-block-recommended">
             <pre id="solution-yaml"></pre>
-            <button class="copy-btn" id="btn-copy">Copy to Clipboard</button>
+            <div class="solution-actions">
+                <button class="copy-btn" id="btn-copy">Copy to Clipboard</button>
+                <button class="apply-btn hidden" id="btn-apply-path-fix">Apply Path Fix</button>
+            </div>
         </div>
         <div class="code-block hidden" id="solution-block-original">
             <pre id="solution-yaml-original"></pre>
             <div class="solution-actions">
                 <button class="copy-btn" id="btn-copy-original">Copy to Clipboard</button>
-                <button class="apply-btn" id="btn-apply-fix">Apply Fix</button>
+                <button class="apply-btn" id="btn-apply-fix">Apply All Fixes</button>
             </div>
         </div>
         <!-- Apply fix confirmation modal -->
         <div class="apply-confirm hidden" id="apply-confirm">
             <div class="apply-confirm-content">
-                <p class="apply-confirm-title">Apply fix to your compose file?</p>
+                <p class="apply-confirm-title">Apply all fixes to your compose file?</p>
                 <p class="apply-confirm-detail" id="apply-confirm-file"></p>
-                <p class="apply-confirm-note">This will update your compose file with the corrected configuration. A backup (.bak) will be created first.</p>
+                <p class="apply-confirm-note">This patches volume paths and permissions in one go. A backup (.bak) will be created first.</p>
                 <div class="apply-confirm-buttons">
-                    <button class="apply-confirm-yes" id="apply-confirm-yes">Apply Fix</button>
+                    <button class="apply-confirm-yes" id="apply-confirm-yes">Apply All Fixes</button>
                     <button class="apply-confirm-no" id="btn-cancel-apply">Cancel</button>
                 </div>
             </div>
@@ -334,7 +343,8 @@
 </main>
 
 <!-- ─── Toast Container (critical/error notifications) ─── -->
-<div id="toast-container" class="toast-container"></div>
+<!-- [2026-03-10 12:43] QW-6: Added aria-live for screen reader toast announcements -->
+<div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
 <!-- ─── Log Panel (collapsible, attached to footer) ─── -->
 <div id="log-panel" class="log-panel hidden">
