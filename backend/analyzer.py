@@ -245,6 +245,7 @@ class AnalysisResult:
     observations: List[dict] = field(default_factory=list)  # Category D informational items (no health impact)
     env_solution_yaml: Optional[str] = None  # Copy-pasteable YAML fix for permission/env conflicts
     env_solution_changed_lines: List[int] = field(default_factory=list)  # 1-indexed changed lines in env_solution_yaml
+    fix_plans: List[dict] = field(default_factory=list)  # Per-file fix entries for multi-file apply
 
     def to_dict(self) -> dict:
         # Determine status: pipeline-aware > conflicts > cross-stack > incomplete > healthy
@@ -315,6 +316,7 @@ class AnalysisResult:
             "env_solution_yaml": self.env_solution_yaml,
             "env_solution_changed_lines": self.env_solution_changed_lines,
             "observations": self.observations,
+            "fix_plans": self.fix_plans,
         }
 
 
