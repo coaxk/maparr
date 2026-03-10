@@ -9,7 +9,7 @@ Recognizes 218+ Docker images across 7 families via a JSON Image DB.
 ## Stack
 - **Backend:** Python 3.11, FastAPI (>=0.115.0), uvicorn (>=0.30.0), PyYAML (>=6.0.2), python-multipart (>=0.0.18)
 - **Frontend:** Vanilla HTML/CSS/JS (single-page, no framework, no build step)
-- **Tests:** pytest (678 tests), run with `pytest tests/ -p no:capture` on Windows
+- **Tests:** pytest (682 tests), run with `pytest tests/ -p no:capture` on Windows
 - **Docker:** Multi-stage build, gosu for PUID/PGID, Docker CLI + compose plugin
 
 ## Architecture
@@ -77,6 +77,11 @@ Recognizes 218+ Docker images across 7 families via a JSON Image DB.
 The pipeline scans the entire root directory on boot, builds a unified map of all
 media services (role, mount paths), and caches the result in `_session["pipeline"]`.
 Per-stack analysis receives this as `pipeline_context` — no more isolated analysis.
+
+**Cluster layout discovery:** When a subdirectory has no compose file, the scanner
+checks one level deeper for compose files (max depth 2). This detects Dockhand/Portainer/
+DockSTARTer layouts where each service has its own subfolder. Directories with their
+own compose file are never cluster-scanned (no double counting).
 
 ### 4-Pass Analysis Engine
 1. **Path conflicts** — separate mount trees, inconsistent host paths, unreachable paths
