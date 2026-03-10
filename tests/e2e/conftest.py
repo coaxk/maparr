@@ -48,6 +48,10 @@ def maparr_server():
     env = os.environ.copy()
     env["MAPARR_STACKS_PATH"] = str(E2E_FIXTURES)
     env["MAPARR_PORT"] = str(E2E_PORT)
+    # Point DOCKER_HOST at a non-existent endpoint so docker compose config
+    # fails immediately instead of hanging for 30s. The resolver falls back
+    # to manual YAML parsing which is all E2E tests need.
+    env["DOCKER_HOST"] = "tcp://127.0.0.1:1"
 
     # Start uvicorn as a subprocess
     proc = subprocess.Popen(
@@ -60,8 +64,11 @@ def maparr_server():
         ],
         env=env,
         cwd=str(Path(__file__).parent.parent.parent),  # project root
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # Use DEVNULL instead of PIPE to prevent Windows pipe buffer deadlocks.
+        # When using PIPE, the server can hang if the buffer fills up and nobody
+        # reads the output.
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
     # Wait for server to be ready
