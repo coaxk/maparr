@@ -425,6 +425,14 @@ function showFirstLaunch() {
         }
     });
 
+    // Browse button on first-launch screen
+    const browseBtn = document.getElementById("first-launch-browse");
+    if (browseBtn) {
+        browseBtn.addEventListener("click", () => {
+            openDirectoryBrowser(input.value.trim() || "");
+        });
+    }
+
     setTimeout(() => input.focus(), 100);
 }
 
@@ -1944,22 +1952,186 @@ function setupHeaderPath() {
         }
     });
 
-    // Browse button
+    // Browse button — opens server-side directory browser modal
     const browseBtn = document.getElementById("header-path-browse");
     if (browseBtn) {
-        browseBtn.addEventListener("click", async () => {
-            // showDirectoryPicker only returns the folder name (browser security),
-            // not the full path. Always show the path editor with the current path
-            // so the user can type or correct the full server-side path.
-            if (editor) editor.classList.remove("hidden");
-            if (input) {
-                input.value = state.stacksPath || "";
-                input.focus();
-                input.select();
-            }
-            showSimpleToast("Enter the full path to your Docker stacks directory", "info");
+        browseBtn.addEventListener("click", () => {
+            openDirectoryBrowser(state.stacksPath || "");
         });
     }
+}
+
+
+// ─── Directory Browser Modal ───
+
+/**
+ * Open a server-powered directory browser modal.
+ * Lists directories from the backend filesystem so the user can navigate
+ * and pick a stacks directory without typing paths manually.
+ */
+function openDirectoryBrowser(startPath) {
+    // Remove any existing browser
+    const existing = document.getElementById("dir-browser-overlay");
+    if (existing) existing.remove();
+
+    // Create overlay
+    const overlay = document.createElement("div");
+    overlay.className = "dir-browser-overlay";
+    overlay.id = "dir-browser-overlay";
+
+    const browser = document.createElement("div");
+    browser.className = "dir-browser";
+
+    // Header: up button + current path
+    const header = document.createElement("div");
+    header.className = "dir-browser-header";
+
+    const upBtn = document.createElement("button");
+    upBtn.className = "dir-browser-up";
+    upBtn.textContent = "\u2191 Up";
+    upBtn.setAttribute("aria-label", "Go to parent directory");
+    header.appendChild(upBtn);
+
+    const pathDisplay = document.createElement("span");
+    pathDisplay.className = "dir-browser-path";
+    pathDisplay.textContent = startPath || "Loading...";
+    header.appendChild(pathDisplay);
+
+    browser.appendChild(header);
+
+    // List container
+    const list = document.createElement("div");
+    list.className = "dir-browser-list";
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", "Directory listing");
+    browser.appendChild(list);
+
+    // Footer: Cancel + Select
+    const footer = document.createElement("div");
+    footer.className = "dir-browser-footer";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn btn-ghost btn-sm";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => overlay.remove());
+
+    const selectBtn = document.createElement("button");
+    selectBtn.className = "btn btn-primary btn-sm";
+    selectBtn.textContent = "Select This Directory";
+    footer.appendChild(cancelBtn);
+    footer.appendChild(selectBtn);
+    browser.appendChild(footer);
+
+    overlay.appendChild(browser);
+
+    // Close on overlay click (not browser click)
+    overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+
+    // Close on Escape
+    const onKeydown = (e) => {
+        if (e.key === "Escape") {
+            overlay.remove();
+            document.removeEventListener("keydown", onKeydown);
+        }
+    };
+    document.addEventListener("keydown", onKeydown);
+
+    // Track current browsing path
+    let currentPath = startPath;
+
+    // Select button — use current path
+    selectBtn.addEventListener("click", () => {
+        if (currentPath) {
+            const input = document.getElementById("header-path-input");
+            const editor = document.getElementById("path-editor");
+            if (input) input.value = currentPath;
+            if (editor) editor.classList.remove("hidden");
+            overlay.remove();
+            // Auto-trigger scan
+            changeStacksPathTo(currentPath);
+        }
+    });
+
+    async function loadDirectory(path) {
+        list.replaceChildren();
+        const loading = document.createElement("div");
+        loading.className = "dir-browser-loading";
+        loading.textContent = "Loading...";
+        list.appendChild(loading);
+
+        try {
+            const resp = await fetch("/api/list-directories", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path: path }),
+            });
+            const data = await resp.json();
+
+            if (data.error) {
+                list.replaceChildren();
+                const err = document.createElement("div");
+                err.className = "dir-browser-empty";
+                err.textContent = data.error;
+                list.appendChild(err);
+                return;
+            }
+
+            currentPath = data.path || path;
+            pathDisplay.textContent = currentPath || "Drives";
+
+            // Up button
+            upBtn.disabled = data.parent === null || data.parent === undefined;
+            upBtn.onclick = () => {
+                if (data.parent !== null && data.parent !== undefined) {
+                    loadDirectory(data.parent);
+                }
+            };
+
+            list.replaceChildren();
+
+            if (data.directories.length === 0) {
+                const empty = document.createElement("div");
+                empty.className = "dir-browser-empty";
+                empty.textContent = "No subdirectories";
+                list.appendChild(empty);
+                return;
+            }
+
+            for (const dir of data.directories) {
+                const item = document.createElement("button");
+                item.className = "dir-browser-item" + (dir.locked ? " locked" : "");
+                item.setAttribute("role", "option");
+
+                const icon = document.createElement("span");
+                icon.className = "folder-icon";
+                icon.textContent = dir.locked ? "\uD83D\uDD12" : "\uD83D\uDCC1";
+
+                const name = document.createElement("span");
+                name.className = "folder-name";
+                name.textContent = dir.name;
+
+                item.appendChild(icon);
+                item.appendChild(name);
+
+                if (!dir.locked) {
+                    item.addEventListener("click", () => loadDirectory(dir.path));
+                }
+
+                list.appendChild(item);
+            }
+        } catch (err) {
+            list.replaceChildren();
+            const errEl = document.createElement("div");
+            errEl.className = "dir-browser-empty";
+            errEl.textContent = "Failed to load directory";
+            list.appendChild(errEl);
+        }
+    }
+
+    document.body.appendChild(overlay);
+    loadDirectory(startPath);
 }
 
 async function changeStacksPathTo(newPath) {

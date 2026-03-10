@@ -518,6 +518,95 @@ async def api_change_stacks_path(request: Request):
     }
 
 
+# ─── API: List Directories (for folder browser) ───
+
+@app.post("/api/list-directories")
+async def api_list_directories(request: Request):
+    """
+    List subdirectories of a given path for the folder browser UI.
+
+    Returns immediate child directories (not recursive) so the frontend
+    can render a navigable folder tree. On Windows with no path specified,
+    returns available drive letters as roots.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    req_path = body.get("path", "").strip()
+
+    # Windows: if no path given, list drive letters
+    if not req_path and os.name == "nt":
+        import string
+        drives = []
+        for letter in string.ascii_uppercase:
+            drive = f"{letter}:\\"
+            if os.path.isdir(drive):
+                drives.append({"name": f"{letter}:", "path": drive})
+        return {"path": "", "parent": None, "directories": drives}
+
+    # Unix: default to /
+    if not req_path:
+        req_path = "/"
+
+    # Normalize path
+    try:
+        resolved = str(Path(req_path).resolve())
+    except (ValueError, OSError):
+        return JSONResponse(
+            {"error": f"Invalid path: {req_path}"},
+            status_code=400,
+        )
+
+    if not os.path.isdir(resolved):
+        return JSONResponse(
+            {"error": f"Directory not found: {req_path}"},
+            status_code=400,
+        )
+
+    # Block system directories
+    _blocked_prefixes = ("/proc", "/sys", "/dev")
+    if any(resolved.startswith(p) for p in _blocked_prefixes):
+        return JSONResponse(
+            {"error": "Cannot browse system directories"},
+            status_code=403,
+        )
+
+    # List subdirectories, skip hidden and inaccessible
+    dirs = []
+    try:
+        for entry in sorted(Path(resolved).iterdir()):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("."):
+                continue
+            try:
+                # Test readability (some dirs exist but can't be listed)
+                next(entry.iterdir(), None)
+                dirs.append({"name": entry.name, "path": str(entry)})
+            except (PermissionError, OSError):
+                # Still show it but mark as inaccessible
+                dirs.append({"name": entry.name, "path": str(entry), "locked": True})
+    except PermissionError:
+        return JSONResponse(
+            {"error": f"Permission denied: {req_path}"},
+            status_code=403,
+        )
+
+    # Calculate parent for up-navigation
+    parent_path = str(Path(resolved).parent)
+    if parent_path == resolved:
+        # At root (/ or C:\) — no parent
+        parent_path = None if os.name != "nt" else ""
+
+    return {
+        "path": resolved,
+        "parent": parent_path,
+        "directories": dirs,
+    }
+
+
 # ─── API: Select Stack ───
 
 @app.post("/api/select-stack")
