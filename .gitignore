@@ -17,3 +17,7 @@ screenshots/
 .venv/
 .claude/
 .worktrees/
+
+# Real data snapshots contain user-specific stack layouts
+# Regenerate with: python scripts/snapshot_real_stacks.py /path/to/stacks
+tests/e2e/fixtures/real-snapshot/
