@@ -3527,7 +3527,16 @@ function showSolution(data) {
 
         const envIntro = document.createElement("p");
         envIntro.className = "env-solution-intro";
-        envIntro.textContent = "These environment variable changes align your services to the same user identity.";
+        // Check if this is a cross-stack issue where current stack is already correct
+        const isCrossStack = (data.conflicts || []).some(
+            (c) => c.type === "cross_stack_puid_mismatch"
+        );
+        const hasLocalChanges = data.original_corrected_yaml && data.env_solution_changed_lines && data.env_solution_changed_lines.length > 0;
+        if (isCrossStack && !hasLocalChanges) {
+            envIntro.textContent = "This stack's permissions are already correct. Other services in your pipeline use different PUID/PGID values \u2014 update them to match. Copy the target values below.";
+        } else {
+            envIntro.textContent = "These environment variable changes align your services to the same user identity.";
+        }
         envSolutionBlock.appendChild(envIntro);
 
         const envPre = document.createElement("pre");
@@ -3549,8 +3558,16 @@ function showSolution(data) {
         });
         envActions.appendChild(envCopyBtn);
 
-        // Apply Fix button — uses the full patched compose from original_corrected_yaml
-        if (data.original_corrected_yaml && data.compose_file_path) {
+        // Apply Fix button — multi-file (fix_plans) or single-file (original_corrected_yaml)
+        const envFixPlans = (data.fix_plans || []).filter((p) => p.category === "B" || p.category === "A+B");
+        if (envFixPlans.length > 0) {
+            const envApplyBtn = document.createElement("button");
+            envApplyBtn.className = "apply-btn";
+            envApplyBtn.id = "btn-apply-env-fix";
+            envApplyBtn.textContent = envFixPlans.length === 1 ? "Apply Fix" : "Apply All Fixes (" + envFixPlans.length + " files)";
+            envApplyBtn.addEventListener("click", () => applyAllFixes(envFixPlans));
+            envActions.appendChild(envApplyBtn);
+        } else if (data.original_corrected_yaml && data.compose_file_path) {
             const envApplyBtn = document.createElement("button");
             envApplyBtn.className = "apply-btn";
             envApplyBtn.id = "btn-apply-env-fix";

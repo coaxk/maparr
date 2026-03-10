@@ -3714,6 +3714,14 @@ def _build_fix_plans_multi(
     all_plans = list(own_plans)
     seen_files = {compose_file}
 
+    # For cross-stack Cat B conflicts, collect ALL services (own + siblings)
+    # so majority PUID/PGID is calculated pipeline-wide, not per-file.
+    has_cross_stack_b = any(
+        c.category == "B" and "cross_stack" in c.conflict_type
+        for c in conflicts
+    )
+    all_media_services = list(services) if has_cross_stack_b else []
+
     for sib in sibling_services:
         sib_compose = sib.get("compose_file_full", "")
         if not sib_compose or sib_compose in seen_files:
@@ -3741,14 +3749,33 @@ def _build_fix_plans_multi(
         if not media_sibs:
             continue
 
-        # Generate fix plans for this sibling file
+        # Collect for pipeline-wide majority calculation
+        if has_cross_stack_b:
+            all_media_services.extend(sib_services)
+
+        # Generate fix plans for this sibling file.
+        # For cross-stack Cat B, use the full pipeline services list so
+        # majority PUID/PGID is correct (not just this file's services).
         sib_plans = _build_fix_plans(
             raw_compose_content=sib_content,
             compose_file=sib_compose,
             conflicts=conflicts,
-            services=sib_services,
+            services=all_media_services if has_cross_stack_b else sib_services,
             pipeline_host_root=pipeline_host_root,
         )
         all_plans.extend(sib_plans)
+
+    # If own stack had no fixes but siblings do (e.g. radarr is correct,
+    # siblings need PUID fix), re-check own stack with full service list.
+    # This ensures the own stack also gets a fix plan if needed.
+    if has_cross_stack_b and not own_plans and all_media_services:
+        own_plans = _build_fix_plans(
+            raw_compose_content=raw_compose_content,
+            compose_file=compose_file,
+            conflicts=conflicts,
+            services=all_media_services,
+            pipeline_host_root=pipeline_host_root,
+        )
+        all_plans = own_plans + all_plans
 
     return all_plans
