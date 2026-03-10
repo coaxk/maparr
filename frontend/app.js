@@ -1948,19 +1948,16 @@ function setupHeaderPath() {
     const browseBtn = document.getElementById("header-path-browse");
     if (browseBtn) {
         browseBtn.addEventListener("click", async () => {
-            if (window.showDirectoryPicker) {
-                try {
-                    const handle = await window.showDirectoryPicker({ mode: "read" });
-                    if (input) input.value = handle.name;
-                    if (editor) editor.classList.remove("hidden");
-                    input.focus();
-                    showSimpleToast("Selected: " + handle.name + " \u2014 enter the full server path and click Scan", "info");
-                } catch (e) { /* user cancelled */ }
-            } else {
-                if (editor) editor.classList.remove("hidden");
-                if (input) { input.value = state.stacksPath; input.focus(); input.select(); }
-                showSimpleToast("Enter the full path to your Docker stacks directory", "info");
+            // showDirectoryPicker only returns the folder name (browser security),
+            // not the full path. Always show the path editor with the current path
+            // so the user can type or correct the full server-side path.
+            if (editor) editor.classList.remove("hidden");
+            if (input) {
+                input.value = state.stacksPath || "";
+                input.focus();
+                input.select();
             }
+            showSimpleToast("Enter the full path to your Docker stacks directory", "info");
         });
     }
 }
