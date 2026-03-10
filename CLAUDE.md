@@ -4,12 +4,12 @@
 Path Mapping Problem Solver for Docker *arr apps. Web UI with FastAPI backend.
 Analyzes Docker Compose volume mounts, detects hardlink-breaking configurations,
 and generates specific fixes following the TRaSH Guides pattern.
-Recognizes 207+ Docker images across 7 families via a JSON Image DB.
+Recognizes 218+ Docker images across 7 families via a JSON Image DB.
 
 ## Stack
 - **Backend:** Python 3.11, FastAPI (>=0.115.0), uvicorn (>=0.30.0), PyYAML (>=6.0.2), python-multipart (>=0.0.18)
 - **Frontend:** Vanilla HTML/CSS/JS (single-page, no framework, no build step)
-- **Tests:** pytest (577+ tests), run with `pytest tests/ -p no:capture` on Windows
+- **Tests:** pytest (678 tests), run with `pytest tests/ -p no:capture` on Windows
 - **Docker:** Multi-stage build, gosu for PUID/PGID, Docker CLI + compose plugin
 
 ## Architecture
@@ -35,12 +35,12 @@ Recognizes 207+ Docker images across 7 families via a JSON Image DB.
 - `index.html` — Pipeline Dashboard SPA: service groups, health banner, conflict cards, paste bar
 - `app.js` — ~6800 lines, pipeline dashboard + analysis detail cards (old mode UI removed)
 - `styles.css` — Full CSS with dark theme, role-colored service groups, fix plan rows
-- `img/services/` — 145 bundled SVG service icons (CC-BY-4.0 from dashboard-icons), `generic.svg` fallback
+- `img/services/` — 177 bundled service icons (SVG/PNG) (CC-BY-4.0 from dashboard-icons), `generic.svg` fallback
 
 ### Data & Scripts
 | File | Purpose |
 |------|---------|
-| `data/images.json` | Generated Image DB (207 images, 7 families) — committed to repo |
+| `data/images.json` | Generated Image DB (218 images, 7 families) — committed to repo |
 | `data/custom-images.json` | Optional user overrides (mounted via compose) |
 | `scripts/seed_images.py` | Dev-time seed script: LSIO fleet API → merge manual → write images.json |
 | `scripts/manual_entries.json` | Hand-curated families + non-LSIO images for seed merge |
@@ -141,14 +141,23 @@ When user pastes an error, overrides pre-flight warning on a healthy stack:
 - Key principle: NEVER report false issues, even if user did something dumb
 
 ### Service Icons
-`SERVICE_ICONS` constant in app.js maps 115+ service names to bundled SVGs.
+`SERVICE_ICONS` constant in app.js maps 140+ service names to bundled icons (SVG/PNG/ICO).
 `getServiceIconUrl()` does exact match → fuzzy partial match → `generic.svg` fallback.
 Icons sourced from homarr-labs/dashboard-icons (CC-BY-4.0), see `img/services/ATTRIBUTION.md`.
 
-### Apply Fix (Cat A + Cat B)
+### Apply Fix (Cat A + Cat B) — Multi-File
 Apply Fix works for both volume restructuring (Cat A) and permission env fixes (Cat B).
 Both tabs have Copy + Apply buttons. Backend `_patch_original_env()` patches the user's
 full compose file (not the snippet), chains with volume patches for mixed A+B stacks.
+
+**Multi-file fix plans** (v2.0): `fix_plans` array on `AnalysisResult` bundles per-file patches.
+- `_build_fix_plans()` — single-file plan builder (one entry with corrected_yaml, changed_services, category)
+- `_build_fix_plans_multi()` — reads sibling compose files from pipeline context via `compose_file_full`
+- `PipelineService.to_dict()` exposes `compose_file_full` (full filesystem path)
+- Frontend `generateFixPlans()` prefers `fix_plans` from response, falls back to per-stack API
+- Adaptive labels: "Apply Fix" (1 file) vs "Apply All Fixes" (N files)
+- Unified batch: frontend always calls `/api/apply-fixes`, even for single files
+
 After Apply Fix writes corrected YAML:
 1. Frontend calls `/api/pipeline-scan` to refresh cache
 2. Backend safety net: if compose mtime > pipeline scanned_at, forces inline rescan
@@ -157,7 +166,7 @@ After Apply Fix writes corrected YAML:
 
 ### Image DB & Service Classification
 `ImageRegistry` in `backend/image_registry.py` replaces all hardcoded service lists.
-Two-layer JSON at `data/images.json` (207 images, 7 families), seeded from LSIO fleet API.
+Two-layer JSON at `data/images.json` (218 images, 7 families), seeded from LSIO fleet API.
 
 **Classification priority (3-pass):**
 1. Image string → `patterns` (substring, case-insensitive) — precise
