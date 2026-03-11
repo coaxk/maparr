@@ -106,17 +106,32 @@ def _get_client_ip(request, trusted_proxies=None):
 # Thread-safe via a lock (needed because uvicorn may use thread pools).
 
 class RateLimiter:
-    """Per-IP sliding window rate limiter with tiered endpoint limits."""
+    """Per-IP sliding window rate limiter with tiered endpoint limits.
+
+    Limits are configurable via environment variables:
+      MAPARR_RATE_LIMIT_WRITE=10      (apply-fix, redeploy, restart — per minute)
+      MAPARR_RATE_LIMIT_ANALYSIS=30   (analyze, pipeline-scan — per minute)
+      MAPARR_RATE_LIMIT_READ=120      (all other /api/ endpoints — per minute)
+
+    Pipeline-scan is the primary user action and should rarely be limited.
+    If you hit rate limits during normal use, increase these values.
+    """
 
     # Endpoint classification: (path_prefixes, requests_per_minute)
-    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/change-stacks-path", "/api/redeploy", "/api/restart-stack", "/api/revert-fix")
-    ANALYSIS_PATHS = ("/api/analyze", "/api/pipeline-scan")
-    SKIP_PATHS = ("/api/health",)
+    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/redeploy", "/api/restart-stack", "/api/revert-fix")
+    ANALYSIS_PATHS = ()  # Analysis endpoints no longer rate-limited — see note below
+    # Rate limiting strategy for a single-user local tool:
+    # - WRITE endpoints: rate-limited (destructive operations, prevent accidental double-clicks)
+    # - Analysis/scan: NOT rate-limited (primary user actions, boot sequence fires 25+ analyze
+    #   calls for large stacks — throttling these breaks normal use)
+    # - SSE: separately managed by SSEConnectionLimiter (per-IP concurrent cap)
+    # - Reads: light rate limit to prevent runaway scripts
+    SKIP_PATHS = ("/api/health", "/api/change-stacks-path", "/api/pipeline-scan", "/api/analyze")
     STATIC_PREFIXES = ("/", "/static")
 
-    WRITE_LIMIT = 10       # requests per minute
-    ANALYSIS_LIMIT = 20    # requests per minute
-    READ_LIMIT = 60        # requests per minute
+    WRITE_LIMIT = int(os.environ.get("MAPARR_RATE_LIMIT_WRITE", "10"))
+    ANALYSIS_LIMIT = int(os.environ.get("MAPARR_RATE_LIMIT_ANALYSIS", "30"))
+    READ_LIMIT = int(os.environ.get("MAPARR_RATE_LIMIT_READ", "120"))
 
     WINDOW = 60.0          # sliding window in seconds
     CLEANUP_INTERVAL = 300.0  # purge stale entries every 5 minutes
@@ -350,7 +365,12 @@ async def rate_limit_middleware(request: Request, call_next):
     if not allowed:
         logger.warning("Rate limited: %s on %s (retry after %ds)", client_ip, path, retry_after)
         return JSONResponse(
-            {"error": "Too many requests. Please slow down.", "retry_after": retry_after},
+            {
+                "detail": f"Rate limited — too many requests. Try again in {retry_after}s. "
+                          "If this keeps happening, increase limits via MAPARR_RATE_LIMIT_ANALYSIS env var.",
+                "error": "rate_limited",
+                "retry_after": retry_after,
+            },
             status_code=429,
             headers={"Retry-After": str(retry_after)},
         )

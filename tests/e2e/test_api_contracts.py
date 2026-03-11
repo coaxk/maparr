@@ -402,12 +402,13 @@ class TestRateLimiting:
 
     def test_write_tier_triggers_429(self, client):
         """Write endpoint rate limit fires after 10 requests."""
-        # Fire 11 rapid requests to a write endpoint
+        # Fire 11 rapid requests to a write endpoint.
+        # /api/apply-fix is in WRITE_PATHS (10/min limit).
+        # Requests will fail with 400/422 (bad payload) but still count toward
+        # the rate limit — the limiter runs before request validation.
         last_status = None
         for i in range(11):
-            resp = client.post("/api/change-stacks-path", json={
-                "path": str(E2E_STACKS)
-            })
+            resp = client.post("/api/apply-fix", json={})
             last_status = resp.status_code
             if last_status == 429:
                 break
