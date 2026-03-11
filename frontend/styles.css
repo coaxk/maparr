@@ -794,6 +794,16 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     border-color: rgba(74, 144, 217, 0.3);
 }
 
+.btn-revert {
+    margin-left: 12px;
+    color: var(--warning);
+    border-color: var(--warning);
+}
+
+.btn-revert:hover:not(:disabled) {
+    background: rgba(210, 153, 34, 0.1);
+}
+
 .btn-icon {
     font-size: 0.85em;
     line-height: 1;

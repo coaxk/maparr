@@ -6306,6 +6306,11 @@ function showCrossStackConflict(data) {
                     confirmWrap.classList.add("hidden");
                     showSimpleToast("Fix applied successfully!", "success");
 
+                    // Revert button — shown when backend confirms backup exists
+                    if (result.has_backup) {
+                        appendRevertButton(resultDiv, data.compose_file_path);
+                    }
+
                     _refreshHealthAfterFix().then(() => {
                         const stackPath = data.compose_file_path
                             .replace(/\\/g, "/")
@@ -6704,6 +6709,51 @@ function copySolutionYaml() {
     });
 }
 
+// ─── Revert to Backup ───
+
+/**
+ * Create a "Revert to Backup" button and append it to the given parent element.
+ * Only shown when the backend confirms a .bak file exists (has_backup: true).
+ * Calls /api/revert-fix, then triggers a full pipeline rescan on success.
+ *
+ * @param {HTMLElement} parentEl  - DOM element to append the button to
+ * @param {string}      filePath - Full compose file path for the revert request
+ */
+function appendRevertButton(parentEl, filePath) {
+    const revertBtn = document.createElement("button");
+    revertBtn.className = "btn btn-subtle btn-revert";
+    revertBtn.textContent = "Revert to Backup";
+    revertBtn.addEventListener("click", async () => {
+        if (!confirm("Revert this file to its backup? Your applied fix will be undone.")) return;
+        revertBtn.disabled = true;
+        revertBtn.textContent = "Reverting\u2026";
+        try {
+            const resp = await fetch("/api/revert-fix", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ compose_file_path: filePath }),
+                signal: AbortSignal.timeout(10000),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                showSimpleToast(err.detail || "Revert failed", "error");
+                revertBtn.disabled = false;
+                revertBtn.textContent = "Revert to Backup";
+                return;
+            }
+            showSimpleToast("Reverted to backup successfully", "success");
+            revertBtn.textContent = "Reverted";
+            // Trigger pipeline rescan to refresh health
+            await _refreshHealthAfterFix();
+        } catch (e) {
+            showSimpleToast("Revert failed \u2014 " + (e.message || "unknown error"), "error");
+            revertBtn.disabled = false;
+            revertBtn.textContent = "Revert to Backup";
+        }
+    });
+    parentEl.appendChild(revertBtn);
+}
+
 // ─── Apply Fix ───
 
 // Stores the last analysis result for apply-fix
@@ -6810,6 +6860,11 @@ async function doApplyFix() {
             resultEl.textContent = (data.message || "Fix applied.") + " Your compose file has been updated but your stack has NOT been restarted. Run 'docker compose up -d' in your stack directory (or restart via your Docker manager) to apply the changes.";
             resultEl.classList.remove("hidden");
             showSimpleToast("Fix applied successfully!", "success");
+
+            // Revert button — shown when backend confirms backup exists
+            if (data.has_backup) {
+                appendRevertButton(resultEl, _lastAnalysisForApply.compose_file_path);
+            }
 
             // Update all apply buttons — "Apply All" patches everything
             for (const id of ["btn-apply-fix", "btn-apply-path-fix", "btn-apply-env-fix"]) {
