@@ -105,6 +105,7 @@ class PipelineResult:
     summary: str = ""                # Human-readable one-liner
     steps: List[dict] = field(default_factory=list)  # Terminal lines for UI
     per_stack_conflicts: Dict[str, List[dict]] = field(default_factory=dict)  # stack_name → conflicts
+    parse_errors: List[Dict] = field(default_factory=list)  # [{file, error, stack}]
 
     def to_dict(self) -> dict:
         return {
@@ -129,6 +130,7 @@ class PipelineResult:
             "summary": self.summary,
             "steps": self.steps,
             "per_stack_conflicts": self.per_stack_conflicts,
+            "parse_errors": self.parse_errors,
         }
 
 
@@ -220,6 +222,30 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
                 compose_user=svc_info.get("compose_user"),
             ))
         if not parsed:
+            # Distinguish "no media services" from "broken YAML"
+            try:
+                import yaml
+                with open(own_compose, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                if data is None or not isinstance(data, dict):
+                    result.parse_errors.append({
+                        "file": own_compose,
+                        "error": "Empty or invalid compose file",
+                        "stack": scan_entry.name,
+                    })
+            except yaml.YAMLError as ye:
+                line_info = ""
+                if hasattr(ye, "problem_mark") and ye.problem_mark:
+                    line_info = f" (line {ye.problem_mark.line + 1})"
+                result.parse_errors.append({
+                    "file": own_compose,
+                    "error": f"YAML syntax error{line_info}",
+                    "stack": scan_entry.name,
+                })
+                logger.warning("Parse error in %s: YAML syntax error%s", own_compose, line_info)
+            except Exception:
+                pass
+
             svc_names = _list_service_names(own_compose)
             if svc_names:
                 non_media_stacks.append({
@@ -289,6 +315,30 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
 
             # Track stacks with no media services for dashboard visibility
             if not parsed:
+                # Distinguish "no media services" from "broken YAML"
+                try:
+                    import yaml
+                    with open(svc_compose, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f)
+                    if data is None or not isinstance(data, dict):
+                        result.parse_errors.append({
+                            "file": svc_compose,
+                            "error": "Empty or invalid compose file",
+                            "stack": os.path.basename(os.path.dirname(svc_compose)),
+                        })
+                except yaml.YAMLError as ye:
+                    line_info = ""
+                    if hasattr(ye, "problem_mark") and ye.problem_mark:
+                        line_info = f" (line {ye.problem_mark.line + 1})"
+                    result.parse_errors.append({
+                        "file": svc_compose,
+                        "error": f"YAML syntax error{line_info}",
+                        "stack": os.path.basename(os.path.dirname(svc_compose)),
+                    })
+                    logger.warning("Parse error in %s: YAML syntax error%s", svc_compose, line_info)
+                except Exception:
+                    pass
+
                 svc_names = _list_service_names(svc_compose)
                 if svc_names:
                     non_media_stacks.append({

@@ -870,6 +870,25 @@ async function runPipelineScan() {
             body: JSON.stringify({ scan_dir: state.stacksPath }),
             signal: AbortSignal.timeout(30000),
         });
+        if (!resp.ok) {
+            // Handle rate limiting (429) and other errors gracefully
+            const errData = await resp.json().catch(() => ({}));
+            const detail = errData.detail || "Scan failed (HTTP " + resp.status + ")";
+            state.scanning = false;
+            if (resp.status === 429) {
+                // Rate limited — show retry message, don't wipe existing data
+                if (bannerText) bannerText.textContent = "Rate limited — please wait a moment and try again.";
+                if (bannerIcon) bannerIcon.className = "health-banner-icon health-caution-banner";
+            } else {
+                if (bannerText) bannerText.textContent = detail;
+                if (bannerIcon) bannerIcon.className = "health-banner-icon health-problem";
+            }
+            if (pasteInput) {
+                pasteInput.disabled = false;
+                pasteInput.placeholder = "Paste a Sonarr/Radarr error here...";
+            }
+            return;
+        }
         const data = await resp.json();
         state.pipeline = data;
         state.services = data.media_services || [];
@@ -884,6 +903,15 @@ async function runPipelineScan() {
 
         state.scanning = false;
         state._lastPipelineScan = Date.now(); // [2026-03-10] Rank 21: track scan timestamp
+
+        // Show parse error warnings if any stacks failed to load
+        const parseErrors = data.parse_errors || [];
+        if (parseErrors.length > 0) {
+            for (const err of parseErrors) {
+                showSimpleToast(err.stack + ": " + err.error, "error");
+            }
+        }
+
         renderDashboard();
 
     } catch (err) {
@@ -1060,7 +1088,8 @@ function renderHealthBanner(pipeline) {
     actions.replaceChildren();
 
     const tier = pipeline.health_tier || "unknown";
-    const message = pipeline.health_message || "";
+    const parseErrors = pipeline.parse_errors || [];
+    let message = pipeline.health_message || "";
 
     // Map health tiers to visual classes and banner text
     const tierStyles = {
@@ -1073,6 +1102,16 @@ function renderHealthBanner(pipeline) {
 
     const style = tierStyles[tier] || tierStyles.unknown;
     icon.className = "health-banner-icon " + style.css;
+
+    // Override banner when no services found but parse errors exist
+    const mediaCount = (pipeline.media_services || []).length;
+    if (mediaCount === 0 && parseErrors.length > 0) {
+        message = parseErrors.length + " compose file" +
+            (parseErrors.length > 1 ? "s" : "") +
+            " could not be parsed. Check for YAML syntax errors.";
+        icon.className = "health-banner-icon health-problem";
+    }
+
     text.textContent = message || style.fallback;
 
     // Show "View Issues" button when there are actionable conflicts
