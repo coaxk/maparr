@@ -1429,6 +1429,29 @@ async def health():
     return {"status": "ok", "version": VERSION}
 
 
+# ─── API: Host Info (First-Run Wizard) ───
+
+@app.get("/api/host-info")
+async def host_info():
+    """Return host UID/GID for first-run wizard pre-population.
+
+    These values help users configure PUID/PGID correctly — the most
+    common source of permission failures in containerised *arr setups.
+    """
+    import platform
+    info = {
+        "platform": platform.system(),
+    }
+    try:
+        info["uid"] = os.getuid()
+        info["gid"] = os.getgid()
+    except AttributeError:
+        # Windows — no getuid/getgid
+        info["uid"] = 1000
+        info["gid"] = 1000
+    return info
+
+
 # ─── API: Logs ───
 
 @app.get("/api/logs")

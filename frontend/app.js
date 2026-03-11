@@ -344,11 +344,11 @@ function transitionBootToFork(stackCount) {
                 updateHeaderPath(state.stacksPath);
                 runPipelineScan();
             } else {
-                showFirstLaunch();
+                showFirstRunWizard();
             }
         } else {
-            // No stacks — first launch or no-stacks
-            showFirstLaunch();
+            // No stacks — first-run wizard for new users
+            showFirstRunWizard();
         }
     }, { once: true });
 
@@ -366,7 +366,7 @@ function transitionBootToNoStacks() {
     bootScreen.addEventListener("animationend", () => {
         bootScreen.classList.add("hidden");
         bootScreen.classList.remove("boot-done");
-        showFirstLaunch();
+        showFirstRunWizard();
     }, { once: true });
 
     state.bootComplete = true;
@@ -475,6 +475,371 @@ function showFirstLaunch() {
     }
 
     setTimeout(() => input.focus(), 100);
+}
+
+// ─── First-Run Wizard ───
+
+/**
+ * First-run wizard — 3-step onboarding for new users.
+ * Trigger: No stacks found on boot AND no stored preferred path.
+ * Steps: (1) Choose folder, (2) Verify PUID/PGID, (3) Scan.
+ * "Skip" link available for advanced users who prefer the manual path input.
+ */
+function showFirstRunWizard() {
+    // Don't show wizard if user already has a stored path preference
+    if (getPreferredPath()) {
+        showFirstLaunch();
+        return;
+    }
+
+    hide("pipeline-dashboard");
+    hide("boot-no-stacks");
+    hide("first-launch");
+
+    const overlay = document.createElement("div");
+    overlay.className = "wizard-overlay";
+    overlay.id = "first-run-wizard";
+
+    const wizard = document.createElement("div");
+    wizard.className = "wizard-container";
+
+    // Track selected path across steps
+    let selectedPath = "";
+
+    // Step indicators
+    function renderStepIndicator(currentStep) {
+        const indicator = document.createElement("div");
+        indicator.className = "wizard-steps";
+        for (let i = 1; i <= 3; i++) {
+            const dot = document.createElement("span");
+            dot.className = "wizard-step-dot" + (i === currentStep ? " active" : "") + (i < currentStep ? " done" : "");
+            dot.textContent = i;
+            indicator.appendChild(dot);
+            if (i < 3) {
+                const line = document.createElement("span");
+                line.className = "wizard-step-line" + (i < currentStep ? " done" : "");
+                indicator.appendChild(line);
+            }
+        }
+        return indicator;
+    }
+
+    // ── Step 1: Choose stacks folder ──
+    function renderStep1() {
+        wizard.textContent = "";
+
+        wizard.appendChild(renderStepIndicator(1));
+
+        const title = document.createElement("h2");
+        title.textContent = "Welcome to MapArr";
+        wizard.appendChild(title);
+
+        const subtitle = document.createElement("p");
+        subtitle.className = "wizard-subtitle";
+        subtitle.textContent = "Where do you keep your Docker compose stacks?";
+        wizard.appendChild(subtitle);
+
+        // Selected path display
+        const pathDisplay = document.createElement("div");
+        pathDisplay.className = "wizard-selected-path";
+        pathDisplay.textContent = selectedPath || "No folder selected";
+        wizard.appendChild(pathDisplay);
+
+        // Directory browser
+        const dirBrowser = document.createElement("div");
+        dirBrowser.className = "wizard-dir-browser";
+
+        const dirHeader = document.createElement("div");
+        dirHeader.className = "dir-browser-header";
+
+        const upBtn = document.createElement("button");
+        upBtn.className = "dir-browser-up";
+        upBtn.textContent = "\u2191 Up";
+        upBtn.disabled = true;
+        dirHeader.appendChild(upBtn);
+
+        const currentPathDisplay = document.createElement("span");
+        currentPathDisplay.className = "dir-browser-path";
+        currentPathDisplay.textContent = "Loading...";
+        dirHeader.appendChild(currentPathDisplay);
+
+        dirBrowser.appendChild(dirHeader);
+
+        const list = document.createElement("div");
+        list.className = "dir-browser-list";
+        list.setAttribute("role", "listbox");
+        list.setAttribute("aria-label", "Directory listing");
+        dirBrowser.appendChild(list);
+
+        wizard.appendChild(dirBrowser);
+
+        // Select + Use This Folder button
+        const selectBtn = document.createElement("button");
+        selectBtn.className = "btn btn-primary wizard-select-btn";
+        selectBtn.textContent = "Use This Folder";
+        selectBtn.disabled = true;
+        selectBtn.addEventListener("click", () => {
+            if (selectedPath) renderStep2();
+        });
+        wizard.appendChild(selectBtn);
+
+        const skipLink = document.createElement("a");
+        skipLink.className = "wizard-skip";
+        skipLink.textContent = "Skip wizard \u2014 I'll set the path manually";
+        skipLink.href = "#";
+        skipLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            overlay.remove();
+            showFirstLaunch();
+        });
+        wizard.appendChild(skipLink);
+
+        // Directory loading (mirrors openDirectoryBrowser pattern)
+        let browsingPath = "";
+
+        async function loadDir(path) {
+            list.replaceChildren();
+            const loading = document.createElement("div");
+            loading.className = "dir-browser-loading";
+            loading.textContent = "Loading...";
+            list.appendChild(loading);
+
+            try {
+                const resp = await fetch("/api/list-directories", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path: path }),
+                });
+                const data = await resp.json();
+
+                if (data.error) {
+                    list.replaceChildren();
+                    const err = document.createElement("div");
+                    err.className = "dir-browser-empty";
+                    err.textContent = data.error;
+                    list.appendChild(err);
+                    return;
+                }
+
+                browsingPath = data.path || path;
+                currentPathDisplay.textContent = browsingPath || "Drives";
+
+                // Update selected path and enable button
+                selectedPath = browsingPath;
+                pathDisplay.textContent = selectedPath || "No folder selected";
+                selectBtn.disabled = !selectedPath;
+
+                upBtn.disabled = data.parent === null || data.parent === undefined;
+                upBtn.onclick = () => {
+                    if (data.parent !== null && data.parent !== undefined) {
+                        loadDir(data.parent);
+                    }
+                };
+
+                list.replaceChildren();
+
+                if (data.directories.length === 0) {
+                    const empty = document.createElement("div");
+                    empty.className = "dir-browser-empty";
+                    empty.textContent = "No subdirectories";
+                    list.appendChild(empty);
+                    return;
+                }
+
+                for (const dir of data.directories) {
+                    const item = document.createElement("button");
+                    item.className = "dir-browser-item" + (dir.locked ? " locked" : "");
+                    item.setAttribute("role", "option");
+
+                    const icon = document.createElement("span");
+                    icon.className = "folder-icon";
+                    icon.textContent = dir.locked ? "\uD83D\uDD12" : "\uD83D\uDCC1";
+
+                    const name = document.createElement("span");
+                    name.className = "folder-name";
+                    name.textContent = dir.name;
+
+                    item.appendChild(icon);
+                    item.appendChild(name);
+
+                    if (!dir.locked) {
+                        item.addEventListener("click", () => loadDir(dir.path));
+                    }
+
+                    list.appendChild(item);
+                }
+            } catch {
+                list.replaceChildren();
+                const errEl = document.createElement("div");
+                errEl.className = "dir-browser-empty";
+                errEl.textContent = "Failed to load directory";
+                list.appendChild(errEl);
+            }
+        }
+
+        loadDir("");
+    }
+
+    // ── Step 2: Verify PUID/PGID ──
+    function renderStep2() {
+        wizard.textContent = "";
+
+        wizard.appendChild(renderStepIndicator(2));
+
+        const title = document.createElement("h2");
+        title.textContent = "Verify PUID/PGID";
+        wizard.appendChild(title);
+
+        const desc = document.createElement("p");
+        desc.className = "wizard-subtitle";
+        desc.textContent = "These values should match your Docker container configuration. Most Linux users: 1000/1000. Unraid: 99/100.";
+        wizard.appendChild(desc);
+
+        const form = document.createElement("div");
+        form.className = "wizard-puid-form";
+
+        const uidLabel = document.createElement("label");
+        uidLabel.textContent = "PUID";
+        form.appendChild(uidLabel);
+
+        const uidInput = document.createElement("input");
+        uidInput.type = "number";
+        uidInput.className = "wizard-input";
+        uidInput.value = "1000";
+        form.appendChild(uidInput);
+
+        const gidLabel = document.createElement("label");
+        gidLabel.textContent = "PGID";
+        form.appendChild(gidLabel);
+
+        const gidInput = document.createElement("input");
+        gidInput.type = "number";
+        gidInput.className = "wizard-input";
+        gidInput.value = "1000";
+        form.appendChild(gidInput);
+
+        wizard.appendChild(form);
+
+        // Fetch host info to pre-populate
+        fetch("/api/host-info")
+            .then(function(r) { return r.json(); })
+            .then(function(info) {
+                uidInput.value = info.uid;
+                gidInput.value = info.gid;
+                if (info.platform === "Windows") {
+                    const hint = document.createElement("p");
+                    hint.className = "wizard-hint";
+                    hint.textContent = "Windows detected \u2014 defaults shown are standard Docker values. Your containers likely use 1000/1000 unless configured otherwise.";
+                    form.appendChild(hint);
+                }
+            })
+            .catch(function() { /* use defaults */ });
+
+        const btnRow = document.createElement("div");
+        btnRow.className = "wizard-btn-row";
+
+        const backBtn = document.createElement("button");
+        backBtn.className = "btn btn-ghost";
+        backBtn.textContent = "Back";
+        backBtn.addEventListener("click", () => renderStep1());
+        btnRow.appendChild(backBtn);
+
+        const nextBtn = document.createElement("button");
+        nextBtn.className = "btn btn-primary";
+        nextBtn.textContent = "Scan Stacks";
+        nextBtn.addEventListener("click", () => {
+            // Store PUID/PGID for reference
+            try {
+                localStorage.setItem("maparr_puid", uidInput.value);
+                localStorage.setItem("maparr_pgid", gidInput.value);
+            } catch { /* ignore storage errors */ }
+            renderStep3();
+        });
+        btnRow.appendChild(nextBtn);
+
+        wizard.appendChild(btnRow);
+
+        const skipLink = document.createElement("a");
+        skipLink.className = "wizard-skip";
+        skipLink.textContent = "Skip wizard \u2014 I'll set the path manually";
+        skipLink.href = "#";
+        skipLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            overlay.remove();
+            showFirstLaunch();
+        });
+        wizard.appendChild(skipLink);
+    }
+
+    // ── Step 3: Scan ──
+    async function renderStep3() {
+        wizard.textContent = "";
+
+        wizard.appendChild(renderStepIndicator(3));
+
+        const title = document.createElement("h2");
+        title.textContent = "Scanning your stacks...";
+        wizard.appendChild(title);
+
+        const subtitle = document.createElement("p");
+        subtitle.className = "wizard-subtitle";
+        subtitle.textContent = "Analyzing media pipeline for path conflicts and hardlink compatibility.";
+        wizard.appendChild(subtitle);
+
+        const spinner = document.createElement("div");
+        spinner.className = "wizard-spinner";
+        wizard.appendChild(spinner);
+
+        try {
+            // Set the stacks path via the existing endpoint
+            await fetch("/api/change-stacks-path", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path: selectedPath }),
+            });
+
+            state.stacksPath = selectedPath;
+            state.pathConfigured = true;
+            setPreferredPath(selectedPath);
+
+            // Remove wizard overlay before scan renders the dashboard
+            overlay.remove();
+
+            // Run the pipeline scan — this transitions to the dashboard
+            await runPipelineScan();
+        } catch (err) {
+            // Show error in wizard, let user retry or skip
+            wizard.textContent = "";
+            const errTitle = document.createElement("h2");
+            errTitle.textContent = "Scan Failed";
+            wizard.appendChild(errTitle);
+
+            const errMsg = document.createElement("p");
+            errMsg.className = "wizard-subtitle";
+            errMsg.textContent = "Could not scan stacks: " + (err.message || "unknown error");
+            wizard.appendChild(errMsg);
+
+            const retryBtn = document.createElement("button");
+            retryBtn.className = "btn btn-primary";
+            retryBtn.textContent = "Retry";
+            retryBtn.addEventListener("click", () => renderStep3());
+            wizard.appendChild(retryBtn);
+
+            const skipBtn = document.createElement("button");
+            skipBtn.className = "btn btn-ghost";
+            skipBtn.style.marginLeft = "8px";
+            skipBtn.textContent = "Skip";
+            skipBtn.addEventListener("click", () => {
+                overlay.remove();
+                showFirstLaunch();
+            });
+            wizard.appendChild(skipBtn);
+        }
+    }
+
+    renderStep1();
+    overlay.appendChild(wizard);
+    document.body.appendChild(overlay);
 }
 
 // ─── Pipeline Scan ───
