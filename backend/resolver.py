@@ -26,6 +26,39 @@ import yaml
 
 logger = logging.getLogger("maparr.resolver")
 
+# Allowed DOCKER_HOST patterns — everything else is SSRF risk (Grok Elder Council HIGH)
+_DOCKER_HOST_ALLOWED = re.compile(
+    r"^("
+    r"unix://.*"                                        # Any unix socket path
+    r"|tcp://127\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?"   # tcp://127.x.x.x
+    r"|tcp://localhost(:\d+)?"                          # tcp://localhost
+    r"|tcp://socket-proxy(:\d+)?"                       # Common socket proxy name
+    r"|tcp://[a-zA-Z0-9._-]+\.local(:\d+)?"            # *.local mDNS names
+    r")$"
+)
+
+
+def _validate_docker_host(value: str | None) -> str | None:
+    """Validate DOCKER_HOST env var against allowlist.
+
+    Returns the value unchanged if allowed, None if denied or empty.
+    Denied values log a WARNING with a sanitised message (no credentials leaked).
+    """
+    if not value:
+        return None
+    if _DOCKER_HOST_ALLOWED.match(value):
+        return value
+    # Log sanitised — only scheme + "denied", never the full URI
+    scheme = value.split("://")[0] if "://" in value else "unknown"
+    logger.warning(
+        "DOCKER_HOST denied: %s:// URI not in allowlist. "
+        "Allowed: unix://, tcp://127.*/localhost/socket-proxy/*.local. "
+        "Falling back to manual compose parsing.",
+        scheme,
+    )
+    return None
+
+
 # Compose file names to try, in priority order.
 COMPOSE_FILENAMES = [
     "docker-compose.yml",
@@ -145,6 +178,12 @@ def _try_docker_compose_config(
     Returns None if Docker CLI is unavailable or the command fails.
     This lets the caller fall back to manual resolution.
     """
+    # Validate DOCKER_HOST before any subprocess call (SSRF prevention)
+    docker_host = os.environ.get("DOCKER_HOST", "")
+    if docker_host and _validate_docker_host(docker_host) is None:
+        logger.info("DOCKER_HOST rejected by allowlist — skipping docker compose config")
+        return None  # Caller falls back to manual parsing
+
     try:
         cmd = [
             "docker", "compose",
