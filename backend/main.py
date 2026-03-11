@@ -311,6 +311,14 @@ logger = logging.getLogger("maparr")
 # Install the in-memory log handler so logs are available via /api/logs
 _log_handler = install_log_handler()
 
+# ─── Write Boundary Startup Check ───
+# Warn early if no stacks root is configured — write endpoints will refuse.
+if not os.environ.get("MAPARR_STACKS_PATH"):
+    logger.warning(
+        "MAPARR_STACKS_PATH not set — write endpoints (Apply Fix, Revert) are disabled. "
+        "Set MAPARR_STACKS_PATH to the directory containing your compose files."
+    )
+
 # ─── Version ───
 # Single source of truth — used in FastAPI metadata and /api/health.
 # Frontend reads this via the health endpoint on page load.
@@ -1119,13 +1127,10 @@ async def api_apply_fix(request: Request):
             {"error": "Corrected YAML too large (max 1MB per file)"},
             status_code=400,
         )
-    if not os.path.isfile(compose_file_path):
-        return JSONResponse(
-            {"error": f"File not found: {_relative_path_display(compose_file_path)}"},
-            status_code=400,
-        )
 
     # Security: validate the path is within the stacks directory.
+    # This check MUST come before the file existence check — we want to deny
+    # writes based on policy before even confirming the path exists on disk.
     # Write operations require an explicit boundary (MAPARR_STACKS_PATH or
     # custom_stacks_path) — without one, we refuse to write to prevent
     # accidental modifications to arbitrary compose files on the host.
@@ -1142,6 +1147,12 @@ async def api_apply_fix(request: Request):
         return JSONResponse(
             {"error": "Path is outside the stacks directory"},
             status_code=403,
+        )
+
+    if not os.path.isfile(compose_file_path):
+        return JSONResponse(
+            {"error": f"File not found: {_relative_path_display(compose_file_path)}"},
+            status_code=400,
         )
 
     # Security: validate it's actually a compose file

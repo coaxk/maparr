@@ -116,10 +116,12 @@ class TestApplyFix:
         assert resp.status_code == 400
         assert "services" in resp.json()["error"].lower()
 
-    def test_apply_missing_file(self, client):
-        """Nonexistent compose file should return 400."""
+    def test_apply_missing_file(self, client, tmp_path):
+        """Nonexistent compose file (within stacks root) should return 400."""
+        # Path must be within stacks root to pass security check, but not exist on disk
+        missing = tmp_path / "ghost" / "docker-compose.yml"
         resp = client.post("/api/apply-fix", json={
-            "compose_file_path": "/nonexistent/docker-compose.yml",
+            "compose_file_path": str(missing),
             "corrected_yaml": "services:\n  test:\n    image: test\n",
         })
 
