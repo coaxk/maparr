@@ -393,6 +393,64 @@ def _categorize_os_error(e: OSError, action: str) -> str:
     return f"{action}: system error (check logs for details)"
 
 
+def _categorize_analysis_error(exc: Exception, compose_path: str = "") -> dict:
+    """Map analysis exceptions to structured, frontend-friendly error responses.
+
+    Returns a dict with 'type', 'message', and optionally 'hint', 'line', 'path'.
+    Never includes raw str(exc) — uses controlled messages only.
+
+    Error types: yaml_parse, file_missing, permission_denied,
+    docker_unreachable, no_services, unknown.
+    """
+    if isinstance(exc, yaml.YAMLError):
+        line = None
+        if hasattr(exc, "problem_mark") and exc.problem_mark:
+            line = exc.problem_mark.line + 1  # 0-indexed → 1-indexed
+        return {
+            "type": "yaml_parse",
+            "message": "YAML syntax error in compose file",
+            "line": line,
+            "hint": f"Check line {line} for syntax issues" if line else "Check compose file for YAML syntax errors",
+        }
+
+    if isinstance(exc, FileNotFoundError):
+        return {
+            "type": "file_missing",
+            "message": "Compose file not found",
+            "path": compose_path,
+            "hint": "Verify the file exists and the path is correct",
+        }
+
+    if isinstance(exc, PermissionError):
+        return {
+            "type": "permission_denied",
+            "message": "Cannot read compose file — permission denied",
+            "path": compose_path,
+            "hint": "Check file permissions. If running in Docker, verify PUID/PGID match the file owner.",
+        }
+
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return {
+            "type": "docker_unreachable",
+            "message": "Docker daemon is unreachable",
+            "hint": "Check DOCKER_HOST configuration and ensure Docker is running",
+        }
+
+    if isinstance(exc, ValueError) and "no services" in str(exc).lower():
+        return {
+            "type": "no_services",
+            "message": "No services found in compose file",
+            "hint": "The compose file exists but contains no service definitions",
+        }
+
+    # Unknown — generic fallback with controlled message
+    return {
+        "type": "unknown",
+        "message": "Analysis failed due to an unexpected error",
+        "hint": "Check the log panel for details",
+    }
+
+
 def _relative_path_display(full_path: str) -> str:
     """Show path relative to stacks root for user context, falling back to basename."""
     try:
@@ -967,21 +1025,22 @@ async def api_analyze(request: Request):
         ))
     except (OSError, ValueError, TypeError, KeyError) as e:
         logger.exception("Analysis failed for %s", os.path.basename(stack_path))
-        safe_msg = _categorize_os_error(e, "Analysis") if isinstance(e, OSError) else "Analysis failed — check the log panel for details"
-        steps.append({"icon": "fail", "text": safe_msg})
+        error_info = _categorize_analysis_error(e, compose_file_path or stack_path)
+        steps.append({"icon": "fail", "text": error_info["message"]})
         return JSONResponse({
             "status": "error",
-            "error": safe_msg,
+            "error": error_info,
             "stage": "analysis",
             "stack_path": os.path.basename(stack_path),
             "steps": steps,
         }, status_code=200)
     except Exception as e:
         logger.exception("Analysis failed for %s (unexpected)", os.path.basename(stack_path))
-        steps.append({"icon": "fail", "text": "Analysis failed — check the log panel for details"})
+        error_info = _categorize_analysis_error(e, compose_file_path or stack_path)
+        steps.append({"icon": "fail", "text": error_info["message"]})
         return JSONResponse({
             "status": "error",
-            "error": "Analysis failed — check the log panel for details",
+            "error": error_info,
             "stage": "analysis",
             "stack_path": os.path.basename(stack_path),
             "steps": steps,
