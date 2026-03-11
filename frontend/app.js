@@ -941,15 +941,43 @@ const SERVICE_ICONS = {
 // [2026-03-10 12:38] QW-3: Added ICON_BASE constant (Rank 26) and onerror fallback helper
 const ICON_BASE = "/static/img/services/";
 
-function getServiceIconUrl(serviceName) {
+function getServiceIconUrl(serviceName, serviceImage) {
     const lower = (serviceName || "").toLowerCase();
-    const match = SERVICE_ICONS[lower];
-    if (match) return ICON_BASE + match + (match.includes(".") ? "" : ".svg");
-    // Check partial matches (e.g. "nzbhydra" matches "nzbhydra2")
+    const _icon = (f) => ICON_BASE + f + (f.includes(".") ? "" : ".svg");
+
+    // 1. Exact match
+    if (SERVICE_ICONS[lower]) return _icon(SERVICE_ICONS[lower]);
+
+    // 2. Segment match — split service name on -/_ and check each segment
+    const segments = lower.split(/[-_]/).filter(Boolean);
+    for (const seg of segments) {
+        if (SERVICE_ICONS[seg]) return _icon(SERVICE_ICONS[seg]);
+    }
+
+    // 3. Image basename match — extract from Docker image string
+    if (serviceImage) {
+        // "linuxserver/sonarr:latest" → "sonarr"
+        // "ghcr.io/hotio/radarr:nightly" → "radarr"
+        const imageParts = serviceImage.split("/");
+        const lastPart = imageParts[imageParts.length - 1];
+        const basename = lastPart.split(":")[0].toLowerCase();
+
+        if (SERVICE_ICONS[basename]) return _icon(SERVICE_ICONS[basename]);
+
+        // Also try segments of the image basename
+        const imgSegments = basename.split(/[-_]/).filter(Boolean);
+        for (const seg of imgSegments) {
+            if (SERVICE_ICONS[seg]) return _icon(SERVICE_ICONS[seg]);
+        }
+    }
+
+    // 4. Partial includes match (e.g. "nzbhydra" matches "nzbhydra2")
     for (const [key, file] of Object.entries(SERVICE_ICONS)) {
         if (lower.includes(key) || key.includes(lower))
-            return ICON_BASE + file + (file.includes(".") ? "" : ".svg");
+            return _icon(file);
     }
+
+    // 5. Fallback
     return ICON_BASE + "generic.svg";
 }
 
@@ -973,7 +1001,7 @@ function renderServiceRow(svc) {
     // Service icon
     const icon = document.createElement("img");
     icon.className = "service-icon";
-    icon.src = getServiceIconUrl(svc.service_name);
+    icon.src = getServiceIconUrl(svc.service_name, svc.image);
     icon.alt = svc.service_name + " icon"; // [2026-03-10] A11Y-5: descriptive alt text
     icon.width = 20;
     icon.height = 20;
@@ -3772,7 +3800,7 @@ function showCurrentSetup(data) {
         nameCell.className = "svc-name";
         const svcIcon = document.createElement("img");
         svcIcon.className = "service-icon";
-        svcIcon.src = getServiceIconUrl(svc.name || svc.service_name);
+        svcIcon.src = getServiceIconUrl(svc.name || svc.service_name, svc.image);
         svcIcon.alt = (svc.name || svc.service_name) + " icon"; // [2026-03-10] A11Y-5
         svcIcon.width = 16;
         svcIcon.height = 16;
@@ -3835,7 +3863,7 @@ function showCurrentSetup(data) {
             item.className = "other-service-item";
             const icon = document.createElement("img");
             icon.className = "service-icon";
-            icon.src = getServiceIconUrl(svc.name || svc.service_name);
+            icon.src = getServiceIconUrl(svc.name || svc.service_name, svc.image);
             icon.alt = (svc.name || svc.service_name) + " icon"; // [2026-03-10] A11Y-5
             icon.width = 20;
             icon.height = 20;
