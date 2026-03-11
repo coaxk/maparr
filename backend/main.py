@@ -253,6 +253,7 @@ class SSEConnectionLimiter:
 
 
 _sse_limiter = SSEConnectionLimiter()
+SSE_HARD_TIMEOUT_SECONDS = 300  # 5-minute hard timeout on SSE connections (Grok)
 
 
 # ─── Security: Path Validation ───
@@ -1358,10 +1359,15 @@ async def api_log_stream(request: Request):
         handler = get_log_handler()
         handler.add_listener(on_log)
         logger.info("Log stream: client connected (SSE) [%s]", client_ip)
+        start_time = time.monotonic()
         try:
             # Send initial keepalive
             yield "event: connected\ndata: {}\n\n"
             while True:
+                # Hard timeout — force client to reconnect (Grok Elder Council)
+                if time.monotonic() - start_time > SSE_HARD_TIMEOUT_SECONDS:
+                    yield "event: timeout\ndata: Connection recycled after 5 minutes\n\n"
+                    break
                 try:
                     entry = await asyncio.wait_for(queue.get(), timeout=30.0)
                     import json
