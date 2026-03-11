@@ -1903,9 +1903,9 @@ async function applyAllFixes(plans, triggerBtn) {
                 const ab = document.getElementById("btn-apply-fix");
                 if (ab) { ab.textContent = "Applied"; ab.disabled = true; ab.classList.add("applied"); }
             }
-            // Show restart modal — user must acknowledge before we rescan and
-            // navigate back to the dashboard with fresh results.
-            showPostFixRestartModal(fixes, data.applied_count);
+            // Show persistent inline banner instead of dismissible modal.
+            // Banner stays visible until redeploy/dismiss/rescan clears it.
+            showPostFixRedeployBanner(fixes, data.applied_count);
         } else if (data.status === "partial") {
             for (const r of (data.results || [])) {
                 if (r.status === "applied") markFixApplied(r.compose_file_path);
@@ -1925,6 +1925,63 @@ async function applyAllFixes(plans, triggerBtn) {
     }
 }
 
+/**
+ * Show persistent inline redeploy banner after multi-file Apply Fix.
+ * Replaces the old showPostFixRestartModal (which was a dismissible overlay).
+ * The banner renders inside the current analysis view and persists until
+ * the user redeploys, dismisses to indicator, or a rescan re-renders.
+ */
+function showPostFixRedeployBanner(appliedFixes, appliedCount) {
+    const roleWarnings = {
+        arr: "will stop monitoring and importing",
+        download_client: "active downloads will be interrupted",
+        media_server: "active streams will disconnect",
+        other: "service will restart",
+    };
+    const affected = [];
+    for (const fix of appliedFixes) {
+        const svc = state.services.find(s =>
+            fix.compose_file_path && fix.compose_file_path.includes(s.stack_name)
+        );
+        if (svc) {
+            affected.push({
+                stack_path: svc.stack_path || "",
+                stack_name: svc.stack_name || "",
+                service_name: svc.service_name,
+                role: svc.role || "other",
+                warning: roleWarnings[svc.role] || roleWarnings.other,
+            });
+        }
+    }
+
+    // Find a suitable container in the current view.
+    // The fix-plan area, the apply-result area, or fallback to the main content area.
+    const container = document.querySelector(".conflict-tabs") ||
+        document.getElementById("apply-result") ||
+        document.querySelector(".card") ||
+        document.body;
+
+    // Build redeploy callback for the banner's Redeploy button
+    const onRedeploy = affected.length > 0 ? async () => {
+        await fetch("/api/redeploy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                stacks: affected.map(s => ({ stack_path: s.stack_path, action: "up" })),
+            }),
+            signal: AbortSignal.timeout(60000),
+        });
+        showSimpleToast("Containers redeployed", "success");
+        rescanAndReturnToDashboard();
+    } : null;
+
+    renderRedeployBanner(container, affected, appliedCount, onRedeploy);
+
+    // Show success toast
+    showSimpleToast(appliedCount + " file" + (appliedCount !== 1 ? "s" : "") + " fixed successfully", "success");
+}
+
+// Legacy modal — kept for reference but no longer called (replaced by inline banner above)
 function showPostFixRestartModal(appliedFixes, appliedCount) {
     // Build list of affected stacks/services for the restart prompt
     const roleWarnings = {
@@ -2126,6 +2183,112 @@ function updateHealthBannerAfterFix() {
         icon.className = "health-banner-icon health-ok";
         text.textContent = "All fixes applied \u2014 rescan to verify";
     }
+}
+
+// ─── Redeploy Banner (U6 — persistent inline warning) ───
+
+/**
+ * Render a persistent inline banner after Apply Fix succeeds.
+ * Replaces the old dismissible modal. The banner stays visible until:
+ * 1. User clicks "Redeploy" (if Docker socket available)
+ * 2. User clicks "I'll restart later" (collapses to amber indicator)
+ * 3. A pipeline rescan re-renders the view (natural cleanup)
+ *
+ * @param {HTMLElement} container - parent element to append the banner to
+ * @param {Array} affectedServices - [{service_name, role, warning, stack_path}]
+ * @param {number} appliedCount - number of files fixed
+ * @param {Function} onRedeploy - callback when user clicks Redeploy (null to hide button)
+ */
+function renderRedeployBanner(container, affectedServices, appliedCount, onRedeploy) {
+    // Remove any existing banner first
+    const existing = document.getElementById("redeploy-banner");
+    if (existing) existing.remove();
+
+    const banner = document.createElement("div");
+    banner.className = "redeploy-banner";
+    banner.id = "redeploy-banner";
+
+    const icon = document.createElement("span");
+    icon.className = "redeploy-banner-icon";
+    icon.textContent = "\u26A0\uFE0F";
+
+    const textWrap = document.createElement("div");
+    textWrap.className = "redeploy-banner-text";
+
+    const title = document.createElement("strong");
+    title.textContent = "Restart Required";
+
+    const desc = document.createElement("p");
+    desc.textContent = appliedCount + " compose file" + (appliedCount !== 1 ? "s have" : " has") +
+        " been updated but the running container" + (appliedCount !== 1 ? "s" : "") +
+        " still use" + (appliedCount === 1 ? "s" : "") +
+        " the old configuration. Restart " + (appliedCount !== 1 ? "your stacks" : "the stack") +
+        " to apply changes.";
+
+    textWrap.appendChild(title);
+    textWrap.appendChild(desc);
+
+    // Show per-service impact warnings
+    if (affectedServices && affectedServices.length > 0) {
+        const list = document.createElement("ul");
+        list.className = "redeploy-banner-list";
+        for (const svc of affectedServices) {
+            const li = document.createElement("li");
+            li.textContent = svc.service_name + " \u2014 " + (svc.warning || "service will restart");
+            list.appendChild(li);
+        }
+        textWrap.appendChild(list);
+    }
+
+    const reassure = document.createElement("p");
+    reassure.className = "redeploy-banner-reassure";
+    reassure.textContent = "Services restart in seconds. No data is lost.";
+    textWrap.appendChild(reassure);
+
+    const actions = document.createElement("div");
+    actions.className = "redeploy-banner-actions";
+
+    // Redeploy button — only if callback provided (Docker socket available)
+    if (typeof onRedeploy === "function" && affectedServices && affectedServices.length > 0) {
+        const deployBtn = document.createElement("button");
+        deployBtn.className = "apply-btn";
+        deployBtn.textContent = "Redeploy " + affectedServices.length + " Service" +
+            (affectedServices.length !== 1 ? "s" : "");
+        deployBtn.addEventListener("click", async () => {
+            deployBtn.disabled = true;
+            deployBtn.textContent = "Redeploying...";
+            try {
+                await onRedeploy();
+                banner.remove();
+            } catch (e) {
+                deployBtn.disabled = false;
+                deployBtn.textContent = "Retry Redeploy";
+            }
+        });
+        actions.appendChild(deployBtn);
+    }
+
+    // "I'll restart later" — collapses banner to small amber indicator
+    const laterBtn = document.createElement("button");
+    laterBtn.className = "btn btn-subtle";
+    laterBtn.textContent = "I\u2019ll restart later";
+    laterBtn.addEventListener("click", () => {
+        banner.className = "redeploy-indicator";
+        banner.id = "redeploy-banner"; // keep ID for cleanup
+        // Clear all children safely using DOM methods
+        while (banner.firstChild) banner.removeChild(banner.firstChild);
+        const indicatorText = document.createElement("span");
+        indicatorText.className = "redeploy-indicator-text";
+        indicatorText.textContent = "\u26A0\uFE0F Restart pending";
+        banner.appendChild(indicatorText);
+    });
+    actions.appendChild(laterBtn);
+
+    banner.appendChild(icon);
+    banner.appendChild(textWrap);
+    banner.appendChild(actions);
+
+    container.appendChild(banner);
 }
 
 // ─── Redeploy ───
@@ -6476,6 +6639,11 @@ function showCrossStackConflict(data) {
                         appendRevertButton(resultDiv, data.compose_file_path);
                     }
 
+                    // Persistent inline redeploy banner (U6)
+                    const bannerWrap = document.createElement("div");
+                    resultDiv.after(bannerWrap);
+                    renderRedeployBanner(bannerWrap, [], 1, null);
+
                     _refreshHealthAfterFix().then(() => {
                         const stackPath = data.compose_file_path
                             .replace(/\\/g, "/")
@@ -7117,7 +7285,7 @@ async function doApplyFix() {
 
         if (resp.ok && data.status === "applied") {
             resultEl.className = "apply-result apply-result-success";
-            resultEl.textContent = (data.message || "Fix applied.") + " Your compose file has been updated but your stack has NOT been restarted. Run 'docker compose up -d' in your stack directory (or restart via your Docker manager) to apply the changes.";
+            resultEl.textContent = (data.message || "Fix applied.") + " Compose file updated. Backup saved as .bak.";
             resultEl.classList.remove("hidden");
             showSimpleToast("Fix applied successfully!", "success");
 
@@ -7144,12 +7312,11 @@ async function doApplyFix() {
             nextBtn.addEventListener("click", () => {
                 backToDashboard();
             });
-            // Restart guidance
-            const restartNote = document.createElement("p");
-            restartNote.className = "apply-restart-note";
-            restartNote.textContent = "Remember: restart your stack to apply the new configuration. Re-scanning will verify the YAML is correct, but the fix only takes effect after a restart.";
-            resultEl.after(restartNote);
-            restartNote.after(nextBtn);
+            // Persistent inline redeploy banner (U6) — replaces old plain-text note
+            const bannerContainer = document.createElement("div");
+            resultEl.after(bannerContainer);
+            bannerContainer.after(nextBtn);
+            renderRedeployBanner(bannerContainer, [], 1, null);
 
             // Re-run pipeline scan (compose changed) then re-analyze.
             // This gives the user REAL proof the fix worked — fresh terminal,
