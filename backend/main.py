@@ -108,7 +108,7 @@ class RateLimiter:
     """Per-IP sliding window rate limiter with tiered endpoint limits."""
 
     # Endpoint classification: (path_prefixes, requests_per_minute)
-    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/change-stacks-path", "/api/redeploy", "/api/revert-fix")
+    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/change-stacks-path", "/api/redeploy", "/api/restart-stack", "/api/revert-fix")
     ANALYSIS_PATHS = ("/api/analyze", "/api/pipeline-scan")
     SKIP_PATHS = ("/api/health",)
     STATIC_PREFIXES = ("/", "/static")
@@ -1420,6 +1420,101 @@ async def api_redeploy(request: Request):
 
     status_code = 200 if result["status"] != "error" else 500
     return JSONResponse(result, status_code=status_code)
+
+
+# ─── API: Docker Capabilities & Restart ───
+
+@app.get("/api/docker-capabilities")
+async def docker_capabilities():
+    """Report Docker socket and compose CLI availability.
+
+    Frontend uses this to show/hide the restart button in the redeploy banner.
+    Checks three things:
+      - socket_available: Does /var/run/docker.sock exist?
+      - socket_writable: Is the socket writable by this process?
+      - compose_available: Is the 'docker' CLI in PATH?
+    """
+    import shutil
+
+    socket_path = "/var/run/docker.sock"
+    socket_available = os.path.exists(socket_path)
+    socket_writable = os.access(socket_path, os.W_OK) if socket_available else False
+    compose_available = shutil.which("docker") is not None
+
+    return {
+        "socket_available": socket_available,
+        "socket_writable": socket_writable,
+        "compose_available": compose_available,
+    }
+
+
+@app.post("/api/restart-stack")
+async def restart_stack(request: Request):
+    """Restart a Docker stack via 'docker compose up -d'.
+
+    Validates path within stacks boundary, checks file exists,
+    runs docker compose with the specified file. Security check
+    runs before file existence check (established pattern).
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"detail": _json_error_detail(exc)}, status_code=400)
+
+    compose_path = body.get("compose_file_path", "").strip()
+
+    if not compose_path:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "compose_file_path is required"},
+        )
+
+    # Security check first — before revealing whether the file exists
+    if not _is_path_within_stacks(compose_path, require_root=True):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Path is outside the configured stacks directory."},
+        )
+
+    if not os.path.isfile(compose_path):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Compose file not found."},
+        )
+
+    try:
+        # Use subprocess list-form, no shell=True — standing security order
+        import subprocess
+
+        result = subprocess.run(
+            ["docker", "compose", "-f", compose_path, "up", "-d"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=os.path.dirname(compose_path),
+        )
+        if result.returncode != 0:
+            logger.warning("Stack restart failed: %s", result.stderr[:500])
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": "Stack restart failed. Check Docker logs.",
+                    "stderr": result.stderr[:500],
+                },
+            )
+        logger.info("Restarted stack: %s", _relative_path_display(compose_path))
+        return {"status": "restarted", "compose_file": compose_path}
+
+    except subprocess.TimeoutExpired:
+        return JSONResponse(
+            status_code=504,
+            content={"detail": "Stack restart timed out after 60 seconds."},
+        )
+    except FileNotFoundError:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Docker CLI not found. Ensure Docker is installed and in PATH."},
+        )
 
 
 # ─── API: Health ───

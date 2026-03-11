@@ -2564,7 +2564,7 @@ function updateHealthBannerAfterFix() {
  * @param {number} appliedCount - number of files fixed
  * @param {Function} onRedeploy - callback when user clicks Redeploy (null to hide button)
  */
-function renderRedeployBanner(container, affectedServices, appliedCount, onRedeploy) {
+function renderRedeployBanner(container, affectedServices, appliedCount, onRedeploy, composePath) {
     // Remove any existing banner first
     const existing = document.getElementById("redeploy-banner");
     if (existing) existing.remove();
@@ -2631,6 +2631,50 @@ function renderRedeployBanner(container, affectedServices, appliedCount, onRedep
             }
         });
         actions.appendChild(deployBtn);
+    }
+
+    // Direct restart button — check Docker capabilities and offer single-stack restart
+    // Only shown when no batch onRedeploy callback is provided but a compose path is available
+    if (typeof onRedeploy !== "function" && composePath) {
+        fetch("/api/docker-capabilities")
+            .then(function(r) { return r.json(); })
+            .then(function(caps) {
+                if (caps.compose_available) {
+                    const restartBtn = document.createElement("button");
+                    restartBtn.className = "apply-btn";
+                    restartBtn.textContent = "Restart Stack";
+                    restartBtn.addEventListener("click", async function() {
+                        restartBtn.disabled = true;
+                        restartBtn.textContent = "Restarting...";
+                        try {
+                            const resp = await fetch("/api/restart-stack", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ compose_file_path: composePath }),
+                                signal: AbortSignal.timeout(65000),
+                            });
+                            if (!resp.ok) {
+                                const err = await resp.json();
+                                showSimpleToast(err.detail || "Restart failed", "error");
+                                restartBtn.disabled = false;
+                                restartBtn.textContent = "Restart Stack";
+                                return;
+                            }
+                            showSimpleToast("Stack restarted successfully", "success");
+                            banner.remove();
+                            // Rescan to refresh health after restart
+                            rescanAndReturnToDashboard();
+                        } catch (e) {
+                            showSimpleToast("Restart failed \u2014 " + (e.message || "timeout"), "error");
+                            restartBtn.disabled = false;
+                            restartBtn.textContent = "Restart Stack";
+                        }
+                    });
+                    // Prepend before the "I'll restart later" button
+                    actions.insertBefore(restartBtn, actions.firstChild);
+                }
+            })
+            .catch(function() { /* Docker capabilities unavailable — no button */ });
     }
 
     // "I'll restart later" — collapses banner to small amber indicator
@@ -7004,10 +7048,10 @@ function showCrossStackConflict(data) {
                         appendRevertButton(resultDiv, data.compose_file_path);
                     }
 
-                    // Persistent inline redeploy banner (U6)
+                    // Persistent inline redeploy banner (U6) with direct restart (U3)
                     const bannerWrap = document.createElement("div");
                     resultDiv.after(bannerWrap);
-                    renderRedeployBanner(bannerWrap, [], 1, null);
+                    renderRedeployBanner(bannerWrap, [], 1, null, data.compose_file_path);
 
                     _refreshHealthAfterFix().then(() => {
                         const stackPath = data.compose_file_path
@@ -7677,11 +7721,11 @@ async function doApplyFix() {
             nextBtn.addEventListener("click", () => {
                 backToDashboard();
             });
-            // Persistent inline redeploy banner (U6) — replaces old plain-text note
+            // Persistent inline redeploy banner (U6) with direct restart (U3)
             const bannerContainer = document.createElement("div");
             resultEl.after(bannerContainer);
             bannerContainer.after(nextBtn);
-            renderRedeployBanner(bannerContainer, [], 1, null);
+            renderRedeployBanner(bannerContainer, [], 1, null, _lastAnalysisForApply.compose_file_path);
 
             // Re-run pipeline scan (compose changed) then re-analyze.
             // This gives the user REAL proof the fix worked — fresh terminal,
