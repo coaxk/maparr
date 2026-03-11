@@ -3401,6 +3401,17 @@ function hideAnalysisCards() {
 }
 
 function backToDashboard() {
+    // Clear paste state so old errors don't persist across navigation
+    const pasteInput = document.getElementById("paste-error-input");
+    if (pasteInput) {
+        pasteInput.value = "";
+    }
+    state.pastedError = null;
+    state.highlightedServices = [];
+    // Clear any paste result messages
+    const pasteResult = document.getElementById("paste-bar-result");
+    if (pasteResult) pasteResult.textContent = "";
+
     hideAnalysisCards();
     show("pipeline-dashboard");
 }
@@ -7029,120 +7040,17 @@ function showCrossStackConflict(data) {
         applyBtn.className = "apply-btn";
         applyBtn.textContent = "Apply All Fixes";
         applyBtn.addEventListener("click", () => {
-            confirmWrap.classList.remove("hidden");
+            const plan = {
+                compose_file_path: data.compose_file_path,
+                original_corrected_yaml: data.original_corrected_yaml,
+                original_changed_lines: data.original_changed_lines || [],
+                corrected_yaml: data.original_corrected_yaml,
+                changed_lines: data.original_changed_lines || [],
+                stack_name: data.compose_file_path.replace(/\\/g, "/").split("/").slice(-2, -1)[0] || "",
+            };
+            showDiffPreview([plan], applyBtn);
         });
         applyWrap.appendChild(applyBtn);
-
-        const confirmWrap = document.createElement("div");
-        confirmWrap.className = "apply-confirm hidden";
-        confirmWrap.style.position = "relative";
-
-        const confirmContent = document.createElement("div");
-        confirmContent.className = "apply-confirm-content";
-
-        const confirmTitle = document.createElement("p");
-        confirmTitle.className = "apply-confirm-title";
-        confirmTitle.textContent = "Apply all fixes to your compose file?";
-        confirmContent.appendChild(confirmTitle);
-
-        const confirmFile = document.createElement("p");
-        confirmFile.className = "apply-confirm-detail";
-        confirmFile.textContent = data.compose_file_path;
-        confirmContent.appendChild(confirmFile);
-
-        const confirmNote = document.createElement("p");
-        confirmNote.className = "apply-confirm-note";
-        confirmNote.textContent = "This patches volume paths and permissions in one go. A backup (.bak) will be created first.";
-        confirmContent.appendChild(confirmNote);
-
-        const btnRow = document.createElement("div");
-        btnRow.className = "apply-confirm-buttons";
-
-        const yesBtn = document.createElement("button");
-        yesBtn.className = "apply-confirm-yes";
-        yesBtn.textContent = "Apply All Fixes";
-        yesBtn.addEventListener("click", async () => {
-            yesBtn.disabled = true;
-            yesBtn.textContent = "Applying...";
-            const afController = new AbortController();
-            const afTimeout = setTimeout(() => afController.abort(), 30000);
-            try {
-                const resp = await fetch("/api/apply-fix", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        compose_file_path: data.compose_file_path,
-                        corrected_yaml: data.original_corrected_yaml,
-                    }),
-                    signal: afController.signal,
-                });
-                clearTimeout(afTimeout);
-                const result = await resp.json();
-                if (resp.ok && result.status === "applied") {
-                    resultDiv.className = "apply-result apply-result-success";
-                    resultDiv.textContent = result.message;
-                    resultDiv.classList.remove("hidden");
-                    applyBtn.textContent = "Applied";
-                    applyBtn.disabled = true;
-                    applyBtn.classList.add("applied");
-                    confirmWrap.classList.add("hidden");
-                    showSimpleToast("Fix applied successfully!", "success");
-
-                    // Revert button — shown when backend confirms backup exists
-                    if (result.has_backup) {
-                        appendRevertButton(resultDiv, data.compose_file_path);
-                    }
-
-                    // Persistent inline redeploy banner (U6) with direct restart (U3)
-                    const bannerWrap = document.createElement("div");
-                    resultDiv.after(bannerWrap);
-                    renderRedeployBanner(bannerWrap, [], 1, null, data.compose_file_path);
-
-                    _refreshHealthAfterFix().then(() => {
-                        const stackPath = data.compose_file_path
-                            .replace(/\\/g, "/")
-                            .replace(/\/[^/]+$/, "");
-                        const stackObj = state.stacks.find((s) =>
-                            s.path.replace(/\\/g, "/") === stackPath
-                        ) || { path: stackPath, compose_file: "docker-compose.yml" };
-                        runAnalysis(stackObj);
-                    });
-                } else {
-                    resultDiv.className = "apply-result apply-result-error";
-                    resultDiv.textContent = result.error || "Failed to apply fix. Check the log panel for details.";
-                    resultDiv.classList.remove("hidden");
-                    confirmWrap.classList.add("hidden");
-                }
-            } catch (err) {
-                clearTimeout(afTimeout);
-                resultDiv.className = "apply-result apply-result-error";
-                resultDiv.textContent = err.name === "AbortError"
-                    ? "Error: request timed out — is the backend responding?"
-                    : "Error: " + (err?.message || "could not reach backend");
-                resultDiv.classList.remove("hidden");
-                confirmWrap.classList.add("hidden");
-            } finally {
-                yesBtn.disabled = false;
-                yesBtn.textContent = "Apply All Fixes";
-            }
-        });
-        btnRow.appendChild(yesBtn);
-
-        const noBtn = document.createElement("button");
-        noBtn.className = "apply-confirm-no";
-        noBtn.textContent = "Cancel";
-        noBtn.addEventListener("click", () => {
-            confirmWrap.classList.add("hidden");
-        });
-        btnRow.appendChild(noBtn);
-
-        confirmContent.appendChild(btnRow);
-        confirmWrap.appendChild(confirmContent);
-        applyWrap.appendChild(confirmWrap);
-
-        const resultDiv = document.createElement("div");
-        resultDiv.className = "apply-result hidden";
-        applyWrap.appendChild(resultDiv);
 
         properContent.appendChild(applyWrap);
     }
