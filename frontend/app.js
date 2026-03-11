@@ -1979,7 +1979,7 @@ async function generateFixPlans(conflicts) {
                 };
             }
         } catch (e) {
-            // Analysis failed for this stack — skip
+            console.warn("[fix-plans] Analysis failed for", stackPath, e.message || e);
         }
     }
 
@@ -2315,6 +2315,12 @@ async function applyAllFixes(plans, triggerBtn) {
                 if (r.status === "applied") markFixApplied(r.compose_file_path);
             }
             showSimpleToast(data.applied_count + " applied, " + data.failed_count + " failed", "warning");
+        } else if (data.status === "validation_failed") {
+            for (const err of (data.errors || [])) {
+                showSimpleToast(err.compose_file_path.split("/").pop() + ": " + err.error, "error");
+            }
+            if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = "Apply All Fixes"; }
+            return;
         } else {
             const errMsg = (data.errors && data.errors[0]) ? data.errors[0].error : "unknown error";
             showSimpleToast("Fix failed: " + errMsg, "error");

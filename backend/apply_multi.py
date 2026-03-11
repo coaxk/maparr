@@ -60,6 +60,10 @@ def validate_fixes_batch(fixes: List[dict], stacks_root: str) -> List[dict]:
         try:
             path.resolve().relative_to(root)
         except ValueError:
+            logger.warning(
+                "Path boundary check failed: path=%s resolved=%s root=%s",
+                path_str, path.resolve(), root,
+            )
             errors.append({"compose_file_path": path_str, "error": "Path outside stacks directory. Check MAPARR_STACKS_PATH or use Change Path to update."})
             continue
 

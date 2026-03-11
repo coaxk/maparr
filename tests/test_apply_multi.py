@@ -137,3 +137,49 @@ class TestApplyFixesBatch:
         result = apply_fixes_batch([], stacks_root=str(tmp_path))
         assert result["status"] == "applied"
         assert result["applied_count"] == 0
+
+
+class TestPathBoundaryValidation:
+    """Focused tests for path boundary checking in validate_fixes_batch."""
+
+    def test_path_outside_root_rejected(self, tmp_path):
+        """Path that resolves outside stacks_root must be rejected."""
+        outside = tmp_path / ".." / "outside" / "docker-compose.yml"
+        # The file won't exist, so it may fail on 'not found' before boundary check.
+        # Create the file outside root to isolate the boundary check.
+        outside_dir = (tmp_path / ".." / "outside").resolve()
+        outside_dir.mkdir(parents=True, exist_ok=True)
+        outside_file = outside_dir / "docker-compose.yml"
+        outside_file.write_text("services:\n  x:\n    image: test\n")
+
+        fixes = [{"compose_file_path": str(outside_file), "corrected_yaml": "services:\n  x:\n    image: y\n"}]
+        errors = validate_fixes_batch(fixes, stacks_root=str(tmp_path))
+        assert len(errors) == 1, "Path outside stacks root must produce exactly one error"
+        assert "outside" in errors[0]["error"].lower(), (
+            f"Error message must mention 'outside', got: {errors[0]['error']}"
+        )
+
+    def test_path_within_root_accepted(self, tmp_path):
+        """Path that resolves inside stacks_root must pass boundary check."""
+        f1 = tmp_path / "mystack" / "docker-compose.yml"
+        f1.parent.mkdir()
+        f1.write_text("services:\n  x:\n    image: old\n")
+
+        fixes = [{"compose_file_path": str(f1), "corrected_yaml": "services:\n  x:\n    image: new\n"}]
+        errors = validate_fixes_batch(fixes, stacks_root=str(tmp_path))
+        assert errors == [], f"Valid path within root should produce no errors, got: {errors}"
+
+    def test_empty_path_rejected(self, tmp_path):
+        """Empty string path must be rejected."""
+        fixes = [{"compose_file_path": "", "corrected_yaml": "services:\n  x:\n    image: y\n"}]
+        errors = validate_fixes_batch(fixes, stacks_root=str(tmp_path))
+        assert len(errors) == 1, "Empty path must produce exactly one error"
+        assert "empty" in errors[0]["error"].lower(), (
+            f"Error message must mention 'empty', got: {errors[0]['error']}"
+        )
+
+    def test_whitespace_only_path_rejected(self, tmp_path):
+        """Whitespace-only path must be rejected as empty."""
+        fixes = [{"compose_file_path": "   ", "corrected_yaml": "services:\n  x:\n    image: y\n"}]
+        errors = validate_fixes_batch(fixes, stacks_root=str(tmp_path))
+        assert len(errors) == 1, "Whitespace-only path must produce exactly one error"
