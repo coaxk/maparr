@@ -108,7 +108,7 @@ class RateLimiter:
     """Per-IP sliding window rate limiter with tiered endpoint limits."""
 
     # Endpoint classification: (path_prefixes, requests_per_minute)
-    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/change-stacks-path", "/api/redeploy")
+    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/change-stacks-path", "/api/redeploy", "/api/revert-fix")
     ANALYSIS_PATHS = ("/api/analyze", "/api/pipeline-scan")
     SKIP_PATHS = ("/api/health",)
     STATIC_PREFIXES = ("/", "/static")
@@ -1223,6 +1223,7 @@ async def api_apply_fix(request: Request):
         "status": "applied",
         "compose_file": os.path.basename(compose_file_path),
         "backup_file": os.path.basename(backup_path),
+        "has_backup": os.path.isfile(backup_path),
         "message": f"Fix applied to {os.path.basename(compose_file_path)}. Backup saved as {os.path.basename(backup_path)}.",
     }
 
@@ -1255,6 +1256,81 @@ async def api_apply_fixes(request: Request):
         return JSONResponse(result, status_code=400)
 
     return JSONResponse(result)
+
+
+# ─── API: Revert Fix ───
+
+@app.post("/api/revert-fix")
+async def api_revert_fix(request: Request):
+    """Restore a compose file from its .bak backup.
+
+    Validates path within stacks boundary, checks .bak exists,
+    swaps backup to original via os.replace() for atomicity.
+    Elder Council finding (Gemini + Grok): expose undo in Apply Fix UI.
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse(
+            {"detail": _json_error_detail(exc)},
+            status_code=400,
+        )
+
+    compose_path = body.get("compose_file_path", "").strip()
+
+    if not compose_path:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "compose_file_path is required"},
+        )
+
+    # Security: path boundary check BEFORE file existence — deny by policy first.
+    # Write operations require an explicit boundary (MAPARR_STACKS_PATH or
+    # custom_stacks_path) — without one, we refuse to prevent accidental changes.
+    if not _is_path_within_stacks(compose_path, require_root=True):
+        stacks_root = _get_stacks_root()
+        if not stacks_root:
+            logger.warning("Revert blocked: no stacks root configured (set MAPARR_STACKS_PATH)")
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Revert requires MAPARR_STACKS_PATH to be set for security. "
+                                   "Set the environment variable or use Change Path in the UI."},
+            )
+        logger.warning("Revert blocked: path outside stacks root: %s", compose_path)
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Path is outside the configured stacks directory."},
+        )
+
+    if not os.path.isfile(compose_path):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": f"Compose file not found: {_relative_path_display(compose_path)}"},
+        )
+
+    backup_path = compose_path + ".bak"
+    if not os.path.isfile(backup_path):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "No backup file found. Cannot revert — no previous version to restore."},
+        )
+
+    try:
+        # os.replace() is atomic on the same filesystem: the backup overwrites
+        # the current file in a single operation. The .bak is consumed (removed).
+        os.replace(backup_path, compose_path)
+        logger.info("Reverted %s from backup", _relative_path_display(compose_path))
+        return {
+            "status": "reverted",
+            "compose_file": compose_path,
+            "message": f"Restored {_relative_path_display(compose_path)} from backup.",
+        }
+    except OSError as exc:
+        logger.error("Revert failed for %s: %s", compose_path, exc)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": _categorize_os_error(exc, "Failed to revert")},
+        )
 
 
 # ─── API: Redeploy ───
