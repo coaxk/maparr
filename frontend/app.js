@@ -2757,8 +2757,9 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // [2026-03-10 13:30] Rank 23: Human-readable network error messages
-// TODO(Task 9/10 C2): This function duplicates backend _categorize_os_error() logic.
-// Remove once C2 error message backend provides structured error categories in responses.
+// [2026-03-12] Task 9/10 C2: Backend now returns structured errors for analysis.
+// This function remains as a client-side fallback for network/fetch errors
+// (timeouts, unreachable backend) that never reach the backend.
 function friendlyError(err) {
     if (!err) return "Unknown error";
     if (err.name === "AbortError") return "Request timed out \u2014 the stack may be too large or the backend is slow";
@@ -3378,9 +3379,11 @@ async function runAnalysis(stack) {
 
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ error: "Analysis failed" }));
-            addTerminalLine("fail", err.error || "Analysis request failed");
+            const errPayload = err.error || "Analysis request failed";
+            const errText = (typeof errPayload === "object") ? (errPayload.message || "Analysis request failed") : errPayload;
+            addTerminalLine("fail", errText);
             setTerminalDots("error");
-            showAnalysisError(err.error || "Analysis request failed");
+            showAnalysisError(errPayload);
             return;
         }
 
@@ -6368,22 +6371,117 @@ function showCrossStackConflict(data) {
 
 // ─── Analysis Error ───
 
+/**
+ * Render a structured analysis error from the backend.
+ * Switches on error.type for specific icons, colours, and actionable messages.
+ * Unknown types fall back to generic error display.
+ *
+ * @param {Object} error - Structured error: {type, message, hint, line?, path?}
+ * @param {HTMLElement} container - DOM element to render into
+ */
+function renderAnalysisError(error, container) {
+    container.replaceChildren();
+
+    // Error type -> icon + colour mapping
+    const errorConfig = {
+        yaml_parse: {
+            icon: "\u26A0\uFE0F",
+            className: "error-yaml",
+            title: "YAML Syntax Error",
+        },
+        file_missing: {
+            icon: "\uD83D\uDCC4",
+            className: "error-missing",
+            title: "File Not Found",
+        },
+        permission_denied: {
+            icon: "\uD83D\uDD12",
+            className: "error-permission",
+            title: "Permission Denied",
+        },
+        docker_unreachable: {
+            icon: "\uD83D\uDC33",
+            className: "error-docker",
+            title: "Docker Unreachable",
+        },
+        no_services: {
+            icon: "\uD83D\uDCCB",
+            className: "error-empty",
+            title: "No Services Found",
+        },
+    };
+
+    const config = errorConfig[error.type] || {
+        icon: "\u274C",
+        className: "error-unknown",
+        title: "Analysis Error",
+    };
+
+    const errorCard = document.createElement("div");
+    errorCard.className = "analysis-error-card " + config.className;
+
+    const header = document.createElement("div");
+    header.className = "analysis-error-header";
+
+    const iconSpan = document.createElement("span");
+    iconSpan.className = "analysis-error-icon";
+    iconSpan.textContent = config.icon;
+
+    const titleSpan = document.createElement("span");
+    titleSpan.className = "analysis-error-title";
+    titleSpan.textContent = config.title;
+
+    header.appendChild(iconSpan);
+    header.appendChild(titleSpan);
+
+    const message = document.createElement("p");
+    message.className = "analysis-error-message";
+    message.textContent = error.message || "An error occurred during analysis";
+
+    errorCard.appendChild(header);
+    errorCard.appendChild(message);
+
+    // Line number for YAML errors
+    if (error.line) {
+        const lineInfo = document.createElement("p");
+        lineInfo.className = "analysis-error-line";
+        lineInfo.textContent = "Line " + error.line;
+        errorCard.appendChild(lineInfo);
+    }
+
+    // Actionable hint
+    if (error.hint) {
+        const hint = document.createElement("p");
+        hint.className = "analysis-error-hint";
+        hint.textContent = error.hint;
+        errorCard.appendChild(hint);
+    }
+
+    container.appendChild(errorCard);
+}
+
 function showAnalysisError(error, stage) {
     const section = document.getElementById("step-analysis-error");
     const details = document.getElementById("analysis-error-details");
     details.replaceChildren();
 
-    const msg = document.createElement("p");
-    msg.textContent = error;
-    details.appendChild(msg);
+    // If the backend returned a structured error object, use the new renderer
+    if (error && typeof error === "object" && error.type) {
+        renderAnalysisError(error, details);
+    } else {
+        // Legacy path: plain string error message
+        const msg = document.createElement("p");
+        msg.textContent = typeof error === "object" ? (error.message || "Analysis failed") : error;
+        details.appendChild(msg);
 
-    if (stage === "resolution") {
-        const hint = document.createElement("div");
-        hint.className = "callout callout-warning";
-        hint.textContent =
-            "Could not parse the compose file. Check that it's valid YAML " +
-            "and contains a 'services' key.";
-        details.appendChild(hint);
+        if (stage === "resolution") {
+            const hint = document.createElement("div");
+            hint.className = "callout callout-warning";
+            hint.textContent =
+                "Could not parse the compose file. Check that it's valid YAML " +
+                "and contains a 'services' key.";
+            details.appendChild(hint);
+        }
     }
 
     section.classList.remove("hidden");
