@@ -44,6 +44,61 @@ _BLOCKED_PREFIXES = (
 )
 
 
+# ─── Trusted Proxy IP Resolution ───
+# Behind reverse proxies (Traefik, Caddy, Nginx), request.client.host returns
+# the proxy IP, not the real client. This lets attackers bypass rate limiting.
+# Configure MAPARR_TRUSTED_PROXIES=ip1,ip2 to trust specific proxy IPs, then
+# _get_client_ip() walks X-Forwarded-For right-to-left to find the real client.
+
+_TRUSTED_PROXIES: frozenset[str] = frozenset(
+    ip.strip() for ip in os.environ.get("MAPARR_TRUSTED_PROXIES", "").split(",")
+    if ip.strip()
+)
+if _TRUSTED_PROXIES:
+    logger.info("Trusted proxies configured: %s", ", ".join(sorted(_TRUSTED_PROXIES)))
+
+
+def _get_client_ip(request, trusted_proxies=None):
+    """Extract real client IP, respecting X-Forwarded-For when proxies are trusted.
+
+    Without trusted proxies: returns request.client.host directly.
+    With trusted proxies: walks X-Forwarded-For right-to-left, returns
+    rightmost IP not in the trust set. Normalises IPv6 ::1 to 127.0.0.1.
+    """
+    if trusted_proxies is None:
+        trusted_proxies = _TRUSTED_PROXIES
+
+    if not request.client:
+        return "unknown"
+
+    client_ip = request.client.host
+
+    # Normalise IPv6 loopback
+    if client_ip == "::1":
+        client_ip = "127.0.0.1"
+
+    if not trusted_proxies:
+        return client_ip
+
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if not forwarded:
+        return client_ip
+
+    # Parse chain: "client, proxy1, proxy2" — rightmost untrusted is real client
+    ips = [ip.strip() for ip in forwarded.split(",") if ip.strip()]
+    if not ips:
+        return client_ip
+
+    # Walk right to left, skip trusted proxies
+    for ip in reversed(ips):
+        normalised = "127.0.0.1" if ip == "::1" else ip
+        if normalised not in trusted_proxies:
+            return normalised
+
+    # All IPs are trusted — use leftmost as origin
+    return ips[0]
+
+
 # ─── Rate Limiting ───
 # Simple in-memory sliding window rate limiter. No external dependencies.
 # Classifies endpoints into tiers with different request-per-minute limits.
@@ -283,7 +338,7 @@ logger.info("MapArr v%s starting up", VERSION)
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     """Enforce per-IP rate limits based on endpoint tier."""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     path = request.url.path
 
     allowed, retry_after = _rate_limiter.check(client_ip, path)
@@ -1269,7 +1324,7 @@ async def api_log_stream(request: Request):
     Per-IP concurrent connection cap prevents file descriptor exhaustion
     from runaway clients or browser tab accumulation.
     """
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
 
     # Enforce per-IP SSE connection limit
     if not _sse_limiter.try_connect(client_ip):
