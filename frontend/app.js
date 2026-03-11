@@ -770,6 +770,9 @@ function renderServiceGroups(servicesByRole) {
     }
 }
 
+// localStorage key for Other Stacks collapsed state
+const LOCALSTORAGE_OTHER_COLLAPSED = "maparr_other_stacks_collapsed";
+
 function renderNonMediaStacks(stacks) {
     const container = document.getElementById("service-groups");
     if (!container || stacks.length === 0) return;
@@ -777,19 +780,32 @@ function renderNonMediaStacks(stacks) {
     const section = document.createElement("div");
     section.className = "non-media-stacks-section";
 
+    // Collapsible header with chevron
     const header = document.createElement("div");
-    header.className = "service-group-header non-media-header";
-    header.textContent = "Other Stacks (" + stacks.length + ")";
+    header.className = "service-group-header non-media-header non-media-header-collapsible";
     header.setAttribute("data-tooltip",
-        "Stacks without media services — not analyzed for path conflicts but shown for awareness");
+        "Stacks without media services \u2014 not analyzed for path conflicts but shown for awareness");
+
+    const chevron = document.createElement("span");
+    chevron.className = "non-media-chevron";
+    header.appendChild(chevron);
+
+    const titleText = document.createElement("span");
+    titleText.textContent = "Other Stacks (" + stacks.length + ")";
+    header.appendChild(titleText);
+
     section.appendChild(header);
+
+    // Collapsible body wraps note + chip list
+    const body = document.createElement("div");
+    body.className = "non-media-stacks-body";
 
     const note = document.createElement("p");
     note.className = "non-media-stacks-note";
     note.textContent =
         "These stacks don\u2019t contain arr apps, download clients, or media servers, " +
         "so they\u2019re not part of the media pipeline analysis.";
-    section.appendChild(note);
+    body.appendChild(note);
 
     const list = document.createElement("div");
     list.className = "non-media-stacks-list";
@@ -825,7 +841,34 @@ function renderNonMediaStacks(stacks) {
         list.appendChild(chip);
     }
 
-    section.appendChild(list);
+    body.appendChild(list);
+    section.appendChild(body);
+
+    // Collapse state — default collapsed when >10 stacks
+    const defaultCollapsed = stacks.length > 10;
+    var isCollapsed;
+    try {
+        var stored = localStorage.getItem(LOCALSTORAGE_OTHER_COLLAPSED);
+        isCollapsed = stored !== null ? stored === "true" : defaultCollapsed;
+    } catch (e) {
+        isCollapsed = defaultCollapsed;
+    }
+
+    function applyCollapsedState() {
+        body.style.display = isCollapsed ? "none" : "";
+        chevron.textContent = isCollapsed ? "\u25B6" : "\u25BC";
+        section.classList.toggle("collapsed", isCollapsed);
+    }
+
+    header.addEventListener("click", function () {
+        isCollapsed = !isCollapsed;
+        try {
+            localStorage.setItem(LOCALSTORAGE_OTHER_COLLAPSED, String(isCollapsed));
+        } catch (e) { /* storage full or unavailable — ignore */ }
+        applyCollapsedState();
+    });
+
+    applyCollapsedState();
     container.appendChild(section);
 }
 

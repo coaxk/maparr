@@ -3836,6 +3836,25 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
     border-left-color: var(--text-muted) !important;
 }
 
+.non-media-header-collapsible {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.non-media-header-collapsible:hover {
+    color: var(--text-secondary) !important;
+}
+
+.non-media-chevron {
+    font-size: 0.75em;
+    width: 12px;
+    display: inline-block;
+    transition: color 0.2s;
+}
+
 .non-media-stacks-note {
     font-size: 0.8rem;
     color: var(--text-muted);
