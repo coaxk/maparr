@@ -1029,9 +1029,30 @@ function renderConflictSummary(conflicts) {
         }
     }
 
+    // Compute dynamic label for Category B based on actual conflict types
+    const catBConflicts = conflicts.filter(c => (c.category || "").toUpperCase() === "B");
+    const catBTypes = new Set(catBConflicts.map(c => c.type));
+    let catBLabel = "permission mismatch";
+    let catBPlural = "permission mismatches";
+    if (catBTypes.size > 0) {
+        const hasTz = catBTypes.has("tz_mismatch") || catBTypes.has("missing_tz");
+        const hasUmask = catBTypes.has("umask_inconsistent") || catBTypes.has("umask_restrictive");
+        const hasPerm = catBTypes.has("puid_pgid_mismatch") || catBTypes.has("missing_puid_pgid") ||
+                        catBTypes.has("root_execution") || catBTypes.has("cross_stack_puid_mismatch");
+
+        if (hasTz && !hasUmask && !hasPerm) {
+            catBLabel = "timezone issue"; catBPlural = "timezone issues";
+        } else if (hasUmask && !hasTz && !hasPerm) {
+            catBLabel = "umask issue"; catBPlural = "umask issues";
+        } else if ((hasTz || hasUmask) && hasPerm) {
+            catBLabel = "permission/environment issue"; catBPlural = "permission/environment issues";
+        }
+        // else: default "permission mismatch" stays
+    }
+
     const categories = [
         { key: "A", label: "path issue", plural: "path issues", cls: "summary-high" },
-        { key: "B", label: "permission mismatch", plural: "permission mismatches", cls: "summary-medium" },
+        { key: "B", label: catBLabel, plural: catBPlural, cls: "summary-medium" },
         { key: "C", label: "infrastructure note", plural: "infrastructure notes", cls: "summary-low" },
     ];
 
@@ -2997,10 +3018,16 @@ async function handlePasteError() {
         state.pastedError = parsed;
 
         // Find matching service(s) in pipeline
-        const matched = state.services.filter(s =>
-            s.service_name.toLowerCase().includes(parsed.service.toLowerCase()) ||
-            parsed.service.toLowerCase().includes(s.service_name.toLowerCase())
-        );
+        // Support generic "*arr" indicator — match any arr app in pipeline
+        let matched;
+        if (parsed.service === "*arr") {
+            matched = state.services.filter(s => s.role === "arr");
+        } else {
+            matched = state.services.filter(s =>
+                s.service_name.toLowerCase().includes(parsed.service.toLowerCase()) ||
+                parsed.service.toLowerCase().includes(s.service_name.toLowerCase())
+            );
+        }
 
         if (matched.length > 0) {
             // Highlight matched services
@@ -4904,13 +4931,29 @@ function showSolution(data) {
     if (envBlock) envBlock.remove();
 
     if (hasCatB && data.env_solution_yaml) {
-        // Add "Fix Permissions" tab button
+        // Dynamic labels based on actual Cat B conflict types
+        const envTypes = new Set(
+            (data.conflicts || []).filter(c => (c.category || "").toUpperCase() === "B").map(c => c.type)
+        );
+        const hasTzOnly = (envTypes.has("tz_mismatch") || envTypes.has("missing_tz")) &&
+            !envTypes.has("puid_pgid_mismatch") && !envTypes.has("missing_puid_pgid") && !envTypes.has("root_execution");
+        const hasUmaskOnly = (envTypes.has("umask_inconsistent") || envTypes.has("umask_restrictive")) &&
+            !envTypes.has("puid_pgid_mismatch") && !envTypes.has("missing_puid_pgid") && !envTypes.has("root_execution");
+
+        // Add env tab button
         const tabBar = document.getElementById("solution-tabs");
         if (tabBar) {
             const envTabBtn = document.createElement("button");
             envTabBtn.className = "solution-tab solution-tab-env";
             envTabBtn.dataset.tab = "env";
-            envTabBtn.textContent = "Fix Permissions";
+
+            if (hasTzOnly) {
+                envTabBtn.textContent = "Fix Timezone";
+            } else if (hasUmaskOnly) {
+                envTabBtn.textContent = "Fix Umask";
+            } else {
+                envTabBtn.textContent = "Fix Environment";
+            }
             // Insert before the "Your Config" tab if it exists, otherwise at end
             const origTabBtn = tabBar.querySelector('[data-tab="original"]');
             if (origTabBtn) {
@@ -4972,7 +5015,17 @@ function showSolution(data) {
             const envApplyBtn = document.createElement("button");
             envApplyBtn.className = "apply-btn";
             envApplyBtn.id = "btn-apply-env-fix";
-            envApplyBtn.textContent = envFixPlans.length === 1 ? "Apply Permission Fix" : "Apply Permission Fixes (" + envFixPlans.length + " files)";
+            let envBtnBase;
+            if (hasTzOnly) {
+                envBtnBase = "Timezone Fix";
+            } else if (hasUmaskOnly) {
+                envBtnBase = "Umask Fix";
+            } else {
+                envBtnBase = "Environment Fix";
+            }
+            envApplyBtn.textContent = envFixPlans.length === 1
+                ? "Apply " + envBtnBase
+                : "Apply " + envBtnBase + "es (" + envFixPlans.length + " files)";
             envApplyBtn.addEventListener("click", () => showDiffPreview(envFixPlans, envApplyBtn));
             envActions.appendChild(envApplyBtn);
         }
