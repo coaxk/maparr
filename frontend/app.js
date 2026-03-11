@@ -7417,13 +7417,25 @@ function renderBottomActions(container) {
         buttons.appendChild(analyzeBtn);
     }
 
+    // Export Diagnostic — primary action (zip download)
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "btn btn-subtle";
+    const exportIcon = document.createElement("span");
+    exportIcon.className = "btn-icon";
+    exportIcon.textContent = "\uD83D\uDCE6";
+    exportBtn.appendChild(exportIcon);
+    exportBtn.appendChild(document.createTextNode(" Export Diagnostic"));
+    exportBtn.addEventListener("click", () => exportDiagnosticZip(exportBtn));
+    buttons.appendChild(exportBtn);
+
+    // Copy Summary — secondary action (clipboard)
     const diagBtn = document.createElement("button");
     diagBtn.className = "btn btn-subtle";
     const diagIcon = document.createElement("span");
     diagIcon.className = "btn-icon";
     diagIcon.textContent = "\uD83D\uDCCB";
     diagBtn.appendChild(diagIcon);
-    diagBtn.appendChild(document.createTextNode(" Copy Diagnostic"));
+    diagBtn.appendChild(document.createTextNode(" Copy Summary"));
     diagBtn.addEventListener("click", () => copyDiagnosticSummary());
     buttons.appendChild(diagBtn);
 
@@ -8707,6 +8719,42 @@ function copyDiagnosticSummary() {
         document.body.removeChild(textarea);
     });
 }
+
+/**
+ * Export a diagnostic zip file from the backend. Downloads via blob URL
+ * and temporary anchor element. The zip contains compose files (secrets
+ * redacted), pipeline summary, and system info.
+ *
+ * @param {HTMLButtonElement} btn — the button element (for loading state)
+ */
+async function exportDiagnosticZip(btn) {
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Exporting...";
+    try {
+        const resp = await fetch("/api/export-diagnostics");
+        if (!resp.ok) {
+            showSimpleToast("Export failed", "error");
+            return;
+        }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "maparr-diagnostic.zip";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showSimpleToast("Diagnostic exported", "success");
+    } catch (e) {
+        showSimpleToast("Export failed — " + (e.message || "unknown error"), "error");
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
 
 // ─── Footer Version & Update Check ───
 

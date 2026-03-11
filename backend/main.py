@@ -14,6 +14,7 @@ No Docker SDK dependency. No SQLite. No persistence, no jobs system.
 import asyncio
 import logging
 import os
+import re
 import threading
 import time
 from collections import defaultdict
@@ -1515,6 +1516,124 @@ async def restart_stack(request: Request):
             status_code=500,
             content={"detail": "Docker CLI not found. Ensure Docker is installed and in PATH."},
         )
+
+
+# ─── API: Export Diagnostics ───
+# Grok Elder Council: zip export for GitHub issue attachments.
+# In-memory only — never written to disk.
+
+# Secret redaction pattern — matches env var names containing these keywords.
+# Used by _redact_secrets() to scrub compose files before including in the zip.
+_SECRET_KEY_PATTERN = re.compile(
+    r"(key|token|password|secret|apikey|auth|credential)",
+    re.IGNORECASE,
+)
+
+
+def _redact_secrets(content: str) -> str:
+    """Redact environment variable values that match secret patterns.
+
+    Handles YAML formats:
+    - KEY: value          (environment mapping)
+    - - KEY=value         (environment list)
+    - - SECRET_KEY=value  (list with dash prefix)
+
+    Non-secret env vars are preserved as-is.
+    """
+    lines = content.split("\n")
+    redacted = []
+    for line in lines:
+        # Match "  KEY: value" or "  KEY= value" style (mapping format)
+        match = re.match(
+            r"(\s+)(\w*(?:key|token|password|secret|apikey|auth|credential)\w*)"
+            r"\s*:\s*(.+)",
+            line, re.IGNORECASE,
+        )
+        if match:
+            indent = match.group(1)
+            var_name = match.group(2)
+            redacted.append(f"{indent}{var_name}: [REDACTED]")
+            continue
+
+        # Match "  - KEY=value" style (list format)
+        match = re.match(
+            r"(\s+-\s+)(\w*(?:key|token|password|secret|apikey|auth|credential)\w*)"
+            r"=(.+)",
+            line, re.IGNORECASE,
+        )
+        if match:
+            prefix = match.group(1)
+            var_name = match.group(2)
+            redacted.append(f"{prefix}{var_name}=[REDACTED]")
+            continue
+
+        redacted.append(line)
+    return "\n".join(redacted)
+
+
+@app.get("/api/export-diagnostics")
+async def export_diagnostics():
+    """Generate a diagnostic zip for GitHub issue attachments.
+
+    Contains: compose files (secrets redacted), pipeline results,
+    analysis results, system info. All in-memory, never written to disk.
+    """
+    import io
+    import platform
+    import zipfile
+
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # System info
+        info_lines = [
+            "MapArr Diagnostic Export",
+            f"Version: {VERSION}",
+            f"Platform: {platform.system()} {platform.release()}",
+            f"Python: {platform.python_version()}",
+            f"Stacks Path: {_get_stacks_root() or 'not configured'}",
+        ]
+        zf.writestr("maparr-info.txt", "\n".join(info_lines))
+
+        # Pipeline results (if available)
+        pipeline = _session.get("pipeline")
+        if pipeline and isinstance(pipeline, dict):
+            try:
+                summary = {
+                    "total_stacks": pipeline.get("total_stacks", 0),
+                    "media_stack_count": pipeline.get("media_stack_count", 0),
+                    "health_tier": pipeline.get("health_tier", "unknown"),
+                    "health_message": pipeline.get("health_message", ""),
+                }
+                zf.writestr("pipeline-summary.json", json.dumps(summary, indent=2))
+            except Exception:
+                pass
+
+        # Compose files with secret redaction
+        stacks_root = _get_stacks_root()
+        if stacks_root and os.path.isdir(stacks_root):
+            for root_dir, _dirs, files in os.walk(stacks_root):
+                for fname in files:
+                    if fname in COMPOSE_FILENAMES:
+                        fpath = os.path.join(root_dir, fname)
+                        try:
+                            with open(fpath, "r", encoding="utf-8") as f:
+                                content = f.read()
+                            content = _redact_secrets(content)
+                            rel_path = os.path.relpath(fpath, stacks_root)
+                            zf.writestr(f"compose-files/{rel_path}", content)
+                        except Exception:
+                            pass
+
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": "attachment; filename=maparr-diagnostic.zip",
+        },
+    )
 
 
 # ─── API: Health ───
