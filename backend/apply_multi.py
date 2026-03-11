@@ -13,6 +13,8 @@ from typing import List
 
 import yaml
 
+from backend.resolver import COMPOSE_FILENAMES  # Single source of truth
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,12 +29,6 @@ def _safe_os_error(e: OSError, action: str) -> str:
     if e.errno == errno.ENOENT:
         return f"{action}: file not found"
     return f"{action}: system error (check logs for details)"
-
-
-COMPOSE_FILENAMES = {
-    "docker-compose.yml", "docker-compose.yaml",
-    "compose.yml", "compose.yaml",
-}
 
 
 def validate_fixes_batch(fixes: List[dict], stacks_root: str) -> List[dict]:

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from backend.analyzer import _classify_service, analyze_stack, CONFLICT_CATEGORIES
+from backend.analyzer import analyze_stack
 from backend.image_registry import get_registry
 from backend.resolver import resolve_compose
 from backend.cross_stack import (

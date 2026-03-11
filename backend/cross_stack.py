@@ -32,9 +32,10 @@ import yaml
 
 from backend.analyzer import _classify_service
 from backend.discovery import (
-    COMPOSE_FILENAMES, _extract_host_sources, MAX_COMPOSE_FILE_SIZE,
+    _extract_host_sources, MAX_COMPOSE_FILE_SIZE,
     _CONFIG_TARGETS,
 )
+from backend.resolver import COMPOSE_FILENAMES
 
 logger = logging.getLogger("maparr.cross_stack")
 

@@ -2757,6 +2757,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // [2026-03-10 13:30] Rank 23: Human-readable network error messages
+// TODO(Task 9/10 C2): This function duplicates backend _categorize_os_error() logic.
+// Remove once C2 error message backend provides structured error categories in responses.
 function friendlyError(err) {
     if (!err) return "Unknown error";
     if (err.name === "AbortError") return "Request timed out \u2014 the stack may be too large or the backend is slow";

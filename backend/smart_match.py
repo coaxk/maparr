@@ -23,14 +23,12 @@ is high enough, shows compact pill picker otherwise.
 
 import os
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 import yaml
 
-from backend.discovery import (
-    COMPOSE_FILENAMES,
-    _CONFIG_TARGETS,
-)
+from backend.discovery import _CONFIG_TARGETS
+from backend.resolver import COMPOSE_FILENAMES
 
 logger = logging.getLogger("maparr.smart_match")
 

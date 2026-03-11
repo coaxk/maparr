@@ -11,12 +11,9 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-logger = logging.getLogger(__name__)
+from backend.resolver import COMPOSE_FILENAMES  # Single source of truth
 
-COMPOSE_FILENAMES = [
-    "docker-compose.yml", "docker-compose.yaml",
-    "compose.yml", "compose.yaml",
-]
+logger = logging.getLogger(__name__)
 
 
 def find_compose_file(stack_path: str) -> Optional[str]:

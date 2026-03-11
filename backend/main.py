@@ -28,7 +28,7 @@ import yaml
 
 from backend.parser import parse_error, parse_errors
 from backend.discovery import discover_stacks
-from backend.resolver import resolve_compose, ResolveError
+from backend.resolver import resolve_compose, ResolveError, COMPOSE_FILENAMES
 from backend.analyzer import analyze_stack
 from backend.smart_match import smart_match
 from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
@@ -295,11 +295,6 @@ def _is_path_within_stacks(path: str, require_root: bool = False) -> bool:
     except (ValueError, OSError):
         return False
 
-
-COMPOSE_FILENAMES = {
-    "docker-compose.yml", "docker-compose.yaml",
-    "compose.yml", "compose.yaml",
-}
 
 # ─── Logging ───
 

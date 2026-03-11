@@ -44,15 +44,9 @@ from typing import List, Optional
 
 import yaml
 
-logger = logging.getLogger("maparr.discovery")
+from backend.resolver import COMPOSE_FILENAMES  # Single source of truth
 
-# Compose file names to look for, in priority order.
-COMPOSE_FILENAMES = [
-    "docker-compose.yml",
-    "docker-compose.yaml",
-    "compose.yml",
-    "compose.yaml",
-]
+logger = logging.getLogger("maparr.discovery")
 
 # Maximum file size to attempt parsing (10 MB). Protects against
 # accidentally scanning a binary file or YAML bomb.

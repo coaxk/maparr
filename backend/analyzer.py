@@ -25,7 +25,6 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml
@@ -89,7 +88,7 @@ def _get_registry():
 # but tests import the name — so we keep it as a no-op reference.
 # IMAGE_FAMILIES is similarly kept as an empty list (tests import but don't use it).
 
-from types import SimpleNamespace as ImageFamily  # noqa: E402 — backward compat alias
+from types import SimpleNamespace as ImageFamily  # noqa: F401 — tests import this name
 
 IMAGE_FAMILIES: list = []  # Deprecated — kept for import compatibility
 

@@ -21,7 +21,6 @@ The user never sees "mount type: ext4." They see "hardlinks won't work
 because your data is on a network share." That's the value.
 """
 
-import os
 import re
 from dataclasses import dataclass
 from typing import List, Optional

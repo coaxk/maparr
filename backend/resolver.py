@@ -20,7 +20,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -59,7 +59,8 @@ def _validate_docker_host(value: str | None) -> str | None:
     return None
 
 
-# Compose file names to try, in priority order.
+# Canonical compose filename whitelist — single source of truth.
+# All other modules import from here. Order = priority for resolution.
 COMPOSE_FILENAMES = [
     "docker-compose.yml",
     "docker-compose.yaml",
