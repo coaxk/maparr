@@ -4546,6 +4546,39 @@ body[data-mode="browse"] #step-fix-match { display: none !important; }
 }
 .conflicts-show-more button:hover { border-color: var(--accent); }
 
+/* ─── Warning Dismiss ─── */
+.dismiss-warning-link {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    text-decoration: none;
+    margin-left: auto;
+    margin-right: 0.5rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.dismiss-warning-link:hover {
+    color: var(--text-secondary);
+    text-decoration: underline;
+}
+.dismissed-warnings-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+.reset-dismissed-link {
+    color: var(--text-muted);
+    font-size: 1em;
+    text-decoration: none;
+    cursor: pointer;
+}
+.reset-dismissed-link:hover {
+    color: var(--warning);
+    text-decoration: underline;
+}
+
 /* ─── Service Group Scroll Containment ─── */
 .service-group-items.scrollable {
     max-height: 300px;

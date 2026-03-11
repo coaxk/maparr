@@ -94,6 +94,41 @@ function saveCustomDirs() {
     try { localStorage.setItem("maparr_custom_dirs", JSON.stringify(state.customDirs)); } catch {}
 }
 
+// ─── Warning Dismiss (Cat B low/medium only) ───
+// Users can dismiss non-critical Category B warnings. Dismissed warnings
+// still count in the conflict summary (transparency) but don't render cards.
+// NEVER dismiss: Category A (path), Category C (infra), or HIGH severity.
+const DISMISSABLE_WARNINGS = new Set([
+    "root_execution",
+    "umask_inconsistent",
+    "umask_restrictive",
+    "tz_mismatch",
+    "missing_tz",
+]);
+
+function getDismissedWarnings() {
+    try {
+        const stored = localStorage.getItem("maparr_dismissed_warnings");
+        return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+        return new Set();
+    }
+}
+
+function dismissWarning(warningType) {
+    const dismissed = getDismissedWarnings();
+    dismissed.add(warningType);
+    localStorage.setItem("maparr_dismissed_warnings", JSON.stringify([...dismissed]));
+}
+
+function resetDismissedWarnings() {
+    localStorage.removeItem("maparr_dismissed_warnings");
+}
+
+function isWarningDismissed(warningType) {
+    return DISMISSABLE_WARNINGS.has(warningType) && getDismissedWarnings().has(warningType);
+}
+
 function addCustomDir(path, count) {
     const norm = path.replace(/\\/g, "/");
     if (!state.customDirs.some((d) => d.path.replace(/\\/g, "/") === norm)) {
@@ -1164,25 +1199,64 @@ function renderConflictCards(conflicts) {
     container.replaceChildren();
     if (conflicts.length === 0) return;
 
+    // Filter out dismissed warnings — they still count in the summary
+    // but don't render as cards (transparency: count shown below).
+    let dismissedCount = 0;
+    const visibleConflicts = [];
+    for (const c of conflicts) {
+        if (isWarningDismissed(c.type)) {
+            dismissedCount++;
+        } else {
+            visibleConflicts.push(c);
+        }
+    }
+
     const MAX_VISIBLE = 5;
-    for (let i = 0; i < conflicts.length; i++) {
-        const card = renderConflictCard(conflicts[i], i);
+    for (let i = 0; i < visibleConflicts.length; i++) {
+        const card = renderConflictCard(visibleConflicts[i], i);
         if (i >= MAX_VISIBLE) card.classList.add("hidden");
         container.appendChild(card);
     }
 
-    if (conflicts.length > MAX_VISIBLE) {
+    if (visibleConflicts.length > MAX_VISIBLE) {
         const more = document.createElement("div");
         more.className = "conflicts-show-more";
         more.id = "conflicts-show-more";
         const btn = document.createElement("button");
-        btn.textContent = "Show " + (conflicts.length - MAX_VISIBLE) + " more issues";
+        btn.textContent = "Show " + (visibleConflicts.length - MAX_VISIBLE) + " more issues";
         btn.addEventListener("click", () => {
             container.querySelectorAll(".conflict-card.hidden").forEach(c => c.classList.remove("hidden"));
             more.remove();
         });
         more.appendChild(btn);
         container.appendChild(more);
+    }
+
+    // Show dismissed count + reset link when warnings have been dismissed
+    if (dismissedCount > 0) {
+        const dismissedInfo = document.createElement("div");
+        dismissedInfo.className = "dismissed-warnings-info";
+        const countText = document.createElement("span");
+        countText.textContent = dismissedCount + " warning" + (dismissedCount !== 1 ? "s" : "") + " dismissed";
+        dismissedInfo.appendChild(countText);
+
+        const dot = document.createElement("span");
+        dot.className = "conflict-summary-separator";
+        dot.textContent = "\u00B7";
+        dismissedInfo.appendChild(dot);
+
+        const resetLink = document.createElement("a");
+        resetLink.className = "reset-dismissed-link";
+        resetLink.textContent = "Reset dismissed warnings";
+        resetLink.href = "#";
+        resetLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            resetDismissedWarnings();
+            // Re-render dashboard to restore all warning cards
+            renderDashboard();
+        });
+        dismissedInfo.appendChild(resetLink);
+        container.appendChild(dismissedInfo);
     }
 
     generateFixPlans(conflicts);
@@ -1225,6 +1299,23 @@ function renderConflictCard(conflict, index) {
         count.className = "conflict-card-affected-count";
         count.textContent = affectedServices.length + " service" + (affectedServices.length !== 1 ? "s" : "");
         header.appendChild(count);
+    }
+
+    // Dismiss link — only for Cat B low/medium warnings, never Cat A/C/HIGH
+    if (DISMISSABLE_WARNINGS.has(conflict.type)) {
+        const dismissLink = document.createElement("a");
+        dismissLink.className = "dismiss-warning-link";
+        dismissLink.textContent = "Dismiss";
+        dismissLink.href = "#";
+        dismissLink.setAttribute("data-tooltip", "Hide this warning type. It will still count in the summary.");
+        dismissLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation(); // Don't toggle the card collapse
+            dismissWarning(conflict.type);
+            // Re-render to remove all cards of this dismissed type
+            renderDashboard();
+        });
+        header.appendChild(dismissLink);
     }
 
     const chevron = document.createElement("span");
