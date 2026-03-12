@@ -293,7 +293,7 @@ def _extract_path(text: str) -> Optional[str]:
     Returns the first path found. Prefers absolute paths over relative ones.
     """
     # Unix absolute paths (most common in Docker errors)
-    unix_matches = re.findall(r'(?:/[a-zA-Z0-9._\-]+)+', text)
+    unix_matches = re.findall(r'/[a-zA-Z0-9._\-]+(?:/[a-zA-Z0-9._\-]+)*', text)
 
     # Windows absolute paths
     win_matches = re.findall(r'[A-Za-z]:\\(?:[a-zA-Z0-9_.\-\\]+)*', text)

@@ -653,6 +653,16 @@ async def api_pipeline_scan(request: Request):
             status_code=400,
         )
 
+    # Defense-in-depth: block obvious system directories (consistent with
+    # change-stacks-path and list-directories endpoints)
+    resolved_scan = str(Path(scan_dir).resolve())
+    if any(resolved_scan.startswith(p) for p in _BLOCKED_PREFIXES):
+        logger.warning("Pipeline scan blocked: system directory: %s", scan_dir)
+        return JSONResponse(
+            {"error": "Cannot scan system directories"},
+            status_code=403,
+        )
+
     # Security: if MAPARR_STACKS_PATH env var is set (Docker deployment),
     # enforce that scan_dir is within it. User-chosen paths (custom_stacks_path)
     # are updated freely — the user is explicitly navigating.
