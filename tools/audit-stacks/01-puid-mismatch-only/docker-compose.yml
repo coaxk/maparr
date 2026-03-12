@@ -1,0 +1,28 @@
+## TEST: Permission-only — matching paths, mismatched PUID/PGID
+## EXPECTED: puid_pgid_mismatch conflict, NO path conflicts
+## SOLUTION SHOULD: Show environment var fix, NOT volume restructure
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /data:/data
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1001
+      - PGID=1001
+    volumes:
+      - ./config/radarr:/config
+      - /data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - /data:/data

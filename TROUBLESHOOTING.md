@@ -115,6 +115,39 @@ If the app responds but Docker shows unhealthy, increase `start_period` in `dock
 
 ---
 
+## 403 Error When Setting Stacks Path
+
+**Symptom:** Setting the stacks path to a directory under `/home` returns `403 — Cannot browse system directories`
+
+MapArr blocks certain system directories from being scanned. The full blocklist:
+
+```
+/etc, /proc, /sys, /dev, /boot, /sbin, /root, /home
+C:\Windows, C:\Program Files
+```
+
+**Why `/home` is blocked:** The directory browser would expose user home directories, which commonly contain SSH keys (`~/.ssh`), shell history, credentials files, and other sensitive data. Since MapArr has no authentication, any browser on the network could see these.
+
+**Solutions:**
+
+1. **Move stacks to a dedicated directory** (recommended):
+```bash
+# Common locations
+/opt/docker/stacks
+/srv/docker
+/data/docker
+```
+
+2. **Mount only the specific subdirectory** into the container:
+```yaml
+# Instead of mounting all of /home/user:
+volumes:
+  - /home/user/docker-stacks:/stacks:ro
+```
+This works because MapArr validates the *browseable* path, not the host mount source. The container sees `/stacks`, which is not in the blocklist.
+
+---
+
 ## Windows / WSL2
 
 - **WSL2:** Mount `/var/run/docker.sock` as normal

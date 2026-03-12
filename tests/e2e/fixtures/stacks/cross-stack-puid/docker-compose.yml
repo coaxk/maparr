@@ -1,0 +1,17 @@
+# E2E Test Stack: cross-stack-puid
+# Expected: cross_stack_puid_mismatch (Cat B, high)
+# lidarr with PUID=1000. Cross-stack detection compares against puid-mismatch
+# stack (which has PUID=911) to find pipeline-level permission mismatch.
+
+services:
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /data:/data
+      - /config/lidarr:/config
+    restart: unless-stopped

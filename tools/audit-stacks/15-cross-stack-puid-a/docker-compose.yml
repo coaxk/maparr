@@ -1,0 +1,11 @@
+## TEST: Cross-stack PUID mismatch — Stack A uses UID 1000
+## EXPECTED: When scanned via pipeline with stack B (UID 1001), should detect cross_stack_puid_mismatch
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - /data:/data

@@ -20,13 +20,47 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import yaml
 
 logger = logging.getLogger("maparr.resolver")
 
-# Compose file names to try, in priority order.
+# Allowed DOCKER_HOST patterns — everything else is SSRF risk (Grok Elder Council HIGH)
+_DOCKER_HOST_ALLOWED = re.compile(
+    r"^("
+    r"unix://.*"                                        # Any unix socket path
+    r"|tcp://127\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?"   # tcp://127.x.x.x
+    r"|tcp://localhost(:\d+)?"                          # tcp://localhost
+    r"|tcp://socket-proxy(:\d+)?"                       # Common socket proxy name
+    r"|tcp://[a-zA-Z0-9._-]+\.local(:\d+)?"            # *.local mDNS names
+    r")$"
+)
+
+
+def _validate_docker_host(value: str | None) -> str | None:
+    """Validate DOCKER_HOST env var against allowlist.
+
+    Returns the value unchanged if allowed, None if denied or empty.
+    Denied values log a WARNING with a sanitised message (no credentials leaked).
+    """
+    if not value:
+        return None
+    if _DOCKER_HOST_ALLOWED.match(value):
+        return value
+    # Log sanitised — only scheme + "denied", never the full URI
+    scheme = value.split("://")[0] if "://" in value else "unknown"
+    logger.warning(
+        "DOCKER_HOST denied: %s:// URI not in allowlist. "
+        "Allowed: unix://, tcp://127.*/localhost/socket-proxy/*.local. "
+        "Falling back to manual compose parsing.",
+        scheme,
+    )
+    return None
+
+
+# Canonical compose filename whitelist — single source of truth.
+# All other modules import from here. Order = priority for resolution.
 COMPOSE_FILENAMES = [
     "docker-compose.yml",
     "docker-compose.yaml",
@@ -38,12 +72,20 @@ COMPOSE_FILENAMES = [
 def resolve_compose(
     stack_path: str,
     compose_file: Optional[str] = None,
+    force_manual: bool = False,
 ) -> Dict[str, Any]:
     """
     Resolve a compose file to a fully-substituted dict.
 
     Tries `docker compose config` first for perfect resolution.
     Falls back to raw YAML + .env parsing if Docker CLI is unavailable.
+
+    Args:
+        stack_path: Path to the stack directory.
+        compose_file: Specific compose filename (optional).
+        force_manual: If True, skip Docker compose config and go straight to
+            manual YAML + .env parsing. Used by pipeline scan for speed —
+            avoids Docker CLI overhead per stack.
 
     Returns:
         Dict with at least a "services" key. Also includes:
@@ -69,10 +111,14 @@ def resolve_compose(
             )
         logger.info("Found compose file: %s in %s/", cf_path.name, stack.name)
 
-    # Strategy 1: docker compose config
-    logger.info("Attempting resolution via docker compose config...")
-    t0 = time.time()
-    result = _try_docker_compose_config(stack, cf_path)
+    # Strategy 1: docker compose config (skipped when force_manual=True)
+    if force_manual:
+        logger.info("Skipping docker compose config (force_manual=True)")
+        result = None
+    else:
+        logger.info("Attempting resolution via docker compose config...")
+        t0 = time.time()
+        result = _try_docker_compose_config(stack, cf_path)
     if result is not None:
         svc_count = len(result.get("services", {}))
         logger.info("Docker compose config succeeded: %d services resolved (%.2fs)",
@@ -133,6 +179,12 @@ def _try_docker_compose_config(
     Returns None if Docker CLI is unavailable or the command fails.
     This lets the caller fall back to manual resolution.
     """
+    # Validate DOCKER_HOST before any subprocess call (SSRF prevention)
+    docker_host = os.environ.get("DOCKER_HOST", "")
+    if docker_host and _validate_docker_host(docker_host) is None:
+        logger.info("DOCKER_HOST rejected by allowlist — skipping docker compose config")
+        return None  # Caller falls back to manual parsing
+
     try:
         cmd = [
             "docker", "compose",

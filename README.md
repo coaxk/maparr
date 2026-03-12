@@ -183,6 +183,56 @@ MapArr handles filesystem paths and Docker socket access, so it enforces strict 
 - **Non-root container** — Runs as PUID/PGID user (default 1000:1000), not root. Docker socket access via group membership, not privilege escalation.
 - **No outbound connections** — MapArr makes zero external API calls. No telemetry, no update pings, no data leaves your machine. (The update checker compares a local version string against GitHub releases — initiated by the user, not automatic.)
 
+## Supported Services
+
+MapArr automatically detects and analyzes **27 media services** across three roles. These are the services that interact with media files on disk and need consistent volume mounts for hardlinks and imports to work.
+
+### Arr Apps (10)
+
+| Service | Purpose |
+|---------|---------|
+| **Sonarr** | TV series management |
+| **Radarr** | Movie management |
+| **Lidarr** | Music management |
+| **Readarr** | Book & audiobook management |
+| **Whisparr** | Adult content management |
+| **Prowlarr** | Indexer manager |
+| **Bazarr** | Subtitle management |
+| **Mylar3** | Comic book management |
+| **Kapowarr** | Comic book management (newer) |
+| **LazyLibrarian** | Book, audiobook & magazine management |
+
+### Download Clients (14)
+
+| Service | Type |
+|---------|------|
+| **qBittorrent** | Torrent |
+| **Transmission** | Torrent |
+| **Deluge** | Torrent |
+| **rTorrent** | Torrent |
+| **Flood** | Torrent (web UI) |
+| **Vuze** | Torrent |
+| **SABnzbd** | Usenet |
+| **NZBGet** | Usenet |
+| **JDownloader** | Direct download |
+| **aria2** | Multi-protocol |
+| **pyLoad** | Direct download |
+| **RDTClient** | Debrid (Real-Debrid) |
+| **Decypharr** | Debrid blackhole |
+| **Zurg** | Debrid WebDAV mount |
+
+### Media Servers (3)
+
+| Service | Purpose |
+|---------|---------|
+| **Plex** | Media server |
+| **Jellyfin** | Media server |
+| **Emby** | Media server |
+
+Services not on this list (Tautulli, Overseerr, Portainer, etc.) still appear on the dashboard under **Other Stacks** for visibility, but aren't analyzed for path conflicts since they don't interact with media files directly.
+
+> **Custom images?** Mount a `custom-images.json` file to add your own service definitions. See [QUICK_START.md](QUICK_START.md) for details.
+
 ## The *arr Ecosystem
 
 MapArr is part of a 3-tool ecosystem for Docker media stack management:

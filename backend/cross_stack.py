@@ -32,9 +32,10 @@ import yaml
 
 from backend.analyzer import _classify_service
 from backend.discovery import (
-    COMPOSE_FILENAMES, _extract_host_sources, MAX_COMPOSE_FILE_SIZE,
+    _extract_host_sources, MAX_COMPOSE_FILE_SIZE,
     _CONFIG_TARGETS,
 )
+from backend.resolver import COMPOSE_FILENAMES
 
 logger = logging.getLogger("maparr.cross_stack")
 
@@ -384,7 +385,7 @@ def _parse_sibling_services(compose_file: str) -> Dict[str, dict]:
                 continue
 
             volumes = config.get("volumes", [])
-            host_sources, _ = _extract_host_sources(volumes)
+            host_sources, has_named = _extract_host_sources(volumes)
             volume_mounts = _extract_volume_mounts(volumes)
 
             # Extract environment and user identity for permissions analysis
@@ -403,6 +404,7 @@ def _parse_sibling_services(compose_file: str) -> Dict[str, dict]:
             result[name] = {
                 "role": role,
                 "host_sources": host_sources,
+                "has_named_volumes": has_named,
                 "volume_mounts": volume_mounts,
                 "environment": environment,
                 "compose_user": compose_user,

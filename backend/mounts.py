@@ -21,7 +21,6 @@ The user never sees "mount type: ext4." They see "hardlinks won't work
 because your data is on a network share." That's the value.
 """
 
-import os
 import re
 from dataclasses import dataclass
 from typing import List, Optional
@@ -238,7 +237,7 @@ def _check_windows(path: str) -> Optional[MountClassification]:
 
 def _check_wsl2(path: str) -> Optional[MountClassification]:
     """Check for WSL2 translated paths: /mnt/c/Users/..."""
-    match = re.match(r'^/mnt/([a-zA-Z])(/.*)?$', path)
+    match = re.match(r'^/mnt/([c-zC-Z])(/.+)$', path)
     if match:
         drive = match.group(1).upper()
         return MountClassification(

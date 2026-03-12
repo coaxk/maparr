@@ -50,6 +50,12 @@ _FALLBACK_IMAGES = {
     "plex": {"name": "Plex", "role": "media_server", "keywords": ["plex"]},
     "jellyfin": {"name": "Jellyfin", "role": "media_server", "keywords": ["jellyfin"]},
     "emby": {"name": "Emby", "role": "media_server", "keywords": ["emby"]},
+    "kapowarr": {"name": "Kapowarr", "role": "arr", "keywords": ["kapowarr"]},
+    "lazylibrarian": {"name": "LazyLibrarian", "role": "arr", "keywords": ["lazylibrarian"]},
+    "decypharr": {"name": "Decypharr", "role": "download_client", "keywords": ["decypharr", "blackhole"]},
+    "pyload": {"name": "pyLoad", "role": "download_client", "keywords": ["pyload"]},
+    "vuze": {"name": "Vuze", "role": "download_client", "keywords": ["vuze", "biglybt"]},
+    "zurg": {"name": "Zurg", "role": "download_client", "keywords": ["zurg"]},
 }
 
 # Roles that participate in hardlink analysis (for fallback mode)

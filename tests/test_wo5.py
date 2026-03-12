@@ -1083,8 +1083,9 @@ class TestFrontendRegression:
     def test_all_html_sections_present(self):
         resp = client.get("/")
         text = resp.text
+        # Pipeline dashboard sections + analysis detail cards
         required = [
-            "step-error", "step-parse-result", "step-stacks",
+            "first-launch", "pipeline-dashboard",
             "step-analyzing", "step-current-setup", "step-problem",
             "step-solution", "step-why",
             "step-next", "step-trash", "step-healthy",
@@ -1096,11 +1097,13 @@ class TestFrontendRegression:
     def test_all_js_functions_present(self):
         resp = client.get("/static/app.js")
         text = resp.text
+        # Pipeline dashboard core functions + retained analysis functions
         functions = [
-            "parseError", "showParseResult",
-            "showStackFilter", "renderStacks", "renderStackItem",
-            "showAnalysisResult", "showCurrentSetup", "showProblem",
-            "renderMountWarningsInto", "showSolution", "showWhyItWorks",
+            "runPipelineScan", "renderDashboard", "renderServiceGroups",
+            "renderServiceRow", "renderConflictCards", "renderFixPlan",
+            "showRedeployPrompt", "enablePasteBar", "handlePasteError",
+            "parseError", "showAnalysisResult", "showCurrentSetup",
+            "showProblem", "showSolution", "showWhyItWorks",
             "showNextSteps", "showTrashAdvisory", "showHealthyResult",
             "showAnalysisError", "copySolutionYaml", "applyFix",
         ]

@@ -93,6 +93,19 @@
     }
   },
   "images": {
+    "agregarr": {
+      "name": "Agregarr",
+      "role": "other",
+      "family": null,
+      "patterns": [
+        "agregarr/agregarr"
+      ],
+      "keywords": [
+        "agregarr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": null
+    },
     "adguardhome-sync": {
       "name": "Adguardhome Sync",
       "role": "other",
@@ -557,6 +570,20 @@
       ],
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-ddclient"
+    },
+    "decypharr": {
+      "name": "Decypharr",
+      "role": "download_client",
+      "family": null,
+      "patterns": [
+        "cy01/blackhole"
+      ],
+      "keywords": [
+        "decypharr",
+        "blackhole"
+      ],
+      "hardlink_capable": false,
+      "docs_url": null
     },
     "deluge": {
       "name": "Deluge",
@@ -1129,6 +1156,19 @@
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-hishtory-server"
     },
+    "huntarr": {
+      "name": "Huntarr",
+      "role": "other",
+      "family": null,
+      "patterns": [
+        "huntarr/huntarr"
+      ],
+      "keywords": [
+        "huntarr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": null
+    },
     "homeassistant": {
       "name": "Homeassistant",
       "role": "other",
@@ -1278,6 +1318,21 @@
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-kali-linux"
     },
+    "kapowarr": {
+      "name": "Kapowarr",
+      "role": "arr",
+      "family": null,
+      "patterns": [
+        "mrcas/kapowarr",
+        "lscr.io/linuxserver/kapowarr",
+        "linuxserver/kapowarr"
+      ],
+      "keywords": [
+        "kapowarr"
+      ],
+      "hardlink_capable": true,
+      "docs_url": "https://casvt.github.io/Kapowarr/"
+    },
     "kasm": {
       "name": "Kasm",
       "role": "other",
@@ -1399,8 +1454,8 @@
       "docs_url": "https://docs.linuxserver.io/images/docker-krita"
     },
     "lazylibrarian": {
-      "name": "Lazylibrarian",
-      "role": "other",
+      "name": "LazyLibrarian",
+      "role": "arr",
       "family": "linuxserver",
       "patterns": [
         "lscr.io/linuxserver/lazylibrarian",
@@ -2135,6 +2190,19 @@
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-planka"
     },
+    "plex-auto-languages": {
+      "name": "Plex Auto Languages",
+      "role": "other",
+      "family": null,
+      "patterns": [
+        "remirigal/plex-auto-languages"
+      ],
+      "keywords": [
+        "plex-auto-languages"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://github.com/RemiRigal/Plex-Auto-Languages"
+    },
     "plex": {
       "name": "Plex",
       "role": "media_server",
@@ -2244,16 +2312,18 @@
       "docs_url": "https://docs.linuxserver.io/images/docker-pydio-cells"
     },
     "pyload-ng": {
-      "name": "Pyload Ng",
-      "role": "other",
+      "name": "pyLoad",
+      "role": "download_client",
       "family": "linuxserver",
       "patterns": [
         "lscr.io/linuxserver/pyload-ng",
         "linuxserver/pyload-ng",
-        "ghcr.io/linuxserver/pyload-ng"
+        "ghcr.io/linuxserver/pyload-ng",
+        "pyload/pyload"
       ],
       "keywords": [
-        "pyload-ng"
+        "pyload-ng",
+        "pyload"
       ],
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-pyload-ng"
@@ -2379,6 +2449,19 @@
       ],
       "hardlink_capable": true,
       "docs_url": "https://wiki.servarr.com/readarr"
+    },
+    "recommendarr": {
+      "name": "Recommendarr",
+      "role": "other",
+      "family": null,
+      "patterns": [
+        "tannermiddleton/recommendarr"
+      ],
+      "keywords": [
+        "recommendarr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://github.com/tannermiddleton/recommendarr"
     },
     "remmina": {
       "name": "Remmina",
@@ -2529,6 +2612,19 @@
       ],
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-sealskin"
+    },
+    "seerr": {
+      "name": "Seerr",
+      "role": "other",
+      "family": "seerr",
+      "patterns": [
+        "ghcr.io/seerr-team/seerr"
+      ],
+      "keywords": [
+        "seerr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://github.com/seerr-team/seerr"
     },
     "shadps4": {
       "name": "Shadps4",
@@ -2681,6 +2777,47 @@
       ],
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-sqlitebrowser"
+    },
+    "subgen": {
+      "name": "Subgen",
+      "role": "other",
+      "family": null,
+      "patterns": [
+        "mccloud/subgen"
+      ],
+      "keywords": [
+        "subgen"
+      ],
+      "hardlink_capable": false,
+      "docs_url": null
+    },
+    "subsyncarrplus": {
+      "name": "SubSyncarr Plus",
+      "role": "other",
+      "family": null,
+      "patterns": [
+        "tomtomw123/subsyncarr-plus"
+      ],
+      "keywords": [
+        "subsyncarrplus",
+        "subsyncarr-plus",
+        "subsyncarr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": null
+    },
+    "suggestarr": {
+      "name": "Suggestarr",
+      "role": "other",
+      "family": null,
+      "patterns": [
+        "ciuse99/suggestarr"
+      ],
+      "keywords": [
+        "suggestarr"
+      ],
+      "hardlink_capable": false,
+      "docs_url": null
     },
     "steam": {
       "name": "Steam",
@@ -2954,6 +3091,20 @@
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-vscodium-web"
     },
+    "vuze": {
+      "name": "Vuze",
+      "role": "download_client",
+      "family": null,
+      "patterns": [
+        "jlesage/vuze"
+      ],
+      "keywords": [
+        "vuze",
+        "biglybt"
+      ],
+      "hardlink_capable": true,
+      "docs_url": null
+    },
     "webcord": {
       "name": "Webcord",
       "role": "other",
@@ -3207,6 +3358,20 @@
       ],
       "hardlink_capable": false,
       "docs_url": "https://docs.linuxserver.io/images/docker-zotero"
+    },
+    "zurg": {
+      "name": "Zurg",
+      "role": "download_client",
+      "family": null,
+      "patterns": [
+        "ghcr.io/debridmediamanager/zurg-testing",
+        "ghcr.io/debridmediamanager/zurg"
+      ],
+      "keywords": [
+        "zurg"
+      ],
+      "hardlink_capable": false,
+      "docs_url": "https://github.com/debridmediamanager/zurg-testing"
     }
   }
 }

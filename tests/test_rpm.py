@@ -16,6 +16,7 @@ from conftest import (
     SONARR_YAML, QBITTORRENT_YAML, RADARR_YAML,
     SABNZBD_YAML, PLEX_YAML, HEALTHY_MULTI_YAML,
     QBIT_SEPARATE_YAML, SABNZBD_DISJOINT_YAML,
+    PUID_MISMATCH_YAML,
 )
 
 
@@ -466,15 +467,35 @@ class TestRpmApiIntegration:
     """RPM mappings appear correctly in full analysis results."""
 
     def test_rpm_mappings_in_analysis_result(self, make_stack):
-        """analyze_stack with pipeline context returns rpm_mappings."""
-        stack_path = make_stack(SONARR_YAML, dirname="sonarr")
+        """analyze_stack with Cat A conflicts + pipeline context returns rpm_mappings."""
+        # Two services with different host paths for /data → Cat A conflict
+        yaml = textwrap.dedent("""\
+            services:
+              sonarr:
+                image: lscr.io/linuxserver/sonarr:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config/sonarr:/config
+                  - /mnt/nas/data:/data
+              qbittorrent:
+                image: lscr.io/linuxserver/qbittorrent:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config/qbit:/config
+                  - /mnt/nas/downloads:/data
+        """)
+        stack_path = make_stack(yaml, dirname="sonarr")
 
         sibling_qbit = _make_sibling(
             "qbittorrent", "download_client", "qbit",
-            volume_mounts=[{"source": "/mnt/nas/data", "target": "/data"}],
+            volume_mounts=[{"source": "/mnt/nas/downloads", "target": "/data"}],
         )
         ctx = _make_pipeline_context(sibling_services=[sibling_qbit])
-        result = _resolve_and_analyze(stack_path, SONARR_YAML, pipeline_context=ctx)
+        result = _resolve_and_analyze(stack_path, pipeline_context=ctx)
         d = result.to_dict()
 
         assert "rpm_mappings" in d
@@ -489,30 +510,73 @@ class TestRpmApiIntegration:
         assert d["rpm_mappings"] == []
 
     def test_rpm_possible_with_shared_host(self, make_stack):
-        """When DC and arr share host paths, RPM is marked possible."""
-        stack_path = make_stack(SONARR_YAML, dirname="sonarr")
+        """When DC and arr share host paths + Cat A conflict, RPM is marked possible."""
+        # sonarr uses /mnt/nas/data:/data, qbit uses /mnt/nas/data:/downloads
+        # Different container paths from overlapping host paths → possible RPM.
+        # Include a second service with a conflicting host path to trigger Cat A.
+        yaml = textwrap.dedent("""\
+            services:
+              sonarr:
+                image: lscr.io/linuxserver/sonarr:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config/sonarr:/config
+                  - /mnt/nas/data:/data
+              qbittorrent:
+                image: lscr.io/linuxserver/qbittorrent:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config/qbit:/config
+                  - /mnt/nas/data/downloads:/data
+        """)
+        stack_path = make_stack(yaml, dirname="sonarr")
 
         sibling_qbit = _make_sibling(
             "qbittorrent", "download_client", "qbit",
             volume_mounts=[{"source": "/mnt/nas/data", "target": "/downloads"}],
         )
         ctx = _make_pipeline_context(sibling_services=[sibling_qbit])
-        result = _resolve_and_analyze(stack_path, SONARR_YAML, pipeline_context=ctx)
+        result = _resolve_and_analyze(stack_path, pipeline_context=ctx)
         d = result.to_dict()
 
         possible = [m for m in d["rpm_mappings"] if m["possible"]]
         assert len(possible) >= 1
 
     def test_rpm_impossible_with_disjoint_host(self, make_stack):
-        """When DC and arr have disjoint host paths, RPM is marked impossible."""
-        stack_path = make_stack(SONARR_YAML, dirname="sonarr")
+        """When DC and arr have disjoint host paths + Cat A conflict, RPM is marked impossible."""
+        # sonarr uses /mnt/nas/data:/data, sabnzbd uses /opt/usenet (disjoint).
+        # Include a second service with conflicting host path to trigger Cat A.
+        yaml = textwrap.dedent("""\
+            services:
+              sonarr:
+                image: lscr.io/linuxserver/sonarr:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config/sonarr:/config
+                  - /mnt/nas/data:/data
+              sabnzbd:
+                image: lscr.io/linuxserver/sabnzbd:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config/sab:/config
+                  - /opt/usenet:/data
+        """)
+        stack_path = make_stack(yaml, dirname="sonarr")
 
         sibling_sab = _make_sibling(
             "sabnzbd", "download_client", "sabnzbd",
             volume_mounts=[{"source": "/opt/usenet", "target": "/downloads"}],
         )
         ctx = _make_pipeline_context(sibling_services=[sibling_sab])
-        result = _resolve_and_analyze(stack_path, SONARR_YAML, pipeline_context=ctx)
+        result = _resolve_and_analyze(stack_path, pipeline_context=ctx)
         d = result.to_dict()
 
         impossible = [m for m in d["rpm_mappings"] if not m["possible"]]
@@ -543,8 +607,9 @@ class TestRpmApiIntegration:
 
         assert "rpm_mappings" in data
 
-    def test_rpm_counts_multiple_pairs(self, make_pipeline_dir):
-        """Pipeline with multiple DCs produces multiple RPM entries."""
+    def test_rpm_skipped_healthy_pipeline(self, make_pipeline_dir):
+        """Healthy pipeline (no Cat A conflicts) — RPM mappings should be empty."""
+        # All services share /mnt/nas/data:/data — no path mismatch, so no RPM needed.
         root = make_pipeline_dir({
             "sonarr": SONARR_YAML,
             "qbittorrent": QBITTORRENT_YAML,
@@ -560,5 +625,74 @@ class TestRpmApiIntegration:
         result = _resolve_and_analyze(sonarr_path, SONARR_YAML, pipeline_context=ctx)
         d = result.to_dict()
 
-        # sonarr has 2 DC siblings → at least 2 RPM entries
-        assert len(d["rpm_mappings"]) >= 2
+        # No path conflicts → RPM gated off
+        assert len(d["rpm_mappings"]) == 0
+
+
+# ═══════════════════════════════════════════
+# RPM Gating — Category A Only
+# ═══════════════════════════════════════════
+
+class TestRpmGating:
+    """RPM mappings should only be calculated when Category A conflicts exist."""
+
+    def test_permission_only_no_rpm(self, make_stack):
+        """Permission-only stack (Cat B) — RPM mappings should be empty."""
+        # PUID_MISMATCH_YAML has sonarr (PUID=1000) + qbittorrent (no PUID)
+        # sharing /mnt/nas/data:/data — same host path so no path conflict,
+        # but PUID mismatch triggers a Category B conflict.
+        stack_path = make_stack(PUID_MISMATCH_YAML)
+
+        # Provide pipeline context with sibling services so RPM *would* run
+        # if not gated.
+        ctx = _make_pipeline_context(
+            sibling_services=[
+                _make_sibling("qbittorrent", "download_client",
+                              volume_mounts=[{"source": "/mnt/nas/data", "target": "/downloads"}]),
+            ],
+        )
+        result = _resolve_and_analyze(stack_path, pipeline_context=ctx)
+
+        # Should have conflicts (permission) but no RPM mappings
+        assert len(result.conflicts) > 0
+        assert all(c.category != "A" for c in result.conflicts), \
+            f"Expected no Cat A conflicts, got: {[c.conflict_type for c in result.conflicts if c.category == 'A']}"
+        assert result.rpm_mappings == []
+
+    def test_path_conflict_produces_rpm(self, make_stack):
+        """Path conflicts (Cat A) with pipeline context should produce RPM mappings."""
+        # Multi-service stack where sonarr and qbittorrent mount /data from
+        # different host paths — triggers "different_host_paths" (Cat A).
+        yaml = textwrap.dedent("""\
+            services:
+              sonarr:
+                image: lscr.io/linuxserver/sonarr:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config/sonarr:/config
+                  - /mnt/nas/data:/data
+              qbittorrent:
+                image: lscr.io/linuxserver/qbittorrent:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config/qbit:/config
+                  - /mnt/nas/downloads:/data
+        """)
+        stack_path = make_stack(yaml)
+
+        ctx = _make_pipeline_context(
+            sibling_services=[
+                _make_sibling("qbittorrent", "download_client",
+                              volume_mounts=[{"source": "/mnt/nas/downloads", "target": "/data"}]),
+            ],
+        )
+        result = _resolve_and_analyze(stack_path, pipeline_context=ctx)
+
+        # Should have Cat A conflicts and non-empty RPM mappings
+        has_cat_a = any(c.category == "A" for c in result.conflicts)
+        assert has_cat_a, "Expected at least one Cat A conflict for RPM regression check"
+        assert len(result.rpm_mappings) > 0

@@ -227,6 +227,14 @@ manual YAML parsing, which works for most *arr stacks.
 **Port conflict:**
 Change the port: `-e MAPARR_PORT=9595 -p 9595:9595`
 
+**403 "Cannot browse system directories" when setting stacks path:**
+MapArr blocks system directories (`/etc`, `/proc`, `/sys`, `/root`, `/home`, etc.)
+from being scanned as a security precaution. If your compose files live under
+`/home`, move them to a dedicated directory like `/opt/docker`, `/srv/docker`,
+or `/data/docker` and mount that instead. This prevents accidental exposure of
+user home directories (SSH keys, shell history, credentials) through the
+directory browser.
+
 **Apply Fix not working:**
 Mount your stacks directory without `:ro` (read-only) — MapArr needs write
 access to save corrected compose files.

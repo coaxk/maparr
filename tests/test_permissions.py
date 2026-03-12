@@ -22,6 +22,7 @@ from backend.analyzer import (
     _check_missing_puid_pgid,
     _check_root_execution,
     _check_umask_consistency,
+    _check_tz_mismatch,
     _generate_fixes,
 )
 from backend.resolver import resolve_compose
@@ -511,6 +512,72 @@ class TestCheckUmaskConsistency:
         ]
         conflicts = _check_umask_consistency(services)
         assert not any(c.conflict_type == "umask_inconsistent" for c in conflicts)
+
+
+# ─── Check: TZ Mismatch ───
+
+
+class TestTzMismatch:
+    """Tests for _check_tz_mismatch()."""
+
+    def test_tz_mismatch_detected(self):
+        """3 services, 2 with America/New_York, 1 with Europe/London → conflict."""
+        services = [
+            _make_service("sonarr", "lscr.io/linuxserver/sonarr",
+                          env={"PUID": "1000", "PGID": "1000", "TZ": "America/New_York"}),
+            _make_service("radarr", "lscr.io/linuxserver/radarr",
+                          env={"PUID": "1000", "PGID": "1000", "TZ": "America/New_York"}),
+            _make_service("qbittorrent", "lscr.io/linuxserver/qbittorrent",
+                          role="download_client",
+                          env={"PUID": "1000", "PGID": "1000", "TZ": "Europe/London"}),
+        ]
+        conflicts = _check_tz_mismatch(services)
+        assert len(conflicts) == 1
+        assert conflicts[0].conflict_type == "tz_mismatch"
+        assert conflicts[0].severity == "low"
+        assert conflicts[0].category == "B"
+        assert "qbittorrent" in conflicts[0].description
+        assert "Europe/London" in conflicts[0].description
+
+    def test_matching_tz_no_conflict(self):
+        """All services same TZ → no tz_mismatch."""
+        services = [
+            _make_service("sonarr", "lscr.io/linuxserver/sonarr",
+                          env={"TZ": "America/New_York"}),
+            _make_service("radarr", "lscr.io/linuxserver/radarr",
+                          env={"TZ": "America/New_York"}),
+            _make_service("qbittorrent", "lscr.io/linuxserver/qbittorrent",
+                          role="download_client",
+                          env={"TZ": "America/New_York"}),
+        ]
+        assert _check_tz_mismatch(services) == []
+
+    def test_missing_tz_not_flagged_as_mismatch(self):
+        """Services with no TZ at all → no tz_mismatch (absence != mismatch)."""
+        services = [
+            _make_service("sonarr", "lscr.io/linuxserver/sonarr",
+                          env={"PUID": "1000", "PGID": "1000"}),
+            _make_service("radarr", "lscr.io/linuxserver/radarr",
+                          env={"PUID": "1000", "PGID": "1000"}),
+        ]
+        assert _check_tz_mismatch(services) == []
+
+    def test_tz_mismatch_fix_text(self):
+        """Fix text should mention the majority TZ value."""
+        services = [
+            _make_service("sonarr", "lscr.io/linuxserver/sonarr",
+                          env={"PUID": "1000", "PGID": "1000", "TZ": "America/New_York"}),
+            _make_service("radarr", "lscr.io/linuxserver/radarr",
+                          env={"PUID": "1000", "PGID": "1000", "TZ": "America/New_York"}),
+            _make_service("qbittorrent", "lscr.io/linuxserver/qbittorrent",
+                          role="download_client",
+                          env={"PUID": "1000", "PGID": "1000", "TZ": "Europe/London"}),
+        ]
+        conflicts = _check_tz_mismatch(services)
+        _generate_fixes(conflicts, services)
+        assert conflicts[0].fix is not None
+        assert "America/New_York" in conflicts[0].fix
+        assert "qbittorrent" in conflicts[0].fix
 
 
 # ─── Orchestrator: _check_permissions() ───

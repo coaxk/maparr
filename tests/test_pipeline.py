@@ -11,6 +11,7 @@ Covers:
 """
 
 import os
+import textwrap
 import time
 
 import pytest
@@ -440,3 +441,282 @@ class TestPipelineAPI:
         data = resp2.json()
         # Pipeline data should be present
         assert data.get("pipeline") is not None or data.get("status") in ("healthy_pipeline", "healthy")
+
+
+# ═══════════════════════════════════════════
+# Unit Tests: Pipeline Permission Awareness
+# ═══════════════════════════════════════════
+
+class TestPipelinePermissionAwareness:
+    """Pipeline-level PUID/PGID consistency checks."""
+
+    def test_cross_stack_puid_mismatch_health_warning(self, make_pipeline_dir):
+        """Two stacks with different PUID → pipeline health=warning."""
+        from backend.pipeline import run_pipeline_scan
+        scan_dir = make_pipeline_dir({
+            "sonarr": """
+                services:
+                  sonarr:
+                    image: lscr.io/linuxserver/sonarr:latest
+                    environment:
+                      - PUID=1000
+                      - PGID=1000
+                    volumes:
+                      - /data:/data
+            """,
+            "radarr": """
+                services:
+                  radarr:
+                    image: lscr.io/linuxserver/radarr:latest
+                    environment:
+                      - PUID=1001
+                      - PGID=1001
+                    volumes:
+                      - /data:/data
+            """,
+        })
+        result = run_pipeline_scan(scan_dir).to_dict()
+        perm_conflicts = [c for c in result["conflicts"] if c["type"] == "pipeline_permission_mismatch"]
+        assert len(perm_conflicts) > 0
+        assert result["health"] == "warning"
+
+    def test_matching_puid_no_permission_conflict(self, make_pipeline_dir):
+        """All stacks same PUID → no permission conflicts."""
+        from backend.pipeline import run_pipeline_scan
+        scan_dir = make_pipeline_dir({
+            "sonarr": """
+                services:
+                  sonarr:
+                    image: lscr.io/linuxserver/sonarr:latest
+                    environment:
+                      - PUID=1000
+                      - PGID=1000
+                    volumes:
+                      - /data:/data
+            """,
+            "radarr": """
+                services:
+                  radarr:
+                    image: lscr.io/linuxserver/radarr:latest
+                    environment:
+                      - PUID=1000
+                      - PGID=1000
+                    volumes:
+                      - /data:/data
+            """,
+        })
+        result = run_pipeline_scan(scan_dir).to_dict()
+        perm_conflicts = [c for c in result["conflicts"] if c["type"] == "pipeline_permission_mismatch"]
+        assert len(perm_conflicts) == 0
+
+    def test_mount_conflict_overrides_perm_warning(self, make_pipeline_dir):
+        """Mount conflicts (problem) take priority over permission mismatch (warning)."""
+        from backend.pipeline import run_pipeline_scan
+        scan_dir = make_pipeline_dir({
+            "sonarr": """
+                services:
+                  sonarr:
+                    image: lscr.io/linuxserver/sonarr:latest
+                    environment:
+                      - PUID=1000
+                      - PGID=1000
+                    volumes:
+                      - /srv/tv:/data
+            """,
+            "radarr": """
+                services:
+                  radarr:
+                    image: lscr.io/linuxserver/radarr:latest
+                    environment:
+                      - PUID=1001
+                      - PGID=1001
+                    volumes:
+                      - /home/user/downloads:/data
+            """,
+        })
+        result = run_pipeline_scan(scan_dir).to_dict()
+        assert result["health"] == "problem"  # Mount conflict wins
+
+
+# ═══════════════════════════════════════════
+# Unit Tests: Cluster Layout Discovery
+# ═══════════════════════════════════════════
+
+class TestClusterDiscovery:
+    """Test that pipeline scan discovers cluster layouts (one service per subfolder).
+
+    Cluster layouts like Dockhand/Portainer store each service in its own
+    subfolder under a parent directory, with no compose file at the parent level:
+
+        scan_root/
+          cluster-stack/          ← no docker-compose.yml here
+            sonarr/               ← docker-compose.yml here
+              docker-compose.yml
+            qbittorrent/
+              docker-compose.yml
+          normal-stack/           ← docker-compose.yml here
+            docker-compose.yml
+    """
+
+    def test_cluster_services_discovered(self, tmp_path):
+        """Cluster subfolders with compose files are found by pipeline scan."""
+        from backend.pipeline import run_pipeline_scan
+        # Create a cluster layout: parent dir with no compose, children have compose
+        cluster = tmp_path / "media-cluster"
+        cluster.mkdir()
+        # No compose file at cluster level
+
+        sonarr_dir = cluster / "sonarr"
+        sonarr_dir.mkdir()
+        (sonarr_dir / "docker-compose.yml").write_text(textwrap.dedent("""\
+            services:
+              sonarr:
+                image: lscr.io/linuxserver/sonarr:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config:/config
+                  - /mnt/nas/data:/data
+        """))
+
+        qbit_dir = cluster / "qbittorrent"
+        qbit_dir.mkdir()
+        (qbit_dir / "docker-compose.yml").write_text(textwrap.dedent("""\
+            services:
+              qbittorrent:
+                image: lscr.io/linuxserver/qbittorrent:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config:/config
+                  - /mnt/nas/data:/data
+        """))
+
+        result = run_pipeline_scan(str(tmp_path))
+        service_names = [s.service_name for s in result.media_services]
+        assert "sonarr" in service_names, "Cluster sonarr not discovered"
+        assert "qbittorrent" in service_names, "Cluster qbittorrent not discovered"
+
+    def test_cluster_mixed_with_normal_stacks(self, tmp_path):
+        """Cluster and normal stacks coexist — both discovered."""
+        from backend.pipeline import run_pipeline_scan
+        # Normal stack (compose at top level)
+        normal = tmp_path / "plex"
+        normal.mkdir()
+        (normal / "docker-compose.yml").write_text(textwrap.dedent("""\
+            services:
+              plex:
+                image: lscr.io/linuxserver/plex:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config:/config
+                  - /mnt/nas/data:/data
+        """))
+
+        # Cluster layout (no compose at parent)
+        cluster = tmp_path / "arr-cluster"
+        cluster.mkdir()
+        radarr_dir = cluster / "radarr"
+        radarr_dir.mkdir()
+        (radarr_dir / "docker-compose.yml").write_text(textwrap.dedent("""\
+            services:
+              radarr:
+                image: lscr.io/linuxserver/radarr:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config:/config
+                  - /mnt/nas/data:/data
+        """))
+
+        result = run_pipeline_scan(str(tmp_path))
+        service_names = [s.service_name for s in result.media_services]
+        assert "plex" in service_names, "Normal stack plex not discovered"
+        assert "radarr" in service_names, "Cluster radarr not discovered"
+
+    def test_cluster_conflict_detection(self, tmp_path):
+        """Cluster services with conflicting mounts are flagged."""
+        from backend.pipeline import run_pipeline_scan
+        cluster = tmp_path / "broken-cluster"
+        cluster.mkdir()
+
+        sonarr_dir = cluster / "sonarr"
+        sonarr_dir.mkdir()
+        (sonarr_dir / "docker-compose.yml").write_text(textwrap.dedent("""\
+            services:
+              sonarr:
+                image: lscr.io/linuxserver/sonarr:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config:/config
+                  - /host/tv:/data/tv
+        """))
+
+        qbit_dir = cluster / "qbittorrent"
+        qbit_dir.mkdir()
+        (qbit_dir / "docker-compose.yml").write_text(textwrap.dedent("""\
+            services:
+              qbittorrent:
+                image: lscr.io/linuxserver/qbittorrent:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config:/config
+                  - /host/downloads:/downloads
+        """))
+
+        result = run_pipeline_scan(str(tmp_path)).to_dict()
+        assert result["health"] == "problem", "Cluster mount conflict not detected"
+        service_names = [s["service_name"] for s in result["media_services"]]
+        assert "sonarr" in service_names
+        assert "qbittorrent" in service_names
+
+    def test_cluster_no_double_counting(self, tmp_path):
+        """A directory with compose at top level is NOT also scanned as cluster."""
+        from backend.pipeline import run_pipeline_scan
+        # This directory has a compose file at top AND subfolders with compose files.
+        # It should be treated as a normal stack only — not cluster-scanned.
+        stack = tmp_path / "mixed"
+        stack.mkdir()
+        (stack / "docker-compose.yml").write_text(textwrap.dedent("""\
+            services:
+              sonarr:
+                image: lscr.io/linuxserver/sonarr:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config:/config
+                  - /mnt/nas/data:/data
+        """))
+
+        # Subfolder also has compose — should be ignored since parent has one
+        sub = stack / "qbittorrent"
+        sub.mkdir()
+        (sub / "docker-compose.yml").write_text(textwrap.dedent("""\
+            services:
+              qbittorrent:
+                image: lscr.io/linuxserver/qbittorrent:latest
+                environment:
+                  - PUID=1000
+                  - PGID=1000
+                volumes:
+                  - ./config:/config
+                  - /mnt/nas/data:/data
+        """))
+
+        result = run_pipeline_scan(str(tmp_path))
+        # sonarr from top-level compose should be found
+        service_names = [s.service_name for s in result.media_services]
+        assert "sonarr" in service_names
+        # qbittorrent from subfolder should NOT be found (parent had compose)
+        assert "qbittorrent" not in service_names, \
+            "Subfolder compose should be ignored when parent has compose file"

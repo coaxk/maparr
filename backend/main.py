@@ -14,6 +14,7 @@ No Docker SDK dependency. No SQLite. No persistence, no jobs system.
 import asyncio
 import logging
 import os
+import re
 import threading
 import time
 from collections import defaultdict
@@ -24,13 +25,79 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import yaml
+
 from backend.parser import parse_error, parse_errors
 from backend.discovery import discover_stacks
-from backend.resolver import resolve_compose, ResolveError
+from backend.resolver import resolve_compose, ResolveError, COMPOSE_FILENAMES
 from backend.analyzer import analyze_stack
 from backend.smart_match import smart_match
 from backend.pipeline import run_pipeline_scan, get_pipeline_context_for_stack
 from backend.log_handler import install_log_handler, get_log_handler
+
+
+# ─── Security: System Directory Blocklist ───
+# Unified blocklist for all directory-browsing endpoints. Prevents users from
+# scanning system directories that could leak sensitive information.
+_BLOCKED_PREFIXES = (
+    "/etc", "/proc", "/sys", "/dev", "/boot", "/sbin", "/root", "/home",
+    "C:\\Windows", "C:\\Program Files",
+)
+
+
+# ─── Trusted Proxy IP Resolution ───
+# Behind reverse proxies (Traefik, Caddy, Nginx), request.client.host returns
+# the proxy IP, not the real client. This lets attackers bypass rate limiting.
+# Configure MAPARR_TRUSTED_PROXIES=ip1,ip2 to trust specific proxy IPs, then
+# _get_client_ip() walks X-Forwarded-For right-to-left to find the real client.
+
+_TRUSTED_PROXIES: frozenset[str] = frozenset(
+    ip.strip() for ip in os.environ.get("MAPARR_TRUSTED_PROXIES", "").split(",")
+    if ip.strip()
+)
+if _TRUSTED_PROXIES:
+    logger.info("Trusted proxies configured: %s", ", ".join(sorted(_TRUSTED_PROXIES)))
+
+
+def _get_client_ip(request, trusted_proxies=None):
+    """Extract real client IP, respecting X-Forwarded-For when proxies are trusted.
+
+    Without trusted proxies: returns request.client.host directly.
+    With trusted proxies: walks X-Forwarded-For right-to-left, returns
+    rightmost IP not in the trust set. Normalises IPv6 ::1 to 127.0.0.1.
+    """
+    if trusted_proxies is None:
+        trusted_proxies = _TRUSTED_PROXIES
+
+    if not request.client:
+        return "unknown"
+
+    client_ip = request.client.host
+
+    # Normalise IPv6 loopback
+    if client_ip == "::1":
+        client_ip = "127.0.0.1"
+
+    if not trusted_proxies:
+        return client_ip
+
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if not forwarded:
+        return client_ip
+
+    # Parse chain: "client, proxy1, proxy2" — rightmost untrusted is real client
+    ips = [ip.strip() for ip in forwarded.split(",") if ip.strip()]
+    if not ips:
+        return client_ip
+
+    # Walk right to left, skip trusted proxies
+    for ip in reversed(ips):
+        normalised = "127.0.0.1" if ip == "::1" else ip
+        if normalised not in trusted_proxies:
+            return normalised
+
+    # All IPs are trusted — use leftmost as origin
+    return ips[0]
 
 
 # ─── Rate Limiting ───
@@ -39,17 +106,32 @@ from backend.log_handler import install_log_handler, get_log_handler
 # Thread-safe via a lock (needed because uvicorn may use thread pools).
 
 class RateLimiter:
-    """Per-IP sliding window rate limiter with tiered endpoint limits."""
+    """Per-IP sliding window rate limiter with tiered endpoint limits.
+
+    Limits are configurable via environment variables:
+      MAPARR_RATE_LIMIT_WRITE=10      (apply-fix, redeploy, restart — per minute)
+      MAPARR_RATE_LIMIT_ANALYSIS=30   (analyze, pipeline-scan — per minute)
+      MAPARR_RATE_LIMIT_READ=120      (all other /api/ endpoints — per minute)
+
+    Pipeline-scan is the primary user action and should rarely be limited.
+    If you hit rate limits during normal use, increase these values.
+    """
 
     # Endpoint classification: (path_prefixes, requests_per_minute)
-    WRITE_PATHS = ("/api/apply-fix", "/api/change-stacks-path")
-    ANALYSIS_PATHS = ("/api/analyze", "/api/pipeline-scan")
-    SKIP_PATHS = ("/api/health",)
+    WRITE_PATHS = ("/api/apply-fix", "/api/apply-fixes", "/api/redeploy", "/api/restart-stack", "/api/revert-fix")
+    ANALYSIS_PATHS = ()  # Analysis endpoints no longer rate-limited — see note below
+    # Rate limiting strategy for a single-user local tool:
+    # - WRITE endpoints: rate-limited (destructive operations, prevent accidental double-clicks)
+    # - Analysis/scan: NOT rate-limited (primary user actions, boot sequence fires 25+ analyze
+    #   calls for large stacks — throttling these breaks normal use)
+    # - SSE: separately managed by SSEConnectionLimiter (per-IP concurrent cap)
+    # - Reads: light rate limit to prevent runaway scripts
+    SKIP_PATHS = ("/api/health", "/api/change-stacks-path", "/api/pipeline-scan", "/api/analyze")
     STATIC_PREFIXES = ("/", "/static")
 
-    WRITE_LIMIT = 10       # requests per minute
-    ANALYSIS_LIMIT = 20    # requests per minute
-    READ_LIMIT = 60        # requests per minute
+    WRITE_LIMIT = int(os.environ.get("MAPARR_RATE_LIMIT_WRITE", "10"))
+    ANALYSIS_LIMIT = int(os.environ.get("MAPARR_RATE_LIMIT_ANALYSIS", "30"))
+    READ_LIMIT = int(os.environ.get("MAPARR_RATE_LIMIT_READ", "120"))
 
     WINDOW = 60.0          # sliding window in seconds
     CLEANUP_INTERVAL = 300.0  # purge stale entries every 5 minutes
@@ -151,6 +233,45 @@ class RateLimiter:
 _rate_limiter = RateLimiter()
 
 
+# ─── SSE Connection Limiter ───
+# Caps per-IP concurrent SSE connections to prevent file descriptor exhaustion.
+# Unlike the rate limiter (requests-per-minute), this tracks *active* long-lived
+# connections. Thread-safe via a lock since connect/disconnect can race.
+
+class SSEConnectionLimiter:
+    """Per-IP concurrent SSE connection limiter."""
+
+    MAX_PER_IP = 5  # max concurrent SSE streams per client IP
+
+    def __init__(self):
+        self._connections: dict[str, int] = defaultdict(int)
+        self._lock = threading.Lock()
+
+    def try_connect(self, ip: str) -> bool:
+        """Attempt to register a new SSE connection. Returns False if at limit."""
+        with self._lock:
+            if self._connections[ip] >= self.MAX_PER_IP:
+                return False
+            self._connections[ip] += 1
+            return True
+
+    def disconnect(self, ip: str) -> None:
+        """Release an SSE connection slot."""
+        with self._lock:
+            self._connections[ip] = max(0, self._connections[ip] - 1)
+            if self._connections[ip] == 0:
+                del self._connections[ip]
+
+    def reset(self):
+        """Clear all state. Used by test fixtures."""
+        with self._lock:
+            self._connections.clear()
+
+
+_sse_limiter = SSEConnectionLimiter()
+SSE_HARD_TIMEOUT_SECONDS = 300  # 5-minute hard timeout on SSE connections (Grok)
+
+
 # ─── Security: Path Validation ───
 # All endpoints that accept filesystem paths from the client MUST validate
 # that the resolved path is within the allowed stacks directory. This prevents
@@ -191,11 +312,6 @@ def _is_path_within_stacks(path: str, require_root: bool = False) -> bool:
         return False
 
 
-COMPOSE_FILENAMES = {
-    "docker-compose.yml", "docker-compose.yaml",
-    "compose.yml", "compose.yaml",
-}
-
 # ─── Logging ───
 
 logging.basicConfig(
@@ -206,6 +322,14 @@ logger = logging.getLogger("maparr")
 
 # Install the in-memory log handler so logs are available via /api/logs
 _log_handler = install_log_handler()
+
+# ─── Write Boundary Startup Check ───
+# Warn early if no stacks root is configured — write endpoints will refuse.
+if not os.environ.get("MAPARR_STACKS_PATH"):
+    logger.warning(
+        "MAPARR_STACKS_PATH not set — write endpoints (Apply Fix, Revert) are disabled. "
+        "Set MAPARR_STACKS_PATH to the directory containing your compose files."
+    )
 
 # ─── Version ───
 # Single source of truth — used in FastAPI metadata and /api/health.
@@ -234,14 +358,19 @@ logger.info("MapArr v%s starting up", VERSION)
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     """Enforce per-IP rate limits based on endpoint tier."""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
     path = request.url.path
 
     allowed, retry_after = _rate_limiter.check(client_ip, path)
     if not allowed:
         logger.warning("Rate limited: %s on %s (retry after %ds)", client_ip, path, retry_after)
         return JSONResponse(
-            {"error": "Too many requests. Please slow down.", "retry_after": retry_after},
+            {
+                "detail": f"Rate limited — too many requests. Try again in {retry_after}s. "
+                          "If this keeps happening, increase limits via MAPARR_RATE_LIMIT_ANALYSIS env var.",
+                "error": "rate_limited",
+                "retry_after": retry_after,
+            },
             status_code=429,
             headers={"Retry-After": str(retry_after)},
         )
@@ -258,6 +387,103 @@ _session = {
     "selected_stack": None,
     "pipeline": None,  # Cached PipelineResult from pipeline scan
 }
+
+
+# ─── Helpers: Error Formatting ───
+
+import json
+
+def _json_error_detail(exc: Exception) -> str:
+    """Format a JSON parse error with position context when available."""
+    if isinstance(exc, json.JSONDecodeError):
+        return f"Invalid JSON in request body (line {exc.lineno}, column {exc.colno}): {exc.msg}"
+    return "Invalid JSON in request body"
+
+
+def _categorize_os_error(e: OSError, action: str) -> str:
+    """Return a user-friendly message for common OS errors without leaking internals."""
+    import errno
+    if e.errno == errno.EACCES:
+        return f"{action}: permission denied"
+    if e.errno == errno.ENOSPC:
+        return f"{action}: disk full"
+    if e.errno == errno.EROFS:
+        return f"{action}: read-only filesystem"
+    if e.errno == errno.ENOENT:
+        return f"{action}: file not found"
+    return f"{action}: system error (check logs for details)"
+
+
+def _categorize_analysis_error(exc: Exception, compose_path: str = "") -> dict:
+    """Map analysis exceptions to structured, frontend-friendly error responses.
+
+    Returns a dict with 'type', 'message', and optionally 'hint', 'line', 'path'.
+    Never includes raw str(exc) — uses controlled messages only.
+
+    Error types: yaml_parse, file_missing, permission_denied,
+    docker_unreachable, no_services, unknown.
+    """
+    if isinstance(exc, yaml.YAMLError):
+        line = None
+        if hasattr(exc, "problem_mark") and exc.problem_mark:
+            line = exc.problem_mark.line + 1  # 0-indexed → 1-indexed
+        return {
+            "type": "yaml_parse",
+            "message": "YAML syntax error in compose file",
+            "line": line,
+            "hint": f"Check line {line} for syntax issues" if line else "Check compose file for YAML syntax errors",
+        }
+
+    if isinstance(exc, FileNotFoundError):
+        return {
+            "type": "file_missing",
+            "message": "Compose file not found",
+            "path": compose_path,
+            "hint": "Verify the file exists and the path is correct",
+        }
+
+    if isinstance(exc, PermissionError):
+        return {
+            "type": "permission_denied",
+            "message": "Cannot read compose file — permission denied",
+            "path": compose_path,
+            "hint": "Check file permissions. If running in Docker, verify PUID/PGID match the file owner.",
+        }
+
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return {
+            "type": "docker_unreachable",
+            "message": "Docker daemon is unreachable",
+            "hint": "Check DOCKER_HOST configuration and ensure Docker is running",
+        }
+
+    if isinstance(exc, ValueError) and "no services" in str(exc).lower():
+        return {
+            "type": "no_services",
+            "message": "No services found in compose file",
+            "hint": "The compose file exists but contains no service definitions",
+        }
+
+    # Unknown — generic fallback with controlled message
+    return {
+        "type": "unknown",
+        "message": "Analysis failed due to an unexpected error",
+        "hint": "Check the log panel for details",
+    }
+
+
+def _relative_path_display(full_path: str) -> str:
+    """Show path relative to stacks root for user context, falling back to basename."""
+    try:
+        root = _get_stacks_root()
+    except NameError:
+        root = None
+    if not root:
+        return os.path.basename(full_path)
+    try:
+        return str(Path(full_path).resolve().relative_to(Path(root).resolve()))
+    except (ValueError, OSError):
+        return os.path.basename(full_path)
 
 
 # ─── Frontend ───
@@ -295,9 +521,9 @@ async def api_parse_error(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -305,6 +531,13 @@ async def api_parse_error(request: Request):
     if not error_text:
         return JSONResponse(
             {"error": "No error text provided"},
+            status_code=400,
+        )
+
+    # Input size limit: 100KB max error text to prevent memory exhaustion
+    if len(error_text) > 100_000:
+        return JSONResponse(
+            {"error": "Error text too large (max 100KB)"},
             status_code=400,
         )
 
@@ -416,19 +649,21 @@ async def api_pipeline_scan(request: Request):
 
     if not scan_dir or not os.path.isdir(scan_dir):
         return JSONResponse(
-            {"error": "No valid scan directory available"},
+            {"error": "No valid scan directory available. Set MAPARR_STACKS_PATH or use the Change Path button to select your stacks directory."},
             status_code=400,
         )
 
-    # Security: if a stacks root is configured, validate scan_dir is within it
-    stacks_root = _get_stacks_root()
-    if stacks_root:
+    # Security: if MAPARR_STACKS_PATH env var is set (Docker deployment),
+    # enforce that scan_dir is within it. User-chosen paths (custom_stacks_path)
+    # are updated freely — the user is explicitly navigating.
+    env_stacks_root = os.environ.get("MAPARR_STACKS_PATH", "")
+    if env_stacks_root:
         try:
-            Path(scan_dir).resolve().relative_to(Path(stacks_root).resolve())
+            Path(scan_dir).resolve().relative_to(Path(env_stacks_root).resolve())
         except (ValueError, OSError):
-            logger.warning("Pipeline scan blocked: %s outside stacks root %s", scan_dir, stacks_root)
+            logger.warning("Pipeline scan blocked: %s outside MAPARR_STACKS_PATH %s", scan_dir, env_stacks_root)
             return JSONResponse(
-                {"error": "Scan directory is outside the stacks root"},
+                {"error": "Scan directory is outside the configured stacks root. Check MAPARR_STACKS_PATH or use Change Path to update."},
                 status_code=403,
             )
 
@@ -436,6 +671,12 @@ async def api_pipeline_scan(request: Request):
     result = run_pipeline_scan(scan_dir)
     elapsed = time.time() - t0
     _session["pipeline"] = result.to_dict()
+
+    # Persist the scan directory as the stacks root so write operations
+    # (apply-fixes, redeploy) can validate paths against it.
+    if _session.get("custom_stacks_path") != scan_dir:
+        _session["custom_stacks_path"] = scan_dir
+        logger.info("Pipeline scan: set custom_stacks_path=%s", scan_dir)
 
     logger.info("Pipeline scan: %s → %s (%.2fs)", scan_dir, result.summary, elapsed)
 
@@ -454,9 +695,9 @@ async def api_change_stacks_path(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -472,26 +713,23 @@ async def api_change_stacks_path(request: Request):
             status_code=400,
         )
 
-    # Security: if a stacks root is configured, the new path must be within
-    # it (allowlist). This is stricter than the denylist below and covers all
-    # edge cases (no need to enumerate every system directory).
-    stacks_root = _get_stacks_root()
-    if stacks_root:
+    # Security: if MAPARR_STACKS_PATH is set (Docker deployment), the admin
+    # controls the boundary — new path must be within it. But if the root was
+    # set by user choice (custom_stacks_path), switching directories is allowed.
+    env_stacks_root = os.environ.get("MAPARR_STACKS_PATH", "")
+    if env_stacks_root:
         try:
-            Path(new_path).resolve().relative_to(Path(stacks_root).resolve())
+            Path(new_path).resolve().relative_to(Path(env_stacks_root).resolve())
         except (ValueError, OSError):
-            logger.warning("Change path blocked: %s outside stacks root %s", new_path, stacks_root)
+            logger.warning("Change path blocked: %s outside MAPARR_STACKS_PATH %s", new_path, env_stacks_root)
             return JSONResponse(
-                {"error": "Path must be within the stacks directory"},
+                {"error": "Path must be within the stacks directory (set by MAPARR_STACKS_PATH)"},
                 status_code=403,
             )
 
-    # Defense-in-depth: block obvious system directories (when no stacks root)
-    _blocked_prefixes = ("/etc", "/proc", "/sys", "/dev", "/boot", "/sbin",
-                         "/root", "/home",
-                         "C:\\Windows", "C:\\Program Files")
+    # Defense-in-depth: block obvious system directories
     resolved_new = str(Path(new_path).resolve())
-    if any(resolved_new.startswith(p) for p in _blocked_prefixes):
+    if any(resolved_new.startswith(p) for p in _BLOCKED_PREFIXES):
         logger.warning("Change path blocked: system directory: %s", new_path)
         return JSONResponse(
             {"error": "Cannot scan system directories"},
@@ -518,6 +756,94 @@ async def api_change_stacks_path(request: Request):
     }
 
 
+# ─── API: List Directories (for folder browser) ───
+
+@app.post("/api/list-directories")
+async def api_list_directories(request: Request):
+    """
+    List subdirectories of a given path for the folder browser UI.
+
+    Returns immediate child directories (not recursive) so the frontend
+    can render a navigable folder tree. On Windows with no path specified,
+    returns available drive letters as roots.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    req_path = body.get("path", "").strip()
+
+    # Windows: if no path given, list drive letters
+    if not req_path and os.name == "nt":
+        import string
+        drives = []
+        for letter in string.ascii_uppercase:
+            drive = f"{letter}:\\"
+            if os.path.isdir(drive):
+                drives.append({"name": f"{letter}:", "path": drive})
+        return {"path": "", "parent": None, "directories": drives}
+
+    # Unix: default to /
+    if not req_path:
+        req_path = "/"
+
+    # Normalize path
+    try:
+        resolved = str(Path(req_path).resolve())
+    except (ValueError, OSError):
+        return JSONResponse(
+            {"error": f"Invalid path: {req_path}"},
+            status_code=400,
+        )
+
+    if not os.path.isdir(resolved):
+        return JSONResponse(
+            {"error": f"Directory not found: {req_path}"},
+            status_code=400,
+        )
+
+    # Block system directories (uses unified blocklist)
+    if any(resolved.startswith(p) for p in _BLOCKED_PREFIXES):
+        return JSONResponse(
+            {"error": "Cannot browse system directories"},
+            status_code=403,
+        )
+
+    # List subdirectories, skip hidden and inaccessible
+    dirs = []
+    try:
+        for entry in sorted(Path(resolved).iterdir()):
+            if not entry.is_dir():
+                continue
+            if entry.name.startswith("."):
+                continue
+            try:
+                # Test readability (some dirs exist but can't be listed)
+                next(entry.iterdir(), None)
+                dirs.append({"name": entry.name, "path": str(entry)})
+            except (PermissionError, OSError):
+                # Still show it but mark as inaccessible
+                dirs.append({"name": entry.name, "path": str(entry), "locked": True})
+    except PermissionError:
+        return JSONResponse(
+            {"error": f"Permission denied: {req_path}"},
+            status_code=403,
+        )
+
+    # Calculate parent for up-navigation
+    parent_path = str(Path(resolved).parent)
+    if parent_path == resolved:
+        # At root (/ or C:\) — no parent
+        parent_path = None if os.name != "nt" else ""
+
+    return {
+        "path": resolved,
+        "parent": parent_path,
+        "directories": dirs,
+    }
+
+
 # ─── API: Select Stack ───
 
 @app.post("/api/select-stack")
@@ -530,9 +856,9 @@ async def api_select_stack(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -546,7 +872,7 @@ async def api_select_stack(request: Request):
     # Validate the path exists
     if not os.path.isdir(stack_path):
         return JSONResponse(
-            {"error": f"Directory not found: {os.path.basename(stack_path)}"},
+            {"error": f"Directory not found: {_relative_path_display(stack_path)}"},
             status_code=400,
         )
 
@@ -554,7 +880,7 @@ async def api_select_stack(request: Request):
     if not _is_path_within_stacks(stack_path):
         logger.warning("Select stack blocked: path outside stacks root: %s", stack_path)
         return JSONResponse(
-            {"error": "Path is outside the stacks directory"},
+            {"error": "Path is outside the stacks directory. Set MAPARR_STACKS_PATH or use Change Path to configure the correct root."},
             status_code=403,
         )
 
@@ -595,9 +921,9 @@ async def api_analyze(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -610,7 +936,7 @@ async def api_analyze(request: Request):
 
     if not os.path.isdir(stack_path):
         return JSONResponse(
-            {"error": f"Directory not found: {os.path.basename(stack_path)}"},
+            {"error": f"Directory not found: {_relative_path_display(stack_path)}"},
             status_code=400,
         )
 
@@ -618,7 +944,7 @@ async def api_analyze(request: Request):
     if not _is_path_within_stacks(stack_path):
         logger.warning("Analyze blocked: path outside stacks root: %s", stack_path)
         return JSONResponse(
-            {"error": "Path is outside the stacks directory"},
+            {"error": "Path is outside the stacks directory. Set MAPARR_STACKS_PATH or use Change Path to configure the correct root."},
             status_code=403,
         )
 
@@ -718,12 +1044,24 @@ async def api_analyze(request: Request):
             scan_dir=scan_dir,
             pipeline_context=pipeline_context,
         ))
-    except Exception as e:
+    except (OSError, ValueError, TypeError, KeyError) as e:
         logger.exception("Analysis failed for %s", os.path.basename(stack_path))
-        steps.append({"icon": "fail", "text": f"Analysis failed: {e}"})
+        error_info = _categorize_analysis_error(e, compose_file_path or stack_path)
+        steps.append({"icon": "fail", "text": error_info["message"]})
         return JSONResponse({
             "status": "error",
-            "error": f"Analysis failed: {e}",
+            "error": error_info,
+            "stage": "analysis",
+            "stack_path": os.path.basename(stack_path),
+            "steps": steps,
+        }, status_code=200)
+    except Exception as e:
+        logger.exception("Analysis failed for %s (unexpected)", os.path.basename(stack_path))
+        error_info = _categorize_analysis_error(e, compose_file_path or stack_path)
+        steps.append({"icon": "fail", "text": error_info["message"]})
+        return JSONResponse({
+            "status": "error",
+            "error": error_info,
             "stage": "analysis",
             "stack_path": os.path.basename(stack_path),
             "steps": steps,
@@ -769,9 +1107,9 @@ async def api_smart_match(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -839,9 +1177,9 @@ async def api_apply_fix(request: Request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except Exception as exc:
         return JSONResponse(
-            {"error": "Invalid JSON in request body"},
+            {"error": _json_error_detail(exc)},
             status_code=400,
         )
 
@@ -858,13 +1196,17 @@ async def api_apply_fix(request: Request):
             {"error": "No corrected_yaml provided"},
             status_code=400,
         )
-    if not os.path.isfile(compose_file_path):
+
+    # Input size limit: 1MB max corrected YAML per file
+    if len(corrected_yaml) > 1_000_000:
         return JSONResponse(
-            {"error": f"File not found: {os.path.basename(compose_file_path)}"},
+            {"error": "Corrected YAML too large (max 1MB per file)"},
             status_code=400,
         )
 
     # Security: validate the path is within the stacks directory.
+    # This check MUST come before the file existence check — we want to deny
+    # writes based on policy before even confirming the path exists on disk.
     # Write operations require an explicit boundary (MAPARR_STACKS_PATH or
     # custom_stacks_path) — without one, we refuse to write to prevent
     # accidental modifications to arbitrary compose files on the host.
@@ -883,26 +1225,43 @@ async def api_apply_fix(request: Request):
             status_code=403,
         )
 
+    if not os.path.isfile(compose_file_path):
+        return JSONResponse(
+            {"error": f"File not found: {_relative_path_display(compose_file_path)}"},
+            status_code=400,
+        )
+
     # Security: validate it's actually a compose file
     if os.path.basename(compose_file_path) not in COMPOSE_FILENAMES:
         logger.warning("Apply fix blocked: not a compose file: %s", compose_file_path)
         return JSONResponse(
-            {"error": "Target is not a recognised compose file"},
+            {"error": f"Target is not a recognised compose file. Valid names: {', '.join(sorted(COMPOSE_FILENAMES))}"},
             status_code=400,
         )
 
     # Validate the corrected YAML is parseable before writing
     try:
-        import yaml
         parsed = yaml.safe_load(corrected_yaml)
         if not isinstance(parsed, dict) or "services" not in parsed:
             return JSONResponse(
                 {"error": "Corrected YAML doesn't contain a valid services section"},
                 status_code=400,
             )
-    except Exception as e:
+    except yaml.YAMLError as e:
+        # Extract line/column if available, don't leak full exception
+        mark = getattr(e, 'problem_mark', None)
+        if mark:
+            return JSONResponse(
+                {"error": f"Corrected YAML is not valid (line {mark.line + 1}, column {mark.column + 1}): check indentation and syntax"},
+                status_code=400,
+            )
         return JSONResponse(
-            {"error": f"Corrected YAML is not valid: {e}"},
+            {"error": "Corrected YAML is not valid: check indentation and syntax"},
+            status_code=400,
+        )
+    except Exception:
+        return JSONResponse(
+            {"error": "Corrected YAML could not be parsed"},
             status_code=400,
         )
 
@@ -912,10 +1271,10 @@ async def api_apply_fix(request: Request):
         import shutil
         shutil.copy2(compose_file_path, backup_path)
         logger.info("Apply fix: backup created at %s", backup_path)
-    except Exception as e:
+    except OSError as e:
         logger.error("Apply fix: backup failed: %s", e)
         return JSONResponse(
-            {"error": f"Failed to create backup: {e}"},
+            {"error": _categorize_os_error(e, "Failed to create backup")},
             status_code=500,
         )
 
@@ -926,7 +1285,7 @@ async def api_apply_fix(request: Request):
         with open(compose_file_path, "w", encoding="utf-8", newline="") as f:
             f.write(corrected_yaml.replace("\r\n", "\n"))
         logger.info("Apply fix: wrote corrected YAML to %s", compose_file_path)
-    except Exception as e:
+    except OSError as e:
         logger.error("Apply fix: write failed: %s", e)
         # Try to restore from backup
         try:
@@ -936,7 +1295,7 @@ async def api_apply_fix(request: Request):
         except Exception:
             pass
         return JSONResponse(
-            {"error": f"Failed to write file: {e}. Backup preserved at {os.path.basename(backup_path)}"},
+            {"error": f"{_categorize_os_error(e, 'Failed to write file')}. Backup preserved at {os.path.basename(backup_path)}"},
             status_code=500,
         )
 
@@ -944,8 +1303,357 @@ async def api_apply_fix(request: Request):
         "status": "applied",
         "compose_file": os.path.basename(compose_file_path),
         "backup_file": os.path.basename(backup_path),
+        "has_backup": os.path.isfile(backup_path),
         "message": f"Fix applied to {os.path.basename(compose_file_path)}. Backup saved as {os.path.basename(backup_path)}.",
     }
+
+
+@app.post("/api/apply-fixes")
+async def api_apply_fixes(request: Request):
+    """Apply corrected YAML to multiple compose files in one batch."""
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"error": _json_error_detail(exc)}, status_code=400)
+
+    fixes = body.get("fixes", [])
+    if not isinstance(fixes, list):
+        return JSONResponse({"error": "fixes must be a list"}, status_code=400)
+    if len(fixes) > 20:
+        return JSONResponse({"error": "Maximum 20 files per batch"}, status_code=400)
+
+    stacks_root = _get_stacks_root()
+    if not stacks_root:
+        return JSONResponse(
+            {"error": "Apply Fix requires MAPARR_STACKS_PATH to be set for security."},
+            status_code=403,
+        )
+
+    from backend.apply_multi import apply_fixes_batch
+    result = apply_fixes_batch(fixes, stacks_root)
+
+    if result["status"] == "validation_failed":
+        return JSONResponse(result, status_code=400)
+
+    return JSONResponse(result)
+
+
+# ─── API: Revert Fix ───
+
+@app.post("/api/revert-fix")
+async def api_revert_fix(request: Request):
+    """Restore a compose file from its .bak backup.
+
+    Validates path within stacks boundary, checks .bak exists,
+    swaps backup to original via os.replace() for atomicity.
+    Elder Council finding (Gemini + Grok): expose undo in Apply Fix UI.
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse(
+            {"detail": _json_error_detail(exc)},
+            status_code=400,
+        )
+
+    compose_path = body.get("compose_file_path", "").strip()
+
+    if not compose_path:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "compose_file_path is required"},
+        )
+
+    # Security: path boundary check BEFORE file existence — deny by policy first.
+    # Write operations require an explicit boundary (MAPARR_STACKS_PATH or
+    # custom_stacks_path) — without one, we refuse to prevent accidental changes.
+    if not _is_path_within_stacks(compose_path, require_root=True):
+        stacks_root = _get_stacks_root()
+        if not stacks_root:
+            logger.warning("Revert blocked: no stacks root configured (set MAPARR_STACKS_PATH)")
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Revert requires MAPARR_STACKS_PATH to be set for security. "
+                                   "Set the environment variable or use Change Path in the UI."},
+            )
+        logger.warning("Revert blocked: path outside stacks root: %s", compose_path)
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Path is outside the configured stacks directory."},
+        )
+
+    if not os.path.isfile(compose_path):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": f"Compose file not found: {_relative_path_display(compose_path)}"},
+        )
+
+    backup_path = compose_path + ".bak"
+    if not os.path.isfile(backup_path):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "No backup file found. Cannot revert — no previous version to restore."},
+        )
+
+    try:
+        # os.replace() is atomic on the same filesystem: the backup overwrites
+        # the current file in a single operation. The .bak is consumed (removed).
+        os.replace(backup_path, compose_path)
+        logger.info("Reverted %s from backup", _relative_path_display(compose_path))
+        return {
+            "status": "reverted",
+            "compose_file": compose_path,
+            "message": f"Restored {_relative_path_display(compose_path)} from backup.",
+        }
+    except OSError as exc:
+        logger.error("Revert failed for %s: %s", compose_path, exc)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": _categorize_os_error(exc, "Failed to revert")},
+        )
+
+
+# ─── API: Redeploy ───
+
+@app.post("/api/redeploy")
+async def api_redeploy(request: Request):
+    """Redeploy Docker stacks after applying fixes."""
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"error": _json_error_detail(exc)}, status_code=400)
+
+    stacks = body.get("stacks", [])
+    if not isinstance(stacks, list):
+        return JSONResponse({"error": "stacks must be a list"}, status_code=400)
+    if len(stacks) > 10:
+        return JSONResponse({"error": "Maximum 10 stacks per batch"}, status_code=400)
+
+    stacks_root = _get_stacks_root()
+    if not stacks_root:
+        return JSONResponse(
+            {"error": "Redeploy requires MAPARR_STACKS_PATH to be set for security."},
+            status_code=403,
+        )
+
+    from backend.redeploy import redeploy_stacks
+    result = redeploy_stacks(stacks, stacks_root)
+
+    status_code = 200 if result["status"] != "error" else 500
+    return JSONResponse(result, status_code=status_code)
+
+
+# ─── API: Docker Capabilities & Restart ───
+
+@app.get("/api/docker-capabilities")
+async def docker_capabilities():
+    """Report Docker socket and compose CLI availability.
+
+    Frontend uses this to show/hide the restart button in the redeploy banner.
+    Checks three things:
+      - socket_available: Does /var/run/docker.sock exist?
+      - socket_writable: Is the socket writable by this process?
+      - compose_available: Is the 'docker' CLI in PATH?
+    """
+    import shutil
+
+    socket_path = "/var/run/docker.sock"
+    socket_available = os.path.exists(socket_path)
+    socket_writable = os.access(socket_path, os.W_OK) if socket_available else False
+    compose_available = shutil.which("docker") is not None
+
+    return {
+        "socket_available": socket_available,
+        "socket_writable": socket_writable,
+        "compose_available": compose_available,
+    }
+
+
+@app.post("/api/restart-stack")
+async def restart_stack(request: Request):
+    """Restart a Docker stack via 'docker compose up -d'.
+
+    Validates path within stacks boundary, checks file exists,
+    runs docker compose with the specified file. Security check
+    runs before file existence check (established pattern).
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return JSONResponse({"detail": _json_error_detail(exc)}, status_code=400)
+
+    compose_path = body.get("compose_file_path", "").strip()
+
+    if not compose_path:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "compose_file_path is required"},
+        )
+
+    # Security check first — before revealing whether the file exists
+    if not _is_path_within_stacks(compose_path, require_root=True):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Path is outside the configured stacks directory."},
+        )
+
+    if not os.path.isfile(compose_path):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Compose file not found."},
+        )
+
+    try:
+        # Use subprocess list-form, no shell=True — standing security order
+        import subprocess
+
+        result = subprocess.run(
+            ["docker", "compose", "-f", compose_path, "up", "-d"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=os.path.dirname(compose_path),
+        )
+        if result.returncode != 0:
+            logger.warning("Stack restart failed: %s", result.stderr[:500])
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": "Stack restart failed. Check Docker logs.",
+                    "stderr": result.stderr[:500],
+                },
+            )
+        logger.info("Restarted stack: %s", _relative_path_display(compose_path))
+        return {"status": "restarted", "compose_file": compose_path}
+
+    except subprocess.TimeoutExpired:
+        return JSONResponse(
+            status_code=504,
+            content={"detail": "Stack restart timed out after 60 seconds."},
+        )
+    except FileNotFoundError:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Docker CLI not found. Ensure Docker is installed and in PATH."},
+        )
+
+
+# ─── API: Export Diagnostics ───
+# Grok Elder Council: zip export for GitHub issue attachments.
+# In-memory only — never written to disk.
+
+# Secret redaction pattern — matches env var names containing these keywords.
+# Used by _redact_secrets() to scrub compose files before including in the zip.
+_SECRET_KEY_PATTERN = re.compile(
+    r"(key|token|password|secret|apikey|auth|credential)",
+    re.IGNORECASE,
+)
+
+
+def _redact_secrets(content: str) -> str:
+    """Redact environment variable values that match secret patterns.
+
+    Handles YAML formats:
+    - KEY: value          (environment mapping)
+    - - KEY=value         (environment list)
+    - - SECRET_KEY=value  (list with dash prefix)
+
+    Non-secret env vars are preserved as-is.
+    """
+    lines = content.split("\n")
+    redacted = []
+    for line in lines:
+        # Match "  KEY: value" or "  KEY= value" style (mapping format)
+        match = re.match(
+            r"(\s+)(\w*(?:key|token|password|secret|apikey|auth|credential)\w*)"
+            r"\s*:\s*(.+)",
+            line, re.IGNORECASE,
+        )
+        if match:
+            indent = match.group(1)
+            var_name = match.group(2)
+            redacted.append(f"{indent}{var_name}: [REDACTED]")
+            continue
+
+        # Match "  - KEY=value" style (list format)
+        match = re.match(
+            r"(\s+-\s+)(\w*(?:key|token|password|secret|apikey|auth|credential)\w*)"
+            r"=(.+)",
+            line, re.IGNORECASE,
+        )
+        if match:
+            prefix = match.group(1)
+            var_name = match.group(2)
+            redacted.append(f"{prefix}{var_name}=[REDACTED]")
+            continue
+
+        redacted.append(line)
+    return "\n".join(redacted)
+
+
+@app.get("/api/export-diagnostics")
+async def export_diagnostics():
+    """Generate a diagnostic zip for GitHub issue attachments.
+
+    Contains: compose files (secrets redacted), pipeline results,
+    analysis results, system info. All in-memory, never written to disk.
+    """
+    import io
+    import platform
+    import zipfile
+
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # System info
+        info_lines = [
+            "MapArr Diagnostic Export",
+            f"Version: {VERSION}",
+            f"Platform: {platform.system()} {platform.release()}",
+            f"Python: {platform.python_version()}",
+            f"Stacks Path: {_get_stacks_root() or 'not configured'}",
+        ]
+        zf.writestr("maparr-info.txt", "\n".join(info_lines))
+
+        # Pipeline results (if available)
+        pipeline = _session.get("pipeline")
+        if pipeline and isinstance(pipeline, dict):
+            try:
+                summary = {
+                    "total_stacks": pipeline.get("total_stacks", 0),
+                    "media_stack_count": pipeline.get("media_stack_count", 0),
+                    "health_tier": pipeline.get("health_tier", "unknown"),
+                    "health_message": pipeline.get("health_message", ""),
+                }
+                zf.writestr("pipeline-summary.json", json.dumps(summary, indent=2))
+            except Exception:
+                pass
+
+        # Compose files with secret redaction
+        stacks_root = _get_stacks_root()
+        if stacks_root and os.path.isdir(stacks_root):
+            for root_dir, _dirs, files in os.walk(stacks_root):
+                for fname in files:
+                    if fname in COMPOSE_FILENAMES:
+                        fpath = os.path.join(root_dir, fname)
+                        try:
+                            with open(fpath, "r", encoding="utf-8") as f:
+                                content = f.read()
+                            content = _redact_secrets(content)
+                            rel_path = os.path.relpath(fpath, stacks_root)
+                            zf.writestr(f"compose-files/{rel_path}", content)
+                        except Exception:
+                            pass
+
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": "attachment; filename=maparr-diagnostic.zip",
+        },
+    )
 
 
 # ─── API: Health ───
@@ -953,6 +1661,29 @@ async def api_apply_fix(request: Request):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": VERSION}
+
+
+# ─── API: Host Info (First-Run Wizard) ───
+
+@app.get("/api/host-info")
+async def host_info():
+    """Return host UID/GID for first-run wizard pre-population.
+
+    These values help users configure PUID/PGID correctly — the most
+    common source of permission failures in containerised *arr setups.
+    """
+    import platform
+    info = {
+        "platform": platform.system(),
+    }
+    try:
+        info["uid"] = os.getuid()
+        info["gid"] = os.getgid()
+    except AttributeError:
+        # Windows — no getuid/getgid
+        info["uid"] = 1000
+        info["gid"] = 1000
+    return info
 
 
 # ─── API: Logs ───
@@ -981,14 +1712,28 @@ async def api_get_logs(limit: int = 100, level: str = "", since: float = 0):
 
 
 @app.get("/api/logs/stream")
-async def api_log_stream():
+async def api_log_stream(request: Request):
     """
     Server-Sent Events stream for live log entries.
 
     The frontend connects once and receives log entries as they happen.
     Used by the log panel for real-time updates and by the toast system
     for WARN/ERROR notifications.
+
+    Per-IP concurrent connection cap prevents file descriptor exhaustion
+    from runaway clients or browser tab accumulation.
     """
+    client_ip = _get_client_ip(request)
+
+    # Enforce per-IP SSE connection limit
+    if not _sse_limiter.try_connect(client_ip):
+        logger.warning("SSE connection rejected: %s at limit (%d)",
+                       client_ip, SSEConnectionLimiter.MAX_PER_IP)
+        return JSONResponse(
+            {"error": "Too many concurrent log streams"},
+            status_code=429,
+        )
+
     async def event_generator():
         queue: asyncio.Queue = asyncio.Queue(maxsize=100)
 
@@ -1000,11 +1745,16 @@ async def api_log_stream():
 
         handler = get_log_handler()
         handler.add_listener(on_log)
-        logger.info("Log stream: client connected (SSE)")
+        logger.info("Log stream: client connected (SSE) [%s]", client_ip)
+        start_time = time.monotonic()
         try:
             # Send initial keepalive
             yield "event: connected\ndata: {}\n\n"
             while True:
+                # Hard timeout — force client to reconnect (Grok Elder Council)
+                if time.monotonic() - start_time > SSE_HARD_TIMEOUT_SECONDS:
+                    yield "event: timeout\ndata: Connection recycled after 5 minutes\n\n"
+                    break
                 try:
                     entry = await asyncio.wait_for(queue.get(), timeout=30.0)
                     import json
@@ -1017,7 +1767,8 @@ async def api_log_stream():
             pass
         finally:
             handler.remove_listener(on_log)
-            logger.debug("Log stream: client disconnected")
+            _sse_limiter.disconnect(client_ip)
+            logger.debug("Log stream: client disconnected [%s]", client_ip)
 
     return StreamingResponse(
         event_generator(),

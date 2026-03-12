@@ -1,0 +1,22 @@
+## TEST: LSIO images without PUID/PGID set
+## EXPECTED: missing_puid_pgid conflict
+## SOLUTION SHOULD: Suggest adding PUID=1000 PGID=1000 to environment
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    volumes:
+      - ./config/sonarr:/config
+      - /data:/data
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    volumes:
+      - ./config/radarr:/config
+      - /data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - /data:/data

@@ -22,7 +22,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from backend.analyzer import _classify_service
+from backend.analyzer import analyze_stack
+from backend.image_registry import get_registry
+from backend.resolver import resolve_compose
 from backend.cross_stack import (
     _find_compose_file,
     _parse_sibling_services,
@@ -47,8 +49,14 @@ class PipelineService:
     volume_mounts: List[dict] = field(default_factory=list)  # [{source, target}] for RPM calc
     # Permissions analysis fields — populated from compose environment/user
     image: str = ""
+    family_name: str = ""
     environment: Dict[str, str] = field(default_factory=dict)
     compose_user: Optional[str] = None
+    has_named_volumes: bool = False  # True if data mounts use named volumes instead of bind mounts
+    # Per-service health from full analysis (replaces lightweight guessing)
+    health: str = "unknown"          # "ok", "warning", "problem"
+    conflict_counts: Dict[str, int] = field(default_factory=dict)  # {category: count}
+    health_details: List[str] = field(default_factory=list)  # Short conflict descriptions
 
     def to_dict(self) -> dict:
         return {
@@ -58,10 +66,15 @@ class PipelineService:
             "role": self.role,
             "host_sources": sorted(self.host_sources),
             "compose_file": os.path.basename(self.compose_file),
+            "compose_file_full": self.compose_file,  # Full path for multi-file fix plans
             "volume_mounts": self.volume_mounts,
             "image": self.image,
+            "family_name": self.family_name,
             "environment": self.environment,
             "compose_user": self.compose_user,
+            "health": self.health,
+            "conflict_counts": self.conflict_counts,
+            "health_details": self.health_details,
         }
 
 
@@ -72,6 +85,7 @@ class PipelineResult:
     scanned_at: float                                    # Unix timestamp
     stacks_scanned: int
     media_services: List[PipelineService] = field(default_factory=list)
+    non_media_stacks: List[dict] = field(default_factory=list)  # [{name, path, services}]
 
     # Aggregated analysis
     roles_present: Set[str] = field(default_factory=set)
@@ -86,8 +100,12 @@ class PipelineResult:
 
     # Overall health
     health: str = "unknown"          # "ok", "warning", "problem"
+    health_tier: str = "unknown"     # "excellent", "good", "fair", "poor"
+    health_message: str = ""         # Human-friendly summary (e.g. "Looking great...")
     summary: str = ""                # Human-readable one-liner
     steps: List[dict] = field(default_factory=list)  # Terminal lines for UI
+    per_stack_conflicts: Dict[str, List[dict]] = field(default_factory=dict)  # stack_name → conflicts
+    parse_errors: List[Dict] = field(default_factory=list)  # [{file, error, stack}]
 
     def to_dict(self) -> dict:
         return {
@@ -105,10 +123,30 @@ class PipelineResult:
                 role: [s.to_dict() for s in svcs]
                 for role, svcs in self.services_by_role.items()
             },
+            "non_media_stacks": self.non_media_stacks,
             "health": self.health,
+            "health_tier": self.health_tier,
+            "health_message": self.health_message,
             "summary": self.summary,
             "steps": self.steps,
+            "per_stack_conflicts": self.per_stack_conflicts,
+            "parse_errors": self.parse_errors,
         }
+
+
+# ─── Helpers ───
+
+def _list_service_names(compose_file: str) -> List[str]:
+    """Return service names from a compose file without full parsing."""
+    try:
+        import yaml
+        with open(compose_file, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if isinstance(data, dict) and isinstance(data.get("services"), dict):
+            return sorted(data["services"].keys())
+    except Exception:
+        pass
+    return []
 
 
 # ─── Core Function ───
@@ -146,7 +184,9 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
     steps.append({"icon": "run", "text": f"Scanning {scan_dir} for media services..."})
 
     # Iterate all subdirectories
+    registry = get_registry()
     all_services: List[PipelineService] = []
+    non_media_stacks: List[dict] = []
     stacks_scanned = 0
 
     try:
@@ -159,40 +199,157 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
         result.steps = steps
         return result
 
+    # Check if scan_dir itself is a single stack (has a compose file directly).
+    # This allows users to point at a specific stack folder, not just a parent.
+    own_compose = _find_compose_file(scan_dir)
+    if own_compose:
+        scan_entry = Path(scan_dir)
+        parsed = _parse_sibling_services(own_compose)
+        for svc_name, svc_info in parsed.items():
+            svc_image = svc_info.get("image", "")
+            classification = registry.classify(svc_name, svc_image)
+            all_services.append(PipelineService(
+                stack_path=scan_dir,
+                stack_name=scan_entry.name,
+                service_name=svc_name,
+                role=svc_info["role"],
+                host_sources=svc_info["host_sources"],
+                compose_file=own_compose,
+                volume_mounts=svc_info.get("volume_mounts", []),
+                image=svc_image,
+                family_name=classification.get("family_name") or "",
+                environment=svc_info.get("environment", {}),
+                compose_user=svc_info.get("compose_user"),
+            ))
+        if not parsed:
+            # Distinguish "no media services" from "broken YAML"
+            try:
+                import yaml
+                with open(own_compose, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                if data is None or not isinstance(data, dict):
+                    result.parse_errors.append({
+                        "file": own_compose,
+                        "error": "Empty or invalid compose file",
+                        "stack": scan_entry.name,
+                    })
+            except yaml.YAMLError as ye:
+                line_info = ""
+                if hasattr(ye, "problem_mark") and ye.problem_mark:
+                    line_info = f" (line {ye.problem_mark.line + 1})"
+                result.parse_errors.append({
+                    "file": own_compose,
+                    "error": f"YAML syntax error{line_info}",
+                    "stack": scan_entry.name,
+                })
+                logger.warning("Parse error in %s: YAML syntax error%s", own_compose, line_info)
+            except Exception:
+                pass
+
+            svc_names = _list_service_names(own_compose)
+            if svc_names:
+                non_media_stacks.append({
+                    "name": scan_entry.name,
+                    "path": scan_dir,
+                    "services": svc_names,
+                })
+        stacks_scanned += 1
+        logger.info("Pipeline scan: single-stack mode — %s has compose file with %d services",
+                    scan_entry.name, len(parsed))
+
     dirs_checked = 0
     for entry in entries:
         if not entry.is_dir() or entry.name.startswith("."):
             continue
 
         compose_file = _find_compose_file(str(entry))
-        if not compose_file:
-            dirs_checked += 1
-            continue
 
-        stacks_scanned += 1
+        if compose_file:
+            # Normal stack: compose file at this level
+            compose_files_to_scan = [(entry, compose_file)]
+        else:
+            # No compose at this level — check for cluster layout
+            # (one service per subfolder, e.g. Dockhand/Portainer/DockSTARTer)
+            compose_files_to_scan = []
+            try:
+                for sub_entry in sorted(entry.iterdir()):
+                    if not sub_entry.is_dir() or sub_entry.name.startswith("."):
+                        continue
+                    sub_compose = _find_compose_file(str(sub_entry))
+                    if sub_compose:
+                        compose_files_to_scan.append((sub_entry, sub_compose))
+            except PermissionError:
+                logger.debug("Pipeline: permission denied scanning cluster %s", entry.name)
+
+            if not compose_files_to_scan:
+                dirs_checked += 1
+                continue
+            logger.info("Pipeline: cluster layout detected in %s (%d compose files)",
+                       entry.name, len(compose_files_to_scan))
+
+        stacks_scanned += len(compose_files_to_scan)
         dirs_checked += 1
 
-        # Parse this stack's media services (lightweight YAML only)
-        parsed = _parse_sibling_services(compose_file)
-        for svc_name, svc_info in parsed.items():
-            all_services.append(PipelineService(
-                stack_path=str(entry),
-                stack_name=entry.name,
-                service_name=svc_name,
-                role=svc_info["role"],
-                host_sources=svc_info["host_sources"],
-                compose_file=compose_file,
-                volume_mounts=svc_info.get("volume_mounts", []),
-                image=svc_info.get("image", ""),
-                environment=svc_info.get("environment", {}),
-                compose_user=svc_info.get("compose_user"),
-            ))
-            logger.debug("Pipeline: %s/%s → role=%s, mounts=%s",
-                        entry.name, svc_name, svc_info["role"],
-                        sorted(svc_info["host_sources"]) if svc_info["host_sources"] else "none")
+        for svc_entry, svc_compose in compose_files_to_scan:
+            # Parse this stack's media services (lightweight YAML only)
+            parsed = _parse_sibling_services(svc_compose)
+            for svc_name, svc_info in parsed.items():
+                svc_image = svc_info.get("image", "")
+                classification = registry.classify(svc_name, svc_image)
+                all_services.append(PipelineService(
+                    stack_path=str(svc_entry),
+                    stack_name=svc_entry.name,
+                    service_name=svc_name,
+                    role=svc_info["role"],
+                    host_sources=svc_info["host_sources"],
+                    compose_file=svc_compose,
+                    volume_mounts=svc_info.get("volume_mounts", []),
+                    image=svc_image,
+                    family_name=classification.get("family_name") or "",
+                    environment=svc_info.get("environment", {}),
+                    compose_user=svc_info.get("compose_user"),
+                ))
+                logger.debug("Pipeline: %s/%s → role=%s, mounts=%s",
+                            svc_entry.name, svc_name, svc_info["role"],
+                            sorted(svc_info["host_sources"]) if svc_info["host_sources"] else "none")
+
+            # Track stacks with no media services for dashboard visibility
+            if not parsed:
+                # Distinguish "no media services" from "broken YAML"
+                try:
+                    import yaml
+                    with open(svc_compose, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f)
+                    if data is None or not isinstance(data, dict):
+                        result.parse_errors.append({
+                            "file": svc_compose,
+                            "error": "Empty or invalid compose file",
+                            "stack": os.path.basename(os.path.dirname(svc_compose)),
+                        })
+                except yaml.YAMLError as ye:
+                    line_info = ""
+                    if hasattr(ye, "problem_mark") and ye.problem_mark:
+                        line_info = f" (line {ye.problem_mark.line + 1})"
+                    result.parse_errors.append({
+                        "file": svc_compose,
+                        "error": f"YAML syntax error{line_info}",
+                        "stack": os.path.basename(os.path.dirname(svc_compose)),
+                    })
+                    logger.warning("Parse error in %s: YAML syntax error%s", svc_compose, line_info)
+                except Exception:
+                    pass
+
+                svc_names = _list_service_names(svc_compose)
+                if svc_names:
+                    non_media_stacks.append({
+                        "name": svc_entry.name,
+                        "path": str(svc_entry),
+                        "services": svc_names,
+                    })
 
     result.stacks_scanned = stacks_scanned
     result.media_services = all_services
+    result.non_media_stacks = sorted(non_media_stacks, key=lambda s: s["name"])
 
     scan_elapsed = time.time() - result.scanned_at
     logger.info("Pipeline scan: %d dirs checked, %d stacks with compose, %d media services (%.2fs)",
@@ -275,26 +432,17 @@ def run_pipeline_scan(scan_dir: str) -> PipelineResult:
         result.shared_mount = True  # Vacuously true
         steps.append({"icon": "info", "text": "Single media service — no cross-service mount check needed"})
 
-    # Determine overall health
-    if result.conflicts:
-        result.health = "problem"
-    elif result.roles_missing:
-        result.health = "warning"
-    else:
-        result.health = "ok"
+    # Permission consistency check across all media services
+    _check_pipeline_permissions(result, all_services, steps)
 
-    # Build summary
-    mount_status = ""
-    if result.shared_mount and result.mount_root:
-        mount_status = f" | shared mount: {result.mount_root}"
-    elif result.conflicts:
-        mount_status = f" | {len(result.conflicts)} mount conflict{'s' if len(result.conflicts) != 1 else ''}"
+    # ─── Full Per-Stack Analysis ───
+    # Run the real 4-pass analyzer on each compose file to get true conflict data.
+    # This replaces the old lightweight check that only caught 2 of 20 conflict types.
+    steps.append({"icon": "run", "text": "Running deep analysis on each stack..."})
+    _run_per_stack_analysis(result, all_services, steps)
 
-    result.summary = f"{len(all_services)} media services across {len(by_stack)} stacks{mount_status}"
-    logger.info("Pipeline scan complete: %s (health=%s)", result.summary, result.health)
-
-    steps.append({"icon": "done", "text": f"Pipeline scan complete — {result.health}"})
-    result.steps = steps
+    # Determine overall health from real analysis data
+    _compute_pipeline_health(result, steps)
     return result
 
 
@@ -354,9 +502,11 @@ def _build_mount_conflicts(
         for svc in svcs:
             conflict = {
                 "type": "pipeline_mount_mismatch",
+                "category": "A",
                 "severity": "critical",
                 "service_name": svc.service_name,
                 "stack_name": svc.stack_name,
+                "services": [svc.service_name],
                 "service_sources": sorted(svc.host_sources),
                 "majority_root": majority_root,
                 "majority_services": [s.service_name for s in majority_svcs],
@@ -377,7 +527,346 @@ def _build_mount_conflicts(
     })
 
 
+# ─── Permission Consistency Detection ───
+
+def _check_pipeline_permissions(
+    result: PipelineResult,
+    all_services: List[PipelineService],
+    steps: List[dict],
+) -> None:
+    """
+    Lightweight permission check: flag when PUID/PGID groups diverge across pipeline.
+
+    Groups services by their effective PUID:PGID pair. Services without explicit
+    PUID/PGID are resolved via their image family defaults (e.g. LinuxServer.io
+    images default to 911:911). If more than one group exists, the minority groups
+    are flagged as conflicts with 'high' severity.
+    """
+    registry = get_registry()
+
+    # Build a lookup from service_name → stack_name for conflict reporting
+    svc_to_stack: Dict[str, str] = {}
+    for svc in all_services:
+        svc_to_stack[svc.service_name] = svc.stack_name
+
+    puid_groups: Dict[str, List[str]] = {}
+    for svc in all_services:
+        family = registry.get_family(svc.image) if svc.image else None
+
+        # Check standard PUID/PGID first, then family-specific env var names
+        puid = svc.environment.get("PUID", "")
+        pgid = svc.environment.get("PGID", "")
+        if family and (not puid or not pgid):
+            uid_env = family.get("uid_env", "PUID")
+            gid_env = family.get("gid_env", "PGID")
+            if not puid and uid_env != "PUID":
+                puid = svc.environment.get(uid_env, "")
+            if not pgid and gid_env != "PGID":
+                pgid = svc.environment.get(gid_env, "")
+
+        # Fall back to family defaults for services without any explicit UID/GID
+        if family and (not puid or not pgid):
+            if not puid:
+                puid = str(family.get("default_uid", ""))
+            if not pgid:
+                pgid = str(family.get("default_gid", ""))
+
+        if puid and pgid:
+            key = f"{puid}:{pgid}"
+            puid_groups.setdefault(key, []).append(svc.service_name)
+
+    if len(puid_groups) <= 1:
+        return
+
+    majority_key = max(puid_groups, key=lambda k: len(puid_groups[k]))
+    for key, svc_names in puid_groups.items():
+        if key != majority_key:
+            for name in svc_names:
+                result.conflicts.append({
+                    "type": "pipeline_permission_mismatch",
+                    "category": "B",
+                    "severity": "high",
+                    "service_name": name,
+                    "stack_name": svc_to_stack.get(name, ""),
+                    "services": [name],
+                    "description": f"{name} runs as {key} but majority use {majority_key}",
+                })
+    steps.append({
+        "icon": "warn",
+        "text": f"Permission mismatch: {len(puid_groups)} different PUID:PGID groups",
+    })
+
+
 # ─── Helpers for Analyzer Integration ───
+
+# ─── Full Per-Stack Analysis ───
+
+def _run_per_stack_analysis(
+    result: PipelineResult,
+    all_services: List[PipelineService],
+    steps: List[dict],
+) -> None:
+    """
+    Run the real 4-pass analyzer on each unique compose file in the pipeline.
+
+    This replaces the old lightweight health check that only detected mount
+    mismatches and cross-stack PUID. Now every service gets the full treatment:
+    path conflicts, hardlink breakage, permissions, platform recommendations,
+    and observations. Results are stored per-service on PipelineService.health
+    and aggregated into PipelineResult.per_stack_conflicts.
+
+    Uses force_manual=True on the resolver to skip Docker CLI overhead,
+    keeping the pipeline scan fast (~5ms/stack).
+    """
+    # Group services by compose file (one compose file may have multiple services)
+    compose_to_services: Dict[str, List[PipelineService]] = {}
+    for svc in all_services:
+        compose_to_services.setdefault(svc.compose_file, []).append(svc)
+
+    analyzed_count = 0
+    error_count = 0
+
+    for compose_file, services in compose_to_services.items():
+        stack_path = services[0].stack_path
+        stack_name = services[0].stack_name
+
+        try:
+            # Resolve compose (manual only — fast, no Docker CLI)
+            resolved = resolve_compose(
+                stack_path,
+                compose_file=os.path.basename(compose_file),
+                force_manual=True,
+            )
+
+            # Read raw content for fix plan generation
+            raw_content = None
+            try:
+                with open(compose_file, "r", encoding="utf-8") as f:
+                    raw_content = f.read()
+            except Exception:
+                pass
+
+            # Run the real 4-pass analysis (no pipeline_context to avoid recursion)
+            analysis = analyze_stack(
+                resolved_compose=resolved,
+                stack_path=stack_path,
+                compose_file=compose_file,
+                resolution_method="manual",
+                raw_compose_content=raw_content,
+            )
+
+            # Map conflicts back to services
+            stack_conflicts = []
+            for conflict in analysis.conflicts:
+                conflict_dict = conflict.to_dict() if hasattr(conflict, "to_dict") else conflict
+                stack_conflicts.append(conflict_dict)
+
+            # Add observations as Cat D (informational only — no health impact)
+            for obs in analysis.observations:
+                obs_with_cat = dict(obs)
+                obs_with_cat["category"] = "D"
+                obs_with_cat.setdefault("services", [obs.get("service", "")])
+                obs_with_cat.setdefault("description", obs.get("message", ""))
+                stack_conflicts.append(obs_with_cat)
+
+            result.per_stack_conflicts[stack_name] = stack_conflicts
+
+            # Assign per-service health based on real conflicts
+            _assign_service_health(services, stack_conflicts, analysis)
+            analyzed_count += 1
+
+        except Exception as e:
+            logger.warning("Pipeline analysis failed for %s: %s", stack_name, e)
+            error_count += 1
+            # Mark services as unknown health on analysis failure
+            for svc in services:
+                svc.health = "unknown"
+
+    logger.info("Pipeline deep analysis: %d stacks analyzed, %d errors", analyzed_count, error_count)
+    if error_count:
+        steps.append({"icon": "warn", "text": f"Deep analysis failed for {error_count} stack(s)"})
+    else:
+        steps.append({"icon": "ok", "text": f"Deep analysis complete — {analyzed_count} stacks checked"})
+
+
+def _assign_service_health(
+    services: List[PipelineService],
+    stack_conflicts: List[dict],
+    analysis,
+) -> None:
+    """
+    Set per-service health and conflict details from the full analysis results.
+
+    Health is determined by the worst conflict category affecting the service:
+      - Cat A (path conflicts) → "problem"
+      - Cat B (permissions) → "warning"
+      - Cat C (infrastructure) → "warning"
+      - Cat D (observations) → "ok" (informational only)
+      - No conflicts → "ok"
+    """
+    # Build a set of service names from the analysis
+    analyzed_service_names = {s.name for s in analysis.services} if analysis.services else set()
+
+    for svc in services:
+        # Find conflicts that affect this service
+        svc_conflicts = []
+        worst_category = None
+
+        for conflict in stack_conflicts:
+            affected = conflict.get("services", [])
+            # Match by service name in the conflict's services list
+            if svc.service_name in affected or not affected:
+                svc_conflicts.append(conflict)
+                cat = conflict.get("category", "D")
+                if cat == "A":
+                    worst_category = "A"
+                elif cat == "B" and worst_category not in ("A",):
+                    worst_category = "B"
+                elif cat == "C" and worst_category not in ("A", "B"):
+                    worst_category = "C"
+
+        # Count conflicts by category
+        counts: Dict[str, int] = {}
+        details: List[str] = []
+        for c in svc_conflicts:
+            cat = c.get("category", "D")
+            counts[cat] = counts.get(cat, 0) + 1
+            desc = c.get("description", "")
+            if desc and cat in ("A", "B", "C"):
+                details.append(desc)
+
+        svc.conflict_counts = counts
+        svc.health_details = details[:5]  # Cap at 5 most relevant
+
+        if worst_category == "A":
+            svc.health = "problem"
+        elif worst_category in ("B", "C"):
+            svc.health = "warning"
+        else:
+            svc.health = "ok"
+
+
+# ─── Health Tier Classification ───
+
+def _compute_pipeline_health(
+    result: PipelineResult,
+    steps: List[dict],
+) -> None:
+    """
+    Compute the overall pipeline health tier from per-service analysis results.
+
+    Tiers:
+      "excellent" → All services healthy. No conflicts detected.
+      "good"      → No path issues. Minor permission/infra tweaks possible.
+      "fair"      → Paths are correct, but permissions need attention.
+      "poor"      → Path issues detected. Hardlinks won't work.
+
+    Also sets result.health (ok/warning/problem) for backward compat.
+    """
+    # Collect all per-service categories across the pipeline
+    cat_a_count = 0
+    cat_b_count = 0
+    cat_c_count = 0
+    total_services = len(result.media_services)
+    services_with_issues = 0
+
+    for svc in result.media_services:
+        counts = svc.conflict_counts
+        a = counts.get("A", 0)
+        b = counts.get("B", 0)
+        c = counts.get("C", 0)
+        cat_a_count += a
+        cat_b_count += b
+        cat_c_count += c
+        if a or b or c:
+            services_with_issues += 1
+
+    # Also count pipeline-level conflicts (cross-stack mount/perm)
+    for conflict in result.conflicts:
+        cat = conflict.get("category", "")
+        if cat == "A":
+            cat_a_count += 1
+        elif cat == "B":
+            cat_b_count += 1
+
+    # Determine tier
+    if cat_a_count > 0:
+        result.health_tier = "poor"
+        result.health = "problem"
+        if cat_a_count == 1:
+            result.health_message = (
+                "Path issue detected — one service has a broken mount configuration. "
+                "Hardlinks won't work until this is fixed."
+            )
+        else:
+            result.health_message = (
+                f"{cat_a_count} path issues detected across your pipeline. "
+                "Hardlinks can't work with separate mount trees. Click a service to see the fix."
+            )
+    elif cat_b_count > 0:
+        result.health_tier = "fair"
+        result.health = "warning"
+        result.health_message = (
+            "Paths look correct — hardlinks should work. "
+            f"However, {cat_b_count} permission/environment "
+            f"{'issue needs' if cat_b_count == 1 else 'issues need'} attention."
+        )
+    elif cat_c_count > 0:
+        result.health_tier = "good"
+        result.health = "ok"
+        result.health_message = (
+            "Looking good — paths and permissions are consistent. "
+            f"{cat_c_count} minor infrastructure "
+            f"{'suggestion is' if cat_c_count == 1 else 'suggestions are'} available."
+        )
+    elif result.roles_missing:
+        result.health_tier = "good"
+        result.health = "warning"
+        missing_names = sorted(result.roles_missing)
+        missing_labels = [
+            {"arr": "*arr app", "download_client": "download client",
+             "media_server": "media server"}.get(r, r)
+            for r in missing_names
+        ]
+        result.health_message = (
+            f"Services are configured correctly, but no {' or '.join(missing_labels)} was found. "
+            "Add the missing service to enable full pipeline analysis."
+        )
+    else:
+        result.health_tier = "excellent"
+        result.health = "ok"
+        if total_services == 0:
+            result.health_message = "No media services found to analyze."
+        elif total_services == 1:
+            result.health_message = "Single service looks properly configured."
+        else:
+            result.health_message = (
+                f"Looking great — all {total_services} media services are properly configured. "
+                "Paths, permissions, and infrastructure all check out."
+            )
+
+    # Build summary
+    mount_status = ""
+    if result.shared_mount and result.mount_root:
+        mount_status = f" | shared mount: {result.mount_root}"
+    elif result.conflicts:
+        mount_count = len([c for c in result.conflicts if c.get("type") == "pipeline_mount_mismatch"])
+        perm_count = len([c for c in result.conflicts if c.get("type") == "pipeline_permission_mismatch"])
+        parts = []
+        if mount_count:
+            parts.append(f"{mount_count} mount conflict{'s' if mount_count != 1 else ''}")
+        if perm_count:
+            parts.append(f"{perm_count} permission mismatch{'es' if perm_count != 1 else ''}")
+        mount_status = f" | {', '.join(parts)}" if parts else ""
+
+    by_stack = result.services_by_stack
+    result.summary = f"{len(result.media_services)} media services across {len(by_stack)} stacks{mount_status}"
+    logger.info("Pipeline scan complete: %s (health=%s, tier=%s)",
+                result.summary, result.health, result.health_tier)
+
+    steps.append({"icon": "done", "text": f"Pipeline scan complete — {result.health_tier}"})
+    result.steps = steps
+
 
 def get_pipeline_role(pipeline: dict, stack_path: str) -> Optional[str]:
     """

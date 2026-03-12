@@ -1,0 +1,28 @@
+# E2E Test Stack: root-user
+# Expected: root_execution (Cat B, medium)
+# sonarr runs as root (PUID=0/PGID=0), radarr runs as normal user.
+
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=0
+      - PGID=0
+      - TZ=America/New_York
+    volumes:
+      - /data:/data
+      - /config/sonarr:/config
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+    volumes:
+      - /data:/data
+      - /config/radarr:/config
+    restart: unless-stopped

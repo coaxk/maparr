@@ -1,0 +1,32 @@
+## TEST: Named Docker volumes used for data (not bind mounts)
+## EXPECTED: named_volume_data conflict (critical)
+## SOLUTION SHOULD: Replace named volumes with bind mounts
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/sonarr:/config
+      - media_data:/data
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/radarr:/config
+      - media_data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/qbit:/config
+      - download_data:/downloads
+
+volumes:
+  media_data:
+  download_data:

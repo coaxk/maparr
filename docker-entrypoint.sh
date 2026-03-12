@@ -48,6 +48,19 @@ echo "────────────────────────�
 # ensure host permissions allow writes.
 chown -R maparr:maparr /app
 
+# Validate DOCKER_HOST if set (SSRF prevention — Grok Elder Council)
+if [ -n "$DOCKER_HOST" ]; then
+    case "$DOCKER_HOST" in
+        unix://*|tcp://127.*|tcp://localhost|tcp://localhost:*|tcp://socket-proxy|tcp://socket-proxy:*|tcp://*.local|tcp://*.local:*)
+            echo "[maparr] DOCKER_HOST=$DOCKER_HOST (allowed)"
+            ;;
+        *)
+            echo "[maparr] WARNING: DOCKER_HOST=$( echo "$DOCKER_HOST" | sed 's|://.*|://[REDACTED]|' ) not in allowlist, unsetting"
+            unset DOCKER_HOST
+            ;;
+    esac
+fi
+
 # If DOCKER_HOST is set (socket proxy), no socket permissions to fix.
 # If using socket mount, the maparr user needs read access to the socket.
 if [ -S /var/run/docker.sock ]; then

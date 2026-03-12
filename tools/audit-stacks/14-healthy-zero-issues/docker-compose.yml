@@ -1,0 +1,39 @@
+## TEST: Perfect stack — shared mount, matching PUID, consistent UMASK
+## EXPECTED: Zero conflicts, status=healthy
+## SOLUTION: Should not appear
+services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=002
+    volumes:
+      - ./config/sonarr:/config
+      - /data:/data
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=002
+    volumes:
+      - ./config/radarr:/config
+      - /data:/data
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=002
+    volumes:
+      - ./config/qbit:/config
+      - /data:/data
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./config/plex:/config
+      - /data:/data

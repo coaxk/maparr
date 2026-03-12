@@ -163,6 +163,10 @@ def parse_error(text: str) -> ParsedError:
     result.path = _extract_path(text)
     result.error_type = _extract_error_type(text)
 
+    # If no explicit service name found, infer from error context clues
+    if not result.service:
+        result.service = _infer_service_from_context(text, result.error_type)
+
     if result.service:
         logger.info("Detected service: %s", result.service)
     if result.path:
@@ -237,6 +241,43 @@ def _extract_service(text: str) -> Optional[str]:
             best_match = _CANONICAL.get(service, service)
 
     return best_match
+
+
+def _infer_service_from_context(text: str, error_type: str) -> Optional[str]:
+    """
+    When no service name is found in error text, infer from context clues.
+
+    Many *arr app errors don't include the service name. We return "*arr"
+    as a generic indicator — the frontend matches it against any arr-role
+    service in the user's pipeline.
+    """
+    text_lower = text.lower()
+
+    # "Episode file path" → Sonarr specifically
+    if "episode file path" in text_lower:
+        return "sonarr"
+
+    # "Movie file path" → Radarr specifically
+    if "movie file path" in text_lower:
+        return "radarr"
+
+    # EXDEV / cross-device link → arr app during import
+    if "exdev" in text_lower or "cross-device link" in text_lower:
+        return "*arr"
+
+    # Remote Path Mapping → arr app
+    if "remote path mapping" in text_lower:
+        return "*arr"
+
+    # "Import failed" without explicit service → arr app
+    if "import failed" in text_lower:
+        return "*arr"
+
+    # "No files found are eligible for import" → arr app
+    if "eligible for import" in text_lower or ("no files found" in text_lower and "import" in text_lower):
+        return "*arr"
+
+    return None
 
 
 def _extract_path(text: str) -> Optional[str]:
