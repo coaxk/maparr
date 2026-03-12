@@ -107,6 +107,12 @@ In-memory sliding window rate limiter (`RateLimiter` class in main.py):
 - Per-IP tracking with periodic cleanup (every 5 minutes)
 - Returns 429 with Retry-After header
 
+### SSE Connection Limiting
+`SSEConnectionLimiter` class in main.py — per-IP concurrent SSE connection cap:
+- Max 5 concurrent streams per client IP on `/api/logs/stream`
+- Prevents file descriptor exhaustion from runaway clients or tab accumulation
+- Returns 429 if limit exceeded; slots released on disconnect via `finally` block
+
 ### Fetch Timeouts (Frontend)
 All fetch calls use AbortController with tiered timeouts:
 - 10s: health, parse-error, discover-stacks, change-stacks-path, logs
@@ -251,8 +257,9 @@ every successful analysis completion.
 - **CSP readiness:** All inline onclick handlers migrated to addEventListener
 - **Safe YAML:** `yaml.safe_load()` only
 - **No shell injection:** Subprocess uses list-form args, never `shell=True`
-- **Bounded resources:** SSE queue maxsize=100, exponential backoff 5s→60s
+- **Bounded resources:** SSE queue maxsize=100, exponential backoff 5s→60s, SSE connection cap 5/IP
 - **Rate limiting:** In-memory sliding window, three tiers, 429 with Retry-After
+- **SSE connection limiting:** Per-IP concurrent cap (5) on `/api/logs/stream`, prevents FD exhaustion
 - **Dependency hygiene:** All deps pinned to minimum safe versions, CVE-2024-47874 patched
 
 ## Gotchas
@@ -312,5 +319,5 @@ docker compose up --build
 
 ## Branch
 `feature/pipeline-dashboard` — Pipeline Dashboard v2.0 development branch.
-`main` — stable v1.5.1 (v1.5.0 merged from v1.0-web-pivot 2026-03-08, v1.5.1 error hardening 2026-03-11).
+`feature/pipeline-dashboard` — v1.5.1 pre-release. Elder Council reviewed (A- overall, READY TO SHIP). 2 pre-release fixes done (SSE limit + /home docs). Global task list: `docs/plans/GLOBAL_TASK_LIST.md`.
 The Go/Charm TUI lives at `maparr_charm/` (embedded repo, separate Go module).

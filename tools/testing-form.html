@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MapArr v1.5.1 — Testing Dashboard</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+h1 { color: #00d4aa; margin-bottom: 4px; font-size: 1.6em; }
+.subtitle { color: #888; margin-bottom: 20px; font-size: 0.9em; }
+.progress-bar { background: #2a2a3e; border-radius: 8px; height: 24px; margin-bottom: 8px; overflow: hidden; }
+.progress-fill { background: linear-gradient(90deg, #00d4aa, #00b894); height: 100%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; font-size: 0.75em; font-weight: bold; color: #1a1a2e; min-width: 40px; }
+.progress-stats { display: flex; gap: 20px; margin-bottom: 20px; font-size: 0.85em; }
+.stat { padding: 4px 12px; border-radius: 4px; }
+.stat-pass { background: #0d3b2e; color: #00d4aa; }
+.stat-fail { background: #3b0d0d; color: #ff6b6b; }
+.stat-skip { background: #2a2a3e; color: #888; }
+.stat-remaining { background: #1e1e3a; color: #aaa; }
+.controls { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85em; font-weight: 600; }
+.btn-export { background: #00d4aa; color: #1a1a2e; }
+.btn-reset { background: #ff6b6b; color: #fff; }
+.btn-collapse { background: #2a2a3e; color: #e0e0e0; border: 1px solid #444; }
+.btn:hover { opacity: 0.85; }
+.section-header { background: #16213e; padding: 12px 16px; border-radius: 8px 8px 0 0; margin-top: 24px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border: 1px solid #2a2a3e; }
+.section-header h2 { font-size: 1.1em; color: #00d4aa; }
+.section-badge { font-size: 0.8em; color: #888; }
+.section-body { border: 1px solid #2a2a3e; border-top: none; border-radius: 0 0 8px 8px; }
+.section-body.collapsed { display: none; }
+.test-card { padding: 16px; border-bottom: 1px solid #2a2a3e; }
+.test-card:last-child { border-bottom: none; }
+.test-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.test-id { font-weight: bold; color: #00d4aa; font-size: 1em; }
+.test-name { color: #ccc; font-size: 0.9em; margin-left: 8px; }
+.test-pathway { font-size: 0.75em; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+.pathway-browse { background: #1e3a5f; color: #5dade2; }
+.pathway-paste { background: #3a1e5f; color: #bb86fc; }
+.test-dir { font-size: 0.85em; color: #5dade2; margin-bottom: 8px; font-family: monospace; background: #0d0d1a; padding: 6px 10px; border-radius: 4px; border-left: 3px solid #5dade2; }
+.test-desc { font-size: 0.85em; color: #aaa; margin-bottom: 10px; line-height: 1.4; }
+.paste-text { background: #0d0d1a; border: 1px solid #333; border-radius: 4px; padding: 8px; font-size: 0.8em; font-family: monospace; color: #bb86fc; margin-bottom: 10px; white-space: pre-wrap; word-break: break-all; max-height: 80px; overflow-y: auto; cursor: pointer; position: relative; }
+.paste-text:hover::after { content: 'Click to copy'; position: absolute; top: 4px; right: 8px; font-size: 0.7em; color: #00d4aa; font-family: sans-serif; }
+.expects { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; margin-bottom: 12px; font-size: 0.8em; }
+.expect-item { background: #0d0d1a; padding: 6px 10px; border-radius: 4px; display: flex; justify-content: space-between; }
+.expect-label { color: #888; }
+.expect-value { color: #e0e0e0; font-weight: 600; }
+.health-green { color: #00d4aa; }
+.health-yellow { color: #f1c40f; }
+.health-red { color: #ff6b6b; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.check-item { display: flex; align-items: center; gap: 4px; font-size: 0.8em; }
+.check-item input { accent-color: #00d4aa; width: 16px; height: 16px; }
+.verdict-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.verdict-btn { padding: 6px 20px; border: 2px solid transparent; border-radius: 6px; cursor: pointer; font-weight: 700; font-size: 0.85em; background: #2a2a3e; color: #888; transition: all 0.15s; }
+.verdict-btn:hover { opacity: 0.8; }
+.verdict-btn.selected-pass { background: #0d3b2e; color: #00d4aa; border-color: #00d4aa; }
+.verdict-btn.selected-fail { background: #3b0d0d; color: #ff6b6b; border-color: #ff6b6b; }
+.verdict-btn.selected-skip { background: #2a2a3e; color: #f1c40f; border-color: #f1c40f; }
+.notes-field { width: 100%; background: #0d0d1a; border: 1px solid #333; border-radius: 4px; padding: 8px; color: #e0e0e0; font-size: 0.85em; font-family: inherit; resize: vertical; min-height: 40px; }
+.notes-field:focus { outline: none; border-color: #00d4aa; }
+.test-card.verdict-pass { border-left: 3px solid #00d4aa; }
+.test-card.verdict-fail { border-left: 3px solid #ff6b6b; }
+.test-card.verdict-skip { border-left: 3px solid #f1c40f; }
+.copy-toast { position: fixed; bottom: 20px; right: 20px; background: #00d4aa; color: #1a1a2e; padding: 10px 20px; border-radius: 6px; font-weight: 600; display: none; z-index: 100; }
+</style>
+</head>
+<body>
+
+<h1>MapArr v1.5.1 — Testing Dashboard</h1>
+<p class="subtitle">Work through each test in order. Results save automatically to localStorage.</p>
+
+<div class="progress-bar"><div class="progress-fill" id="progressFill">0%</div></div>
+<div class="progress-stats">
+  <span class="stat stat-pass" id="statPass">Pass: 0</span>
+  <span class="stat stat-fail" id="statFail">Fail: 0</span>
+  <span class="stat stat-skip" id="statSkip">Skip: 0</span>
+  <span class="stat stat-remaining" id="statRemaining">Remaining: 0</span>
+</div>
+
+<div class="controls">
+  <button class="btn btn-export" onclick="exportResults()">Export Results (JSON)</button>
+  <button class="btn btn-collapse" onclick="toggleAll(true)">Collapse All</button>
+  <button class="btn btn-collapse" onclick="toggleAll(false)">Expand All</button>
+  <button class="btn btn-reset" onclick="resetAll()">Reset All</button>
+</div>
+
+<div id="testContainer"></div>
+<div class="copy-toast" id="copyToast">Copied to clipboard!</div>
+
+<!--
+  SECURITY NOTE: This is a local-only testing tool, never served publicly.
+  All rendered content comes from the hardcoded TESTS array below — zero user input.
+  DOM is built entirely via createElement/textContent (no innerHTML with untrusted data).
+-->
+<script>
+const TESTS = [
+  // === CONTROLS ===
+  { id:"M04", section:"Controls — Healthy Baselines", name:"All Healthy (4 services)", pathway:"browse", dir:"single/M04-all-healthy",
+    desc:"TRaSH guide pattern. Sonarr + Radarr + qBit + Plex all share /srv/data, PUID=1000, TZ set, restart policy. Zero issues expected. This establishes your green baseline.",
+    expects:{ conflicts:"None", health:"green", tabs:"None", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"M05", section:"Controls — Healthy Baselines", name:"Healthy Large (6 services)", pathway:"browse", dir:"single/M05-healthy-large",
+    desc:"6 arr-ecosystem services all configured correctly. Tests that a large healthy stack stays green with no false positives.",
+    expects:{ conflicts:"None", health:"green", tabs:"None", applyFix:"No", rpm:"No", observations:"None" }},
+
+  // === CATEGORY A ===
+  { id:"A01", section:"Category A — Path Conflicts", name:"Separate Mount Trees", pathway:"browse", dir:"single/A01-separate-mount-trees",
+    desc:"The #1 real-world problem. Sonarr mounts /mnt/media/tv, qBit mounts /mnt/downloads. No shared parent = hardlinks impossible, imports fail.",
+    expects:{ conflicts:"no_shared_mount (high)", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+  { id:"A02", section:"Category A — Path Conflicts", name:"Different Host Paths", pathway:"browse", dir:"single/A02-different-host-paths",
+    desc:"Sonarr and Radarr both mount to /data/media inside the container, but from different host directories (/home/user/tv vs /home/user/movies).",
+    expects:{ conflicts:"different_host_paths (medium)", health:"yellow", tabs:"Path Fix", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"A03", section:"Category A — Path Conflicts", name:"Named Volumes", pathway:"browse", dir:"single/A03-named-volumes",
+    desc:"Docker named volumes (media_data:, downloads_data:) instead of bind mounts. Named volumes are isolated per-service — hardlinks impossible.",
+    expects:{ conflicts:"named_volume_data (medium)", health:"yellow", tabs:"Path Fix", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"A04", section:"Category A — Path Conflicts", name:"Unreachable Path", pathway:"browse", dir:"single/A04-unreachable-path",
+    desc:"Sonarr mounts /srv/media:/tv but error references /data — a path that doesn't match any mount. Plus no shared parent with qBit.",
+    expects:{ conflicts:"path_unreachable + no_shared_mount (high)", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+  { id:"A05", section:"Category A — Path Conflicts", name:"Partial Overlap", pathway:"browse", dir:"single/A05-partial-overlap",
+    desc:"Sonarr + Radarr share /srv/data correctly, but qBit is on a separate SSD (/mnt/fast-ssd). Two healthy, one broken link.",
+    expects:{ conflicts:"no_shared_mount (high)", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+
+  // === CATEGORY B ===
+  { id:"B01", section:"Category B — Permissions", name:"PUID Mismatch", pathway:"browse", dir:"single/B01-puid-mismatch",
+    desc:"Sonarr + Radarr run PUID=1000, qBit runs PUID=911 (old LSIO default). Files created by qBit aren't readable by the arr apps.",
+    expects:{ conflicts:"puid_pgid_mismatch (high)", health:"yellow", tabs:"Fix Permissions", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"B02", section:"Category B — Permissions", name:"Missing PUID", pathway:"browse", dir:"single/B02-missing-puid",
+    desc:"Sonarr has PUID/PGID set, qBit is missing them entirely. Service will run as container default (often root).",
+    expects:{ conflicts:"missing_puid_pgid (medium)", health:"yellow", tabs:"Fix Permissions", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"B03", section:"Category B — Permissions", name:"Root Execution", pathway:"browse", dir:"single/B03-root-execution",
+    desc:"Sonarr runs as PUID=0 (root). Security risk + PUID mismatch with other services running as 1000.",
+    expects:{ conflicts:"root_execution (medium) + puid_pgid_mismatch (high)", health:"yellow", tabs:"Fix Permissions", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"B04", section:"Category B — Permissions", name:"UMASK Inconsistent", pathway:"browse", dir:"single/B04-umask-inconsistent",
+    desc:"Sonarr uses UMASK=022 (restrictive), Radarr + qBit use UMASK=002 (permissive). Files created by Sonarr may not be writable by others.",
+    expects:{ conflicts:"umask_inconsistent (low)", health:"yellow", tabs:"Fix Permissions", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"B05", section:"Category B — Permissions", name:"UMASK Restrictive", pathway:"browse", dir:"single/B05-umask-restrictive",
+    desc:"All services use UMASK=077 — only the owner can read/write. Other services in the pipeline can't access each other's files.",
+    expects:{ conflicts:"umask_restrictive (low)", health:"yellow", tabs:"Fix Permissions", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"B06", section:"Category B — Permissions", name:"TZ Mismatch", pathway:"browse", dir:"single/B06-tz-mismatch",
+    desc:"Three services in three timezones: New York, London, Tokyo. Causes scheduling confusion and log timestamp misalignment.",
+    expects:{ conflicts:"tz_mismatch (low)", health:"yellow", tabs:"Fix Permissions", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"B07", section:"Category B — Permissions", name:"Missing TZ", pathway:"browse", dir:"single/B07-missing-tz",
+    desc:"Sonarr has TZ set, qBit doesn't. Missing TZ is a Cat D observation — shouldn't affect health.",
+    expects:{ conflicts:"None (Cat B)", health:"green", tabs:"Observations", applyFix:"No", rpm:"No", observations:"missing_tz" }},
+
+  // === CATEGORY C ===
+  { id:"C01", section:"Category C — Infrastructure", name:"WSL2 Paths", pathway:"browse", dir:"single/C01-wsl2-paths",
+    desc:"Both services mount /mnt/c/ paths — the WSL2 filesystem bridge. Works but with severe I/O performance penalty.",
+    expects:{ conflicts:"wsl2_performance (medium) + no_shared_mount", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"C02", section:"Category C — Infrastructure", name:"Mixed Mount Types", pathway:"browse", dir:"single/C02-mixed-mounts",
+    desc:"Sonarr uses local bind mount, qBit uses NFS network share. Mixed local/remote means hardlinks fail at the filesystem boundary.",
+    expects:{ conflicts:"mixed_mount_types (medium) + no_shared_mount", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"C03", section:"Category C — Infrastructure", name:"Windows Paths", pathway:"browse", dir:"single/C03-windows-paths",
+    desc:"Drive letter paths (C:\\, D:\\) in compose file. Common Windows Docker Desktop mistake.",
+    expects:{ conflicts:"windows_path_in_compose (low) + no_shared_mount", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"C04", section:"Category C — Infrastructure", name:"Remote Filesystem (NFS)", pathway:"browse", dir:"single/C04-remote-filesystem",
+    desc:"All services mount NFS shares (//nas.local/...). Hardlinks don't work across network filesystems.",
+    expects:{ conflicts:"remote_filesystem (medium)", health:"yellow", tabs:"Path Fix or Observations", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"C05", section:"Category C — Infrastructure", name:"SMB/UNC Paths", pathway:"browse", dir:"single/C05-smb-unc-paths",
+    desc:"UNC paths (\\\\MediaNAS\\share) — Windows SMB style. Same remote filesystem issue as NFS.",
+    expects:{ conflicts:"remote_filesystem (medium) + no_shared_mount", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"No", observations:"None" }},
+
+  // === CATEGORY D ===
+  { id:"D01", section:"Category D — Observations", name:"Kitchen Sink Observations", pathway:"browse", dir:"single/D01-observations-kitchen-sink",
+    desc:"Every Cat D observation in one stack: :latest tags, privileged mode, no restart policy, missing TZ, no healthcheck. Health should stay GREEN — observations are informational only.",
+    expects:{ conflicts:"None (Cat A/B/C)", health:"green", tabs:"Observations", applyFix:"No", rpm:"No", observations:"latest_tag, privileged, missing_restart, missing_tz, no_healthcheck" }},
+
+  // === COMBOS ===
+  { id:"M01", section:"Multi-Category Combos", name:"Path + Permissions", pathway:"browse", dir:"single/M01-path-plus-permissions",
+    desc:"Separate mount trees (Cat A) AND PUID mismatch (Cat B) at the same time. Tests that both categories fire and both tabs appear.",
+    expects:{ conflicts:"no_shared_mount (high) + puid_pgid_mismatch (high)", health:"red", tabs:"Path Fix + Fix Permissions", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+  { id:"M02", section:"Multi-Category Combos", name:"Infra + Permissions", pathway:"browse", dir:"single/M02-infra-plus-permissions",
+    desc:"NFS shares (Cat C) + PUID mismatch (Cat B) + TZ mismatch (Cat B). Multiple categories stacking up.",
+    expects:{ conflicts:"remote_filesystem + puid_pgid_mismatch + tz_mismatch + no_shared_mount", health:"red", tabs:"Path Fix + Fix Permissions", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"M03", section:"Multi-Category Combos", name:"Mega Chaos (8 services)", pathway:"browse", dir:"single/M03-mega-chaos",
+    desc:"8 services, every category fires. Stress test for the analysis engine and UI rendering. Multiple host roots, mixed UIDs, remote mounts, observations.",
+    expects:{ conflicts:"Multiple A + B + C + D", health:"red", tabs:"All tabs", applyFix:"Yes", rpm:"Possibly", observations:"Multiple" }},
+
+  // === FAMILIES ===
+  { id:"F01", section:"Image Family Variants", name:"All Hotio", pathway:"browse", dir:"single/F01-all-hotio",
+    desc:"All Hotio images (ghcr.io/hotio/*). Tests that Hotio family is detected and PUID/PGID resolved correctly. Should be healthy.",
+    expects:{ conflicts:"None", health:"green", tabs:"None", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"F02", section:"Image Family Variants", name:"Mixed Families (4 families)", pathway:"browse", dir:"single/F02-mixed-families",
+    desc:"LSIO + Hotio + jlesage + binhex images. Each family uses different env var names (PUID vs USER_ID etc). All resolve to UID 1000. Should be healthy.",
+    expects:{ conflicts:"None", health:"green", tabs:"None", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"F03", section:"Image Family Variants", name:"Custom Unknown Images", pathway:"browse", dir:"single/F03-custom-unknown-images",
+    desc:"Private registry images that MapArr won't recognize by image name. Tests keyword fallback (service names contain sonarr/radarr/qbittorrent). 3 different host roots = path conflict.",
+    expects:{ conflicts:"no_shared_mount (high)", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+
+  // === EDGE CASES ===
+  { id:"E01", section:"Edge Cases", name:"Env File Substitution", pathway:"browse", dir:"single/E01-env-file-substitution",
+    desc:"Compose uses ${VARIABLE} syntax with a .env file. Tests that the resolver interpolates variables before analysis.",
+    expects:{ conflicts:"Depends on resolver", health:"TBD", tabs:"TBD", applyFix:"TBD", rpm:"No", observations:"None" }},
+  { id:"E02", section:"Edge Cases", name:"Compose Override", pathway:"browse", dir:"single/E02-compose-override",
+    desc:"Base compose + docker-compose.override.yml adds a conflicting service. Tests compose merge handling.",
+    expects:{ conflicts:"Depends on merge", health:"TBD", tabs:"TBD", applyFix:"TBD", rpm:"No", observations:"None" }},
+  { id:"E03", section:"Edge Cases", name:"Malformed YAML", pathway:"browse", dir:"single/E03-malformed-yaml",
+    desc:"Invalid YAML syntax (missing colon). Should show a graceful error message, NOT crash the server.",
+    expects:{ conflicts:"YAML parse error", health:"N/A", tabs:"N/A", applyFix:"No", rpm:"No", observations:"Error handling" }},
+  { id:"E04", section:"Edge Cases", name:"Empty Compose", pathway:"browse", dir:"single/E04-empty-compose",
+    desc:"Valid YAML with empty services block. Should handle gracefully — no services detected.",
+    expects:{ conflicts:"None (no services)", health:"N/A", tabs:"N/A", applyFix:"No", rpm:"No", observations:"Graceful empty state" }},
+  { id:"E05", section:"Edge Cases", name:"Single Service Only", pathway:"browse", dir:"single/E05-single-service-only",
+    desc:"Only Sonarr, no download client. Tests 'incomplete' status — can't do full path comparison with one service.",
+    expects:{ conflicts:"None (incomplete)", health:"green or incomplete", tabs:"None", applyFix:"No", rpm:"No", observations:"None" }},
+
+  // === CLUSTERS ===
+  { id:"CL01", section:"Cluster Layouts", name:"Cluster — Broken Paths", pathway:"browse", dir:"clusters/CL01-cluster-broken-paths",
+    desc:"One-service-per-folder layout (Dockhand/Portainer style). Each subfolder has its own compose. Path conflict across folders.",
+    expects:{ conflicts:"no_shared_mount (high)", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+  { id:"CL02", section:"Cluster Layouts", name:"Cluster — Healthy", pathway:"browse", dir:"clusters/CL02-cluster-healthy",
+    desc:"Same one-per-folder layout but all services share /srv/data. Should be fully green.",
+    expects:{ conflicts:"None", health:"green", tabs:"None", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"CL03", section:"Cluster Layouts", name:"Cluster — Permissions", pathway:"browse", dir:"clusters/CL03-cluster-permissions",
+    desc:"One-per-folder layout with PUID mismatch (qBit at 911, others at 1000). Tests cross-folder permission detection.",
+    expects:{ conflicts:"puid_pgid_mismatch (high)", health:"yellow", tabs:"Fix Permissions", applyFix:"Yes", rpm:"No", observations:"None" }},
+
+  // === ROOTS ===
+  { id:"R01", section:"Roots — Full Pipeline", name:"Realistic Mixed Root", pathway:"browse", dir:"roots",
+    desc:"Load the roots/ folder directly. 4 services side by side. Mostly healthy but Plex has PUID=1001 — subtle permission mismatch. Tests full pipeline scan.",
+    expects:{ conflicts:"puid_pgid_mismatch on plex (medium)", health:"yellow", tabs:"Fix Permissions", applyFix:"Yes", rpm:"No", observations:"None" }},
+
+  // === PASTE PATHWAY ===
+  { id:"P01", section:"Paste Pathway", name:"Import Failed", pathway:"paste", dir:"paste/P01-import-failed",
+    paste:"Import failed, path does not exist or is not accessible by Sonarr: /downloads/complete/Some.Show.S01E01.720p.mkv. Ensure the path exists and the user running Sonarr has the correct permissions to access this file/folder",
+    desc:"Sonarr 'Import failed, path does not exist'. Paste the error, verify auto-drill to Sonarr and path conflict detection.",
+    expects:{ conflicts:"no_shared_mount (high)", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+  { id:"P02", section:"Paste Pathway", name:"Hardlink EXDEV", pathway:"paste", dir:"paste/P02-hardlink-exdev",
+    paste:"[Error] Import failed: [/downloads/complete/Movie.2024.1080p/Movie.2024.1080p.mkv] Import failed, error code EXDEV (18): Cross-device link : '/downloads/complete/Movie.2024.1080p/Movie.2024.1080p.mkv' -> '/media/movies/Movie (2024)/Movie.2024.1080p.mkv'",
+    desc:"Cross-device link error from hardlink attempt. Classic EXDEV (error 18).",
+    expects:{ conflicts:"no_shared_mount (high)", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+  { id:"P03", section:"Paste Pathway", name:"Permission Denied", pathway:"paste", dir:"paste/P03-permission-denied",
+    paste:"Access to the path '/data/media/tv/Some.Show/Season 01' is denied. Ensure the user running Sonarr has the correct permissions to access this file/folder",
+    desc:"Access denied error. Stack has PUID mismatch. Paste should auto-drill and detect permission issue.",
+    expects:{ conflicts:"puid_pgid_mismatch (high)", health:"yellow", tabs:"Fix Permissions", applyFix:"Yes", rpm:"No", observations:"None" }},
+  { id:"P04", section:"Paste Pathway", name:"Path Not Found (Radarr)", pathway:"paste", dir:"paste/P04-path-not-found",
+    paste:"[Error] DownloadedMovieImportService: Import failed, path does not exist or is not accessible by Radarr: /data/completed/Movie.2024.1080p. Ensure the path exists and the user running Radarr has the correct permissions",
+    desc:"Radarr can't find download path. Error references /data/completed but service doesn't have /data mounted.",
+    expects:{ conflicts:"path_unreachable + no_shared_mount", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+  { id:"P05", section:"Paste Pathway", name:"RPM Needed", pathway:"paste", dir:"paste/P05-rpm-needed",
+    paste:"[Warn] Couldn't import episode /downloads/complete/tv/Some.Show.S02E05.mkv: Episode file path '/downloads/complete/tv/Some.Show.S02E05.mkv' is not valid. Ensure the Remote Path Mapping is configured correctly.",
+    desc:"Remote path mapping error. Download client path doesn't match arr app path. RPM wizard should be available.",
+    expects:{ conflicts:"Path mapping issue", health:"red", tabs:"Path Fix", applyFix:"Yes", rpm:"Yes", observations:"None" }},
+  { id:"P06", section:"Paste Pathway", name:"Download Stuck", pathway:"paste", dir:"paste/P06-download-stuck",
+    paste:"[Warn] No files found are eligible for import in /data/downloads/complete/Some.Show.S01E01",
+    desc:"Files stuck in downloads — no eligible files found. Stack has restrictive UMASK causing permission issue.",
+    expects:{ conflicts:"umask_restrictive or permission issue", health:"yellow", tabs:"Fix Permissions", applyFix:"No", rpm:"No", observations:"None" }},
+  { id:"P07", section:"Paste Pathway", name:"Multi-Error Paste", pathway:"paste", dir:"paste/P07-multi-error",
+    paste:"Import failed, path does not exist or is not accessible by Sonarr: /downloads/complete/Show.S01E01.mkv\n\n[Error] DownloadedMovieImportService: Import failed, path does not exist or is not accessible by Radarr: /downloads/complete/Movie.2024.mkv\n\nAccess to the path '/media/movies' is denied.",
+    desc:"Three errors pasted at once. Tests CRLF multi-error splitter and multiple service highlighting.",
+    expects:{ conflicts:"Multiple — path + permission", health:"red", tabs:"Path Fix + Fix Permissions", applyFix:"Yes", rpm:"Possibly", observations:"None" }},
+];
+
+// ─── State Management ───
+const STATE_KEY = 'maparr_testing_v2';
+let state = {};
+try { const s = localStorage.getItem(STATE_KEY); if (s) state = JSON.parse(s); } catch(e) {}
+
+function save() { localStorage.setItem(STATE_KEY, JSON.stringify(state)); updateProgress(); }
+function getTS(id) { if (!state[id]) state[id] = { verdict:null, checks:{}, notes:'' }; return state[id]; }
+
+// ─── DOM Builder ───
+function el(tag, attrs, children) {
+  const e = document.createElement(tag);
+  if (attrs) Object.entries(attrs).forEach(([k,v]) => {
+    if (k === 'cls') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  });
+  if (children) children.forEach(c => { if (c) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return e;
+}
+
+function buildExpectGrid(expects) {
+  const grid = el('div', {cls:'expects'});
+  const healthCls = expects.health === 'green' ? 'health-green' : expects.health === 'yellow' ? 'health-yellow' : expects.health === 'red' ? 'health-red' : '';
+  const items = [
+    ['Conflicts', expects.conflicts, ''],
+    ['Health', expects.health, healthCls],
+    ['Tabs', expects.tabs, ''],
+    ['Apply Fix', expects.applyFix, ''],
+    ['RPM Wizard', expects.rpm, ''],
+    ['Observations', expects.observations, ''],
+  ];
+  items.forEach(([label, value, cls]) => {
+    const item = el('div', {cls:'expect-item'}, [
+      el('span', {cls:'expect-label', text:label}),
+      el('span', {cls:'expect-value' + (cls ? ' '+cls : ''), text:value}),
+    ]);
+    grid.appendChild(item);
+  });
+  return grid;
+}
+
+function buildCheckboxes(id) {
+  const ts = getTS(id);
+  const row = el('div', {cls:'checks'});
+  ['conflicts','health','tabs','applyFix','rpm','ui'].forEach(key => {
+    const labels = {conflicts:'Conflicts correct', health:'Health dot correct', tabs:'Tabs correct', applyFix:'Apply Fix correct', rpm:'RPM correct', ui:'UI renders clean'};
+    const cb = el('input', {type:'checkbox'});
+    cb.checked = !!ts.checks[key];
+    cb.addEventListener('change', () => { ts.checks[key] = cb.checked; save(); });
+    const label = el('label', {cls:'check-item'}, [cb, document.createTextNode(' ' + labels[key])]);
+    row.appendChild(label);
+  });
+  return row;
+}
+
+function buildVerdictRow(id) {
+  const ts = getTS(id);
+  const row = el('div', {cls:'verdict-row'});
+  ['pass','fail','skip'].forEach(v => {
+    const cls = ts.verdict === v ? 'verdict-btn selected-' + v : 'verdict-btn';
+    const btn = el('button', {cls:cls, text:v.toUpperCase(), onclick:() => {
+      ts.verdict = ts.verdict === v ? null : v;
+      save();
+      render();
+    }});
+    row.appendChild(btn);
+  });
+  return row;
+}
+
+function buildTestCard(t) {
+  const ts = getTS(t.id);
+  const verdictCls = ts.verdict ? 'test-card verdict-' + ts.verdict : 'test-card';
+  const card = el('div', {cls:verdictCls, id:'card_'+t.id});
+
+  // Header
+  const header = el('div', {cls:'test-header'});
+  const left = el('div', null, [
+    el('span', {cls:'test-id', text:t.id}),
+    el('span', {cls:'test-name', text:t.name}),
+  ]);
+  const pathwayCls = t.pathway === 'browse' ? 'test-pathway pathway-browse' : 'test-pathway pathway-paste';
+  header.appendChild(left);
+  header.appendChild(el('span', {cls:pathwayCls, text:t.pathway.toUpperCase()}));
+  card.appendChild(header);
+
+  // Dir
+  card.appendChild(el('div', {cls:'test-dir', text:'Load: test-stacks/' + t.dir}));
+
+  // Description
+  card.appendChild(el('div', {cls:'test-desc', text:t.desc}));
+
+  // Paste text (if paste pathway)
+  if (t.paste) {
+    const pasteDiv = el('div', {cls:'paste-text', text:t.paste, onclick:() => {
+      navigator.clipboard.writeText(t.paste).then(() => {
+        const toast = document.getElementById('copyToast');
+        toast.style.display = 'block';
+        setTimeout(() => toast.style.display = 'none', 1500);
+      });
+    }});
+    card.appendChild(pasteDiv);
+  }
+
+  // Expects
+  card.appendChild(buildExpectGrid(t.expects));
+
+  // Checkboxes
+  card.appendChild(buildCheckboxes(t.id));
+
+  // Verdict
+  card.appendChild(buildVerdictRow(t.id));
+
+  // Notes
+  const notes = el('textarea', {cls:'notes-field', placeholder:'Notes (bugs, observations, screenshots...)'});
+  notes.value = ts.notes || '';
+  notes.addEventListener('change', () => { ts.notes = notes.value; save(); });
+  notes.addEventListener('focus', () => { notes.style.minHeight = '80px'; });
+  card.appendChild(notes);
+
+  return card;
+}
+
+function render() {
+  const container = document.getElementById('testContainer');
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  const sections = {};
+  TESTS.forEach(t => {
+    if (!sections[t.section]) sections[t.section] = [];
+    sections[t.section].push(t);
+  });
+
+  for (const [section, tests] of Object.entries(sections)) {
+    const sectionId = section.replace(/[^a-zA-Z0-9]/g, '_');
+    const done = tests.filter(t => getTS(t.id).verdict).length;
+
+    // Section header
+    const header = el('div', {cls:'section-header', onclick:() => {
+      document.getElementById('section_'+sectionId).classList.toggle('collapsed');
+    }}, [
+      el('h2', {text:section}),
+      el('span', {cls:'section-badge', text:done + '/' + tests.length + ' complete'}),
+    ]);
+    container.appendChild(header);
+
+    // Section body
+    const body = el('div', {cls:'section-body', id:'section_'+sectionId});
+    tests.forEach(t => body.appendChild(buildTestCard(t)));
+    container.appendChild(body);
+  }
+
+  updateProgress();
+}
+
+function updateProgress() {
+  const total = TESTS.length;
+  const passed = TESTS.filter(t => getTS(t.id).verdict === 'pass').length;
+  const failed = TESTS.filter(t => getTS(t.id).verdict === 'fail').length;
+  const skipped = TESTS.filter(t => getTS(t.id).verdict === 'skip').length;
+  const done = passed + failed + skipped;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const fill = document.getElementById('progressFill');
+  fill.style.width = pct + '%';
+  fill.textContent = pct + '%';
+  document.getElementById('statPass').textContent = 'Pass: ' + passed;
+  document.getElementById('statFail').textContent = 'Fail: ' + failed;
+  document.getElementById('statSkip').textContent = 'Skip: ' + skipped;
+  document.getElementById('statRemaining').textContent = 'Remaining: ' + (total - done);
+}
+
+function toggleAll(collapse) {
+  document.querySelectorAll('.section-body').forEach(e => e.classList.toggle('collapsed', collapse));
+}
+
+function exportResults() {
+  const results = {
+    timestamp: new Date().toISOString(),
+    version: 'MapArr v1.5.1',
+    summary: {
+      total: TESTS.length,
+      passed: TESTS.filter(t => getTS(t.id).verdict === 'pass').length,
+      failed: TESTS.filter(t => getTS(t.id).verdict === 'fail').length,
+      skipped: TESTS.filter(t => getTS(t.id).verdict === 'skip').length,
+    },
+    tests: TESTS.map(t => ({ id:t.id, name:t.name, section:t.section, pathway:t.pathway, ...getTS(t.id) })),
+    failures: TESTS.filter(t => getTS(t.id).verdict === 'fail').map(t => ({
+      id:t.id, name:t.name, notes:getTS(t.id).notes, checks:getTS(t.id).checks,
+    })),
+  };
+  const blob = new Blob([JSON.stringify(results, null, 2)], {type:'application/json'});
+  const a = el('a', {href:URL.createObjectURL(blob), download:'maparr-test-results-'+new Date().toISOString().slice(0,10)+'.json'});
+  a.click();
+}
+
+function resetAll() {
+  if (confirm('Reset ALL test results? This cannot be undone.')) {
+    localStorage.removeItem(STATE_KEY);
+    state = {};
+    render();
+  }
+}
+
+// Init
+render();
+</script>
+</body>
+</html>
